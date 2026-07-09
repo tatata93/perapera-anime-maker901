@@ -16,6 +16,11 @@ void CommandStack::undo() {
     m_redoStack.push_back(std::move(command));
 }
 
+void CommandStack::clear() {
+    m_undoStack.clear();
+    m_redoStack.clear();
+}
+
 void CommandStack::redo() {
     if (!canRedo()) return;
     auto command = std::move(m_redoStack.back());

@@ -40,6 +40,29 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --undo-test <PNG1> <PNG2> <PNG3> でストローク→Undo→Redoの3状態を保存する
+    const int undoIndex = args.indexOf("--undo-test");
+    if (undoIndex >= 0 && undoIndex + 3 < args.size()) {
+        const QString out1 = args.at(undoIndex + 1);
+        const QString out2 = args.at(undoIndex + 2);
+        const QString out3 = args.at(undoIndex + 3);
+        QTimer::singleShot(500, &window, [&window, out1, out2, out3] {
+            window.canvas()->debugSimulateStroke();
+            QTimer::singleShot(100, &window, [&window, out1, out2, out3] {
+                window.canvas()->grabFramebuffer().save(out1);  // 線あり
+                window.debugUndo();
+                QTimer::singleShot(100, &window, [&window, out2, out3] {
+                    window.canvas()->grabFramebuffer().save(out2);  // 白紙に戻る
+                    window.debugRedo();
+                    QTimer::singleShot(100, &window, [&window, out3] {
+                        window.canvas()->grabFramebuffer().save(out3);  // 線が復元
+                        QApplication::quit();
+                    });
+                });
+            });
+        });
+    }
+
     // 動作確認用: --ui-test <出力PNG> でウィンドウ全体(メニュー/ツールバー/パネル込み)を保存する
     const int uiIndex = args.indexOf("--ui-test");
     if (uiIndex >= 0 && uiIndex + 1 < args.size()) {

@@ -18,6 +18,9 @@ public:
     void undo();
     void redo();
 
+    // 履歴を全破棄する(コマンドが参照する対象が無効になる構造変更時に呼ぶ)
+    void clear();
+
 private:
     std::vector<std::unique_ptr<Command>> m_undoStack;
     std::vector<std::unique_ptr<Command>> m_redoStack;

@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include <memory>
 
+#include "core/CommandStack.h"
 #include "core/Project.h"
 
 class FramePanel;
@@ -28,6 +29,9 @@ public:
     bool debugSaveTo(const QString& path) { return saveToFile(path); }
     bool debugLoadFrom(const QString& path) { return loadFromFile(path); }
     void debugNewDocument() { newDocument(); }
+    // Undo/Redo確認用
+    void debugUndo() { undo(); }
+    void debugRedo() { redo(); }
 
 private:
     void createNewDocument();
@@ -42,6 +46,8 @@ private:
     void save();
     void open();
     void updateWindowTitle();
+    void undo();
+    void redo();
 
     core::Layer& activeLayer();
     void setCurrentFrame(size_t index);
@@ -53,6 +59,7 @@ private:
     void updateFrameLabel();
 
     std::unique_ptr<core::Project> m_project;
+    core::CommandStack m_commands;
     GLCanvas* m_canvas = nullptr;
 
     size_t m_currentFrame = 0;

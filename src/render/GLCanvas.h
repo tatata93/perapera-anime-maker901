@@ -3,11 +3,13 @@
 #include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
+#include <functional>
 #include <memory>
 #include <unordered_map>
 #include <vector>
 
 #include "core/BrushEngine.h"
+#include "core/Command.h"
 
 class QOpenGLShaderProgram;
 class QOpenGLTexture;
@@ -34,6 +36,10 @@ public:
     void setTool(Tool tool);
     Tool tool() const { return m_tool; }
     void setInputEnabled(bool enabled) { m_inputEnabled = enabled; }
+
+    // ストローク完了時にUndo用コマンドを受け取るコールバック(MainWindowがCommandStackへ積む)
+    using StrokeCommandSink = std::function<void(std::unique_ptr<core::Command>)>;
+    void setStrokeCommandSink(StrokeCommandSink sink) { m_strokeCommandSink = std::move(sink); }
 
     // 端から端まで筆圧を変えながら1ストローク描く(動作確認用フック)
     void debugSimulateStroke();
@@ -70,6 +76,10 @@ private:
     Tool m_tool = Tool::Pen;
     bool m_strokeActive = false;
     bool m_inputEnabled = true;
+
+    StrokeCommandSink m_strokeCommandSink;
+    core::Bitmap m_strokeSnapshot;   // ストローク開始時点の全体コピー(Undo用)
+    core::DirtyRect m_strokeDirty{};  // ストローク全体の書き換え矩形
 
     std::unique_ptr<QOpenGLShaderProgram> m_program;
     std::unordered_map<const core::Bitmap*, std::unique_ptr<QOpenGLTexture>> m_textures;

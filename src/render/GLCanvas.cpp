@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/StrokeCommand.h"
+
 namespace {
 
 const char* kVertexShader = R"(
@@ -260,7 +262,9 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
     if (!m_bitmap || !m_inputEnabled) return;
     const QPointF img = widgetToImage(widgetPos);
     m_strokeActive = true;
+    if (m_strokeCommandSink) m_strokeSnapshot = *m_bitmap;  // Undo用に開始時点を保存
     const auto dirty = m_brush.beginStroke(*m_bitmap, static_cast<float>(img.x()), static_cast<float>(img.y()), pressure);
+    m_strokeDirty = dirty;
     uploadDirty(dirty);
 }
 
@@ -268,12 +272,23 @@ void GLCanvas::pointerMove(QPointF widgetPos, float pressure) {
     if (!m_bitmap || !m_strokeActive) return;
     const QPointF img = widgetToImage(widgetPos);
     const auto dirty = m_brush.continueStroke(*m_bitmap, static_cast<float>(img.x()), static_cast<float>(img.y()), pressure);
+    m_strokeDirty.unite(dirty);
     uploadDirty(dirty);
 }
 
 void GLCanvas::pointerEnd() {
+    if (!m_strokeActive) return;
     m_strokeActive = false;
     m_brush.endStroke();
+
+    if (m_strokeCommandSink && m_bitmap && !m_strokeDirty.isEmpty()) {
+        auto before = core::StrokeCommand::copyRegion(m_strokeSnapshot, m_strokeDirty);
+        auto after = core::StrokeCommand::copyRegion(*m_bitmap, m_strokeDirty);
+        m_strokeCommandSink(
+            std::make_unique<core::StrokeCommand>(m_bitmap, m_strokeDirty, std::move(before), std::move(after)));
+    }
+    m_strokeSnapshot = core::Bitmap();  // スナップショットのメモリを解放
+    m_strokeDirty = core::DirtyRect{};
 }
 
 void GLCanvas::tabletEvent(QTabletEvent* event) {

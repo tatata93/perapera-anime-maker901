@@ -34,6 +34,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     m_canvas = new GLCanvas(this);
     setCentralWidget(m_canvas);
+    m_canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
+        m_commands.push(std::move(command));  // pushは冪等なexecute(after画素の再書き込み)を伴う
+    });
 
     m_playTimer = new QTimer(this);
     connect(m_playTimer, &QTimer::timeout, this, &MainWindow::onPlaybackTick);
@@ -82,6 +85,7 @@ void MainWindow::addFrameAfterCurrent() {
     core::Layer& layer = activeLayer();
     core::Frame& frame = layer.insertFrame(m_currentFrame + 1);
     frame.bitmap() = makePaperBitmap();
+    m_commands.clear();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 挿入でフレーム構造が変わったため
     setCurrentFrame(m_currentFrame + 1);
 }
@@ -91,6 +95,7 @@ void MainWindow::deleteCurrentFrame() {
     core::Layer& layer = activeLayer();
     if (layer.frameCount() <= 1) return;  // 最後の1枚は消さない
     layer.removeFrame(m_currentFrame);
+    m_commands.clear();             // 削除されたBitmapを参照するコマンドを破棄
     m_canvas->clearTextureCache();  // 削除されたBitmapのテクスチャを破棄
     setCurrentFrame(m_currentFrame > 0 ? m_currentFrame - 1 : 0);
 }
@@ -166,9 +171,30 @@ void MainWindow::setupMenus() {
     saveAsAction->setShortcut(QKeySequence::SaveAs);
     connect(saveAsAction, &QAction::triggered, this, &MainWindow::saveAs);
 
+    // 編集メニュー
+    QMenu* editMenu = menuBar()->addMenu(tr("編集(&E)"));
+    QAction* undoAction = editMenu->addAction(tr("元に戻す(&U)"));
+    undoAction->setShortcut(QKeySequence::Undo);
+    connect(undoAction, &QAction::triggered, this, &MainWindow::undo);
+    QAction* redoAction = editMenu->addAction(tr("やり直す(&R)"));
+    redoAction->setShortcut(QKeySequence::Redo);
+    connect(redoAction, &QAction::triggered, this, &MainWindow::redo);
+
     // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
     viewMenu->addAction(m_framePanel->toggleViewAction());
+}
+
+void MainWindow::undo() {
+    if (m_playing || !m_commands.canUndo()) return;
+    m_commands.undo();
+    m_canvas->clearTextureCache();  // 変更されたBitmapのテクスチャを再アップロードさせる
+}
+
+void MainWindow::redo() {
+    if (m_playing || !m_commands.canRedo()) return;
+    m_commands.redo();
+    m_canvas->clearTextureCache();
 }
 
 void MainWindow::updateWindowTitle() {
@@ -182,6 +208,7 @@ void MainWindow::updateWindowTitle() {
 
 void MainWindow::newDocument() {
     if (m_playing) togglePlayback();
+    m_commands.clear();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
     createNewDocument();
     m_canvas->clearTextureCache();  // 旧プロジェクトのBitmapポインタ再利用に備えて破棄
     updateFrameLabel();
@@ -215,6 +242,7 @@ bool MainWindow::loadFromFile(const QString& path) {
     }
 
     if (m_playing) togglePlayback();
+    m_commands.clear();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
     m_project = std::move(project);
     m_canvas->clearTextureCache();
     setCurrentFrame(0);

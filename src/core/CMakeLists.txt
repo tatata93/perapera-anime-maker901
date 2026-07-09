@@ -17,6 +17,8 @@ add_library(perapera_core STATIC
     CommandStack.h
     ProjectIO.cpp
     ProjectIO.h
+    StrokeCommand.cpp
+    StrokeCommand.h
 )
 
 find_package(nlohmann_json CONFIG REQUIRED)
