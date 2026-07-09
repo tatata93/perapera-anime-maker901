@@ -68,9 +68,19 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
         jScenes.push_back({{"name", scene.name()}, {"cuts", std::move(jCuts)}});
     }
 
+    json jProject = {{"name", project.name()}, {"scenes", std::move(jScenes)}};
+    if (!project.palette().empty()) {
+        // パレット色は[r,g,b,a]の配列として保存する(空なら省略)
+        json jPalette = json::array();
+        for (const Bitmap::Pixel& color : project.palette()) {
+            jPalette.push_back({color.r, color.g, color.b, color.a});
+        }
+        jProject["palette"] = std::move(jPalette);
+    }
+
     json root;
     root["schemaVersion"] = kSchemaVersion;
-    root["project"] = {{"name", project.name()}, {"scenes", std::move(jScenes)}};
+    root["project"] = std::move(jProject);
     const std::string jsonStr = root.dump();
 
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -192,6 +202,18 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                         if (!loadLayerFrames(layer, jLayer)) return nullptr;
                     }
                 }
+            }
+        }
+
+        // パレットはオプショナル(存在しなければ空のまま)
+        if (jProject.contains("palette")) {
+            for (const json& jColor : jProject.at("palette")) {
+                Bitmap::Pixel color;
+                color.r = jColor.at(0).get<uint8_t>();
+                color.g = jColor.at(1).get<uint8_t>();
+                color.b = jColor.at(2).get<uint8_t>();
+                color.a = jColor.at(3).get<uint8_t>();
+                project->palette().push_back(color);
             }
         }
         return project;

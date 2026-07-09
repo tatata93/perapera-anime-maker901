@@ -26,6 +26,7 @@
 #include "render/GLCanvas.h"
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
+#include "ui/PalettePanel.h"
 
 namespace {
 constexpr int kCanvasWidth = 1920;
@@ -301,7 +302,18 @@ void MainWindow::setupPanels() {
     connect(m_layerPanel, &LayerPanel::moveUpRequested, this, [this] { moveActiveLayer(+1); });
     connect(m_layerPanel, &LayerPanel::moveDownRequested, this, [this] { moveActiveLayer(-1); });
 
+    m_palettePanel = new PalettePanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_palettePanel);
+    connect(m_palettePanel, &PalettePanel::colorSelected, this, [this](QColor color) {
+        m_penColor = color;
+        m_canvas->setPenColor(m_penColor);
+        updatePenColorButton();
+    });
+    connect(m_palettePanel, &PalettePanel::addCurrentColorRequested, this, &MainWindow::addCurrentColorToPalette);
+    connect(m_palettePanel, &PalettePanel::removeSelectedRequested, this, &MainWindow::removeSelectedPaletteColor);
+
     updateLayerPanel();
+    updatePalettePanel();
 }
 
 void MainWindow::updateLayerPanel() {
@@ -366,6 +378,34 @@ void MainWindow::moveActiveLayer(int delta) {
     updateWindowTitle();
 }
 
+void MainWindow::updatePalettePanel() {
+    if (!m_palettePanel) return;
+    QList<QColor> colors;
+    for (const core::Bitmap::Pixel& color : m_project->palette()) {
+        colors.append(QColor(color.r, color.g, color.b, color.a));
+    }
+    m_palettePanel->setPalette(colors);
+}
+
+void MainWindow::addCurrentColorToPalette() {
+    m_project->palette().push_back({static_cast<uint8_t>(m_penColor.red()), static_cast<uint8_t>(m_penColor.green()),
+                                     static_cast<uint8_t>(m_penColor.blue()), static_cast<uint8_t>(m_penColor.alpha())});
+    m_dirty = true;
+    updatePalettePanel();
+    updateWindowTitle();
+}
+
+void MainWindow::removeSelectedPaletteColor() {
+    if (!m_palettePanel) return;
+    const int index = m_palettePanel->selectedIndex();
+    auto& palette = m_project->palette();
+    if (index < 0 || static_cast<size_t>(index) >= palette.size()) return;
+    palette.erase(palette.begin() + index);
+    m_dirty = true;
+    updatePalettePanel();
+    updateWindowTitle();
+}
+
 void MainWindow::setupMenus() {
     QMenu* fileMenu = menuBar()->addMenu(tr("ファイル(&F)"));
 
@@ -400,6 +440,7 @@ void MainWindow::setupMenus() {
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
     viewMenu->addAction(m_framePanel->toggleViewAction());
     viewMenu->addAction(m_layerPanel->toggleViewAction());
+    viewMenu->addAction(m_palettePanel->toggleViewAction());
     viewMenu->addSeparator();
     QAction* resetViewAction = viewMenu->addAction(tr("ビューをリセット(&R)"));
     resetViewAction->setShortcut(QKeySequence(tr("Ctrl+0")));
@@ -457,6 +498,7 @@ void MainWindow::newDocument() {
     m_canvas->clearTextureCache();  // 旧プロジェクトのBitmapポインタ再利用に備えて破棄
     updateFrameLabel();
     updateLayerPanel();
+    updatePalettePanel();
     m_currentFilePath.clear();
     m_dirty = false;
     updateWindowTitle();
@@ -497,6 +539,7 @@ bool MainWindow::loadFromFile(const QString& path) {
     m_canvas->clearTextureCache();
     setCurrentFrame(0);
     updateLayerPanel();
+    updatePalettePanel();
     m_currentFilePath = path;
     m_dirty = false;
     updateWindowTitle();
@@ -731,6 +774,29 @@ bool MainWindow::performAutosave() {
 
 QString MainWindow::debugTriggerAutosave() {
     return performAutosave() ? autosavePath() : QString();
+}
+
+int MainWindow::debugPaletteRoundTrip(const QString& ppamPath) {
+    // パレットに3色を追加→保存→新規(パレット空になる)→読込を行い、往復結果を検証する
+    const core::Bitmap::Pixel expected[3] = {{255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}};
+    m_project->palette().clear();
+    for (const core::Bitmap::Pixel& color : expected) {
+        m_project->palette().push_back(color);
+    }
+
+    if (!saveToFile(ppamPath)) return 1;
+    newDocument();  // パレットが空に戻ることを確認する前提の状態にする
+    if (!loadFromFile(ppamPath)) return 1;
+
+    const auto& loaded = m_project->palette();
+    if (loaded.size() != 3) return 1;
+    for (int i = 0; i < 3; ++i) {
+        if (loaded[static_cast<size_t>(i)].r != expected[i].r || loaded[static_cast<size_t>(i)].g != expected[i].g ||
+            loaded[static_cast<size_t>(i)].b != expected[i].b || loaded[static_cast<size_t>(i)].a != expected[i].a) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 void MainWindow::checkAutosaveRecovery() {

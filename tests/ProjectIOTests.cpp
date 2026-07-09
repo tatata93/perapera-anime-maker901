@@ -31,6 +31,9 @@ core::Project makeSampleProject() {
     f2.bitmap().fill({1, 2, 3, 4});
 
     project.addScene("Scene 2").addCut("Cut B");
+
+    project.palette().push_back({255, 0, 0, 255});
+    project.palette().push_back({0, 255, 0, 128});
     return project;
 }
 
@@ -76,6 +79,16 @@ TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
     const core::Bitmap& b2 = layer.frame(2).bitmap();
     REQUIRE(b2.width() == 4);
     REQUIRE(b2.pixel(2, 2).a == 4);
+
+    REQUIRE(loaded->palette().size() == 2);
+    REQUIRE(loaded->palette()[0].r == 255);
+    REQUIRE(loaded->palette()[0].g == 0);
+    REQUIRE(loaded->palette()[0].b == 0);
+    REQUIRE(loaded->palette()[0].a == 255);
+    REQUIRE(loaded->palette()[1].r == 0);
+    REQUIRE(loaded->palette()[1].g == 255);
+    REQUIRE(loaded->palette()[1].b == 0);
+    REQUIRE(loaded->palette()[1].a == 128);
 
     std::filesystem::remove(path);
 }

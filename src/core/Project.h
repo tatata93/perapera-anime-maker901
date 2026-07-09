@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "Bitmap.h"
 #include "Scene.h"
 
 namespace core {
@@ -23,9 +24,14 @@ public:
     Scene& scene(size_t index) { return *m_scenes.at(index); }
     const Scene& scene(size_t index) const { return *m_scenes.at(index); }
 
+    // カラーパレット(登録色の一覧)。既定は空
+    std::vector<Bitmap::Pixel>& palette() { return m_palette; }
+    const std::vector<Bitmap::Pixel>& palette() const { return m_palette; }
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Scene>> m_scenes;
+    std::vector<Bitmap::Pixel> m_palette;
 };
 
 }  // namespace core

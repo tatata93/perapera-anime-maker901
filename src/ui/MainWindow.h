@@ -11,6 +11,7 @@
 class FramePanel;
 class GLCanvas;
 class LayerPanel;
+class PalettePanel;
 class QCloseEvent;
 class QLabel;
 class QSlider;
@@ -47,6 +48,8 @@ public:
     void debugSetupFillDemo();
     // 自動保存確認用: performAutosave()を即実行し、保存先パスを返す(失敗時は空文字)
     QString debugTriggerAutosave();
+    // カラーパレット確認用: パレットに3色追加→保存→新規→読込を行い、往復が正しければ0、不一致なら1を返す
+    int debugPaletteRoundTrip(const QString& ppamPath);
 
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
     // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる
@@ -89,6 +92,11 @@ private:
     void removeActiveLayer();
     void moveActiveLayer(int delta);
 
+    // カラーパレットパネル操作
+    void updatePalettePanel();
+    void addCurrentColorToPalette();
+    void removeSelectedPaletteColor();
+
     // 下敷き(参照画像/連番シーケンス)。セッション限定でプロジェクトには保存しない
     void openUnderlay();
     void clearUnderlaySequence();
@@ -120,6 +128,7 @@ private:
     QAction* m_onionAction = nullptr;
     FramePanel* m_framePanel = nullptr;
     LayerPanel* m_layerPanel = nullptr;
+    PalettePanel* m_palettePanel = nullptr;
     QString m_currentFilePath;
     bool m_dirty = false;  // 未保存の変更があるか
 
