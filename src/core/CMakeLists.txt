@@ -17,6 +17,8 @@ add_library(perapera_core STATIC
     Project.cpp
     Project.h
     Command.h
+    Compositor.cpp
+    Compositor.h
     CommandStack.cpp
     CommandStack.h
     ProjectIO.cpp
