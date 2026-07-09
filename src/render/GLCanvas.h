@@ -39,6 +39,12 @@ public:
     // 紙(白)はキャンバス側が背景として描画し、各セルは透明ビットマップとして重なる。
     // activeがnullptr(割付なしのコマ等)でも紙とスタックは描画される
     void setLayerStack(std::vector<const core::Bitmap*> stack, core::Bitmap* active);
+
+    // 塗りつぶしの境界レイヤー群。表示スタックとは独立に指定でき、
+    // 非表示の色トレス線レイヤーも境界として効かせられる。空なら表示スタックを使う
+    void setFillBoundaryLayers(std::vector<const core::Bitmap*> boundary) {
+        m_fillBoundary = std::move(boundary);
+    }
     // 単一レイヤーの簡易版(スタック={bitmap}として扱う)
     void setBitmap(core::Bitmap* bitmap);
     // オニオンスキン対象(前/次フレーム)。nullptrで非表示
@@ -121,6 +127,7 @@ private:
 
     core::Bitmap* m_bitmap = nullptr;                 // 編集対象(アクティブレイヤーのセル)
     std::vector<const core::Bitmap*> m_layerStack;    // 表示レイヤー(下→上)
+    std::vector<const core::Bitmap*> m_fillBoundary;  // 塗りつぶし境界(空なら表示スタック)
     const core::Bitmap* m_prevOnion = nullptr;
     const core::Bitmap* m_nextOnion = nullptr;
 

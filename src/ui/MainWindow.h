@@ -56,6 +56,9 @@ public:
     void debugDeleteDrawing(int idx) { deleteDrawing(idx); }
     // 塗りつぶし確認用: 閉じた矩形枠を現在フレームに描く
     void debugSetupFillDemo();
+    // 塗分け線確認用: 矩形枠+色トレス線レイヤー(赤縦線)を作り、彩色レイヤーをアクティブにする
+    void debugSetupColorTraceDemo();
+    void debugSetCleanView(bool enabled);
     // 自動保存確認用: performAutosave()を即実行し、保存先パスを返す(失敗時は空文字)
     QString debugTriggerAutosave();
     // カラーパレット確認用: パレットに3色追加→保存→新規→読込を行い、往復が正しければ0、不一致なら1を返す
@@ -146,6 +149,7 @@ private:
     size_t m_activeLayer = 0;  // 編集対象のレイヤーインデックス(アクティブセル内)
     bool m_onionEnabled = true;
     bool m_playing = false;
+    bool m_cleanView = false;  // 仕上げ表示(色トレス線・作監修正を隠す最終画プレビュー)
 
     QTimer* m_playTimer = nullptr;
     QLabel* m_frameLabel = nullptr;

@@ -303,6 +303,32 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --colortrace-test <PNG1> <PNG2> で塗分け線ワークフローを検証する。
+    // 矩形枠+赤トレス縦線→左半分を塗る→PNG1(トレス線表示)→仕上げ表示+右半分を塗る→PNG2
+    // (PNG2でトレス線は見えないが境界として効いていること=右半分だけ塗られることを確認)
+    const int traceIndex = args.indexOf("--colortrace-test");
+    if (traceIndex >= 0 && traceIndex + 2 < args.size()) {
+        const QString out1 = args.at(traceIndex + 1);
+        const QString out2 = args.at(traceIndex + 2);
+        QTimer::singleShot(500, &window, [&window, out1, out2] {
+            window.debugSetupColorTraceDemo();
+            window.canvas()->setPenColor(QColor(255, 160, 40));  // オレンジ
+            const qreal w = window.canvas()->width();
+            const qreal h = window.canvas()->height();
+            window.canvas()->debugFillAt(QPointF(w * 0.42, h * 0.5));  // 左半分
+            QTimer::singleShot(200, &window, [&window, out1, out2, w, h] {
+                window.canvas()->grabFramebuffer().save(out1);
+                window.debugSetCleanView(true);  // トレス線を隠す
+                window.canvas()->setPenColor(QColor(60, 180, 90));  // 緑
+                window.canvas()->debugFillAt(QPointF(w * 0.58, h * 0.5));  // 右半分(隠れた線が境界)
+                QTimer::singleShot(200, &window, [&window, out2] {
+                    window.canvas()->grabFramebuffer().save(out2);
+                    QApplication::exit(0);
+                });
+            });
+        });
+    }
+
     // 動作確認用: --perf-test <出力TXT> でストローク描画+再描画を繰り返し、描画時間(ms)を出力する
     const int perfIndex = args.indexOf("--perf-test");
     if (perfIndex >= 0 && perfIndex + 1 < args.size()) {

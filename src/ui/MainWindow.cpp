@@ -114,16 +114,27 @@ core::Layer& MainWindow::activeLayer() {
 void MainWindow::updateCanvasLayers() {
     core::Cut& cut = activeCut();
     std::vector<const core::Bitmap*> stack;
+    std::vector<const core::Bitmap*> fillBoundary;
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
         core::Cel& cel = cut.cel(ci);
         if (!cel.visible()) continue;
         const int drawing = cel.exposure(m_currentFrame);
         if (drawing < 0) continue;  // このコマにセルなし
+        const bool isActiveCel = (ci == m_activeCel);
         for (size_t li = 0; li < cel.layerCount(); ++li) {
             core::Layer& layer = cel.layer(li);
-            if (!layer.visible()) continue;
-            if (static_cast<size_t>(drawing) < layer.frameCount()) {
-                stack.push_back(&layer.frame(static_cast<size_t>(drawing)).bitmap());
+            if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
+            const core::Bitmap* bitmap = &layer.frame(static_cast<size_t>(drawing)).bitmap();
+
+            // 仕上げ表示中は色トレス線・作監修正レイヤーを隠す(最終画プレビュー)
+            const bool hiddenByCleanView =
+                m_cleanView && (layer.role() == core::LayerRole::ColorTrace || layer.role() == core::LayerRole::Correction);
+            if (layer.visible() && !hiddenByCleanView) {
+                stack.push_back(bitmap);
+                fillBoundary.push_back(bitmap);
+            } else if (isActiveCel && layer.role() == core::LayerRole::ColorTrace) {
+                // 塗分け線: アクティブセルの色トレス線は非表示でも塗りつぶし境界として効かせる
+                fillBoundary.push_back(bitmap);
             }
         }
     }
@@ -134,6 +145,7 @@ void MainWindow::updateCanvasLayers() {
     if (activeDrawing >= 0 && static_cast<size_t>(activeDrawing) < activeLayer().frameCount()) {
         editTarget = &activeLayer().frame(static_cast<size_t>(activeDrawing)).bitmap();
     }
+    m_canvas->setFillBoundaryLayers(std::move(fillBoundary));
     m_canvas->setLayerStack(std::move(stack), editTarget);
 }
 
@@ -789,6 +801,14 @@ void MainWindow::setupMenus() {
     viewMenu->addAction(m_palettePanel->toggleViewAction());
     viewMenu->addAction(m_xsheetPanel->toggleViewAction());
     viewMenu->addSeparator();
+    // 仕上げ表示: 色トレス線・作監修正レイヤーを隠して最終画を確認する(書き出しと同じ見え方)
+    QAction* cleanViewAction = viewMenu->addAction(tr("仕上げ表示(トレス線/修正を隠す)(&C)"));
+    cleanViewAction->setCheckable(true);
+    cleanViewAction->setShortcut(QKeySequence(Qt::Key_T));
+    connect(cleanViewAction, &QAction::toggled, this, [this](bool checked) {
+        m_cleanView = checked;
+        updateCanvasLayers();
+    });
     QAction* resetViewAction = viewMenu->addAction(tr("ビューをリセット(&R)"));
     resetViewAction->setShortcut(QKeySequence(tr("Ctrl+0")));
     connect(resetViewAction, &QAction::triggered, this, [this] { m_canvas->resetView(); });
@@ -1118,6 +1138,33 @@ void MainWindow::debugSetupFillDemo() {
     engine.endStroke();
 
     m_canvas->clearTextureCache();
+    updateCanvasLayers();
+}
+
+void MainWindow::debugSetupColorTraceDemo() {
+    // 1. 主線レイヤー(レイヤー1)に閉じた矩形枠を描く
+    debugSetupFillDemo();
+
+    // 2. 色トレス線レイヤーを追加し、矩形を左右に分ける赤い縦線を描く
+    addLayerToActiveCel();  // レイヤー2(アクティブになる)
+    activeLayer().setRole(core::LayerRole::ColorTrace);
+    core::Bitmap& trace = activeLayer().frame(0).bitmap();
+    core::BrushEngine engine;
+    engine.settings().radius = 6.0f;
+    engine.settings().color = {220, 30, 30, 255};  // 色トレス線(赤)
+    engine.beginStroke(trace, kCanvasWidth * 0.5f, kCanvasHeight * 0.25f, 1.0f);
+    engine.continueStroke(trace, kCanvasWidth * 0.5f, kCanvasHeight * 0.75f, 1.0f);
+    engine.endStroke();
+
+    // 3. 彩色用レイヤーを追加してアクティブに(塗り先)
+    addLayerToActiveCel();  // レイヤー3
+    m_canvas->clearTextureCache();
+    updateCanvasLayers();
+    updateLayerPanel();
+}
+
+void MainWindow::debugSetCleanView(bool enabled) {
+    m_cleanView = enabled;
     updateCanvasLayers();
 }
 

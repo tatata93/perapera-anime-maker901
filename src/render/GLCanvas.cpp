@@ -422,7 +422,9 @@ void GLCanvas::performFill(QPointF widgetPos) {
 
     const core::Bitmap::Pixel color{static_cast<uint8_t>(m_penColor.red()), static_cast<uint8_t>(m_penColor.green()),
                                     static_cast<uint8_t>(m_penColor.blue()), 255};
-    const auto dirty = core::floodFill(*m_bitmap, m_layerStack, static_cast<int>(img.x()), static_cast<int>(img.y()), color);
+    // 境界は専用リスト(非表示の色トレス線も含む)。未指定なら表示スタックを使う
+    const auto& boundary = m_fillBoundary.empty() ? m_layerStack : m_fillBoundary;
+    const auto dirty = core::floodFill(*m_bitmap, boundary, static_cast<int>(img.x()), static_cast<int>(img.y()), color);
     if (dirty.isEmpty()) return;
 
     if (m_strokeCommandSink) {
