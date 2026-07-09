@@ -13,7 +13,8 @@ namespace core {
 class ProjectIO {
 public:
     static constexpr uint32_t kContainerVersion = 1;
-    static constexpr int kSchemaVersion = 1;
+    // v2: Cut→Cel→Layer階層(セル導入)。v1(Cut直下にlayers)も読み込み時に互換対応する
+    static constexpr int kSchemaVersion = 2;
 
     // 失敗時はfalseを返し、errorOutに日本語のエラー内容を格納する
     static bool save(const Project& project, const std::filesystem::path& path, std::string* errorOut = nullptr);

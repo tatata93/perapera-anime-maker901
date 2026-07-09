@@ -16,6 +16,10 @@ public:
     const std::string& name() const { return m_name; }
     void setName(std::string name) { m_name = std::move(name); }
 
+    // 可視フラグ(既定true)。falseの場合、キャンバス合成時にこのレイヤーは積まれない
+    bool visible() const { return m_visible; }
+    void setVisible(bool visible) { m_visible = visible; }
+
     Frame& addFrame();
     Frame& insertFrame(size_t index);  // index位置に挿入(0..frameCount())
     void removeFrame(size_t index);
@@ -27,6 +31,7 @@ public:
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Frame>> m_frames;
+    bool m_visible = true;
 };
 
 }  // namespace core

@@ -31,33 +31,39 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
         json jCuts = json::array();
         for (size_t ci = 0; ci < scene.cutCount(); ++ci) {
             const Cut& cut = scene.cut(ci);
-            json jLayers = json::array();
-            for (size_t li = 0; li < cut.layerCount(); ++li) {
-                const Layer& layer = cut.layer(li);
-                json jFrames = json::array();
-                for (size_t fi = 0; fi < layer.frameCount(); ++fi) {
-                    const Bitmap& bitmap = layer.frame(fi).bitmap();
-                    json jFrame;
-                    jFrame["width"] = bitmap.width();
-                    jFrame["height"] = bitmap.height();
-                    if (!bitmap.isEmpty()) {
-                        uLongf compSize = compressBound(static_cast<uLong>(bitmap.byteSize()));
-                        std::vector<unsigned char> compressed(compSize);
-                        if (compress2(compressed.data(), &compSize, bitmap.data(), static_cast<uLong>(bitmap.byteSize()),
-                                      Z_DEFAULT_COMPRESSION) != Z_OK) {
-                            setError(errorOut, "ピクセルデータの圧縮に失敗しました");
-                            return false;
+            json jCels = json::array();
+            for (size_t ceIdx = 0; ceIdx < cut.celCount(); ++ceIdx) {
+                const Cel& cel = cut.cel(ceIdx);
+                json jLayers = json::array();
+                for (size_t li = 0; li < cel.layerCount(); ++li) {
+                    const Layer& layer = cel.layer(li);
+                    json jFrames = json::array();
+                    for (size_t fi = 0; fi < layer.frameCount(); ++fi) {
+                        const Bitmap& bitmap = layer.frame(fi).bitmap();
+                        json jFrame;
+                        jFrame["width"] = bitmap.width();
+                        jFrame["height"] = bitmap.height();
+                        if (!bitmap.isEmpty()) {
+                            uLongf compSize = compressBound(static_cast<uLong>(bitmap.byteSize()));
+                            std::vector<unsigned char> compressed(compSize);
+                            if (compress2(compressed.data(), &compSize, bitmap.data(),
+                                          static_cast<uLong>(bitmap.byteSize()), Z_DEFAULT_COMPRESSION) != Z_OK) {
+                                setError(errorOut, "ピクセルデータの圧縮に失敗しました");
+                                return false;
+                            }
+                            jFrame["blobOffset"] = blobs.size();
+                            jFrame["blobSize"] = static_cast<uint64_t>(compSize);
+                            jFrame["rawSize"] = static_cast<uint64_t>(bitmap.byteSize());
+                            blobs.insert(blobs.end(), compressed.begin(), compressed.begin() + compSize);
                         }
-                        jFrame["blobOffset"] = blobs.size();
-                        jFrame["blobSize"] = static_cast<uint64_t>(compSize);
-                        jFrame["rawSize"] = static_cast<uint64_t>(bitmap.byteSize());
-                        blobs.insert(blobs.end(), compressed.begin(), compressed.begin() + compSize);
+                        jFrames.push_back(std::move(jFrame));
                     }
-                    jFrames.push_back(std::move(jFrame));
+                    jLayers.push_back(
+                        {{"name", layer.name()}, {"visible", layer.visible()}, {"frames", std::move(jFrames)}});
                 }
-                jLayers.push_back({{"name", layer.name()}, {"frames", std::move(jFrames)}});
+                jCels.push_back({{"name", cel.name()}, {"visible", cel.visible()}, {"layers", std::move(jLayers)}});
             }
-            jCuts.push_back({{"name", cut.name()}, {"layers", std::move(jLayers)}});
+            jCuts.push_back({{"name", cut.name()}, {"cels", std::move(jCels)}});
         }
         jScenes.push_back({{"name", scene.name()}, {"cuts", std::move(jCuts)}});
     }
@@ -144,35 +150,56 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
         const json& jProject = root.at("project");
         auto project = std::make_unique<Project>(jProject.at("name").get<std::string>());
 
+        // レイヤー1つ分(frames配列)を読み込む共通処理
+        const auto loadLayerFrames = [&](Layer& layer, const json& jLayer) -> bool {
+            layer.setVisible(jLayer.value("visible", true));
+            for (const json& jFrame : jLayer.at("frames")) {
+                Frame& frame = layer.addFrame();
+                const int w = jFrame.at("width").get<int>();
+                const int h = jFrame.at("height").get<int>();
+                if (w <= 0 || h <= 0) continue;  // 空フレーム
+
+                const uint64_t offset = jFrame.at("blobOffset").get<uint64_t>();
+                const uint64_t blobSize = jFrame.at("blobSize").get<uint64_t>();
+                const uint64_t rawSize = jFrame.at("rawSize").get<uint64_t>();
+
+                Bitmap bitmap(w, h);
+                if (rawSize != bitmap.byteSize() || offset + blobSize > blobTotal) {
+                    setError(errorOut, "ファイルが壊れています(ピクセルデータ不整合)");
+                    return false;
+                }
+
+                uLongf destLen = static_cast<uLongf>(rawSize);
+                if (uncompress(bitmap.data(), &destLen, blobBase + offset, static_cast<uLong>(blobSize)) != Z_OK ||
+                    destLen != rawSize) {
+                    setError(errorOut, "ファイルが壊れています(展開に失敗)");
+                    return false;
+                }
+                frame.bitmap() = std::move(bitmap);
+            }
+            return true;
+        };
+
         for (const json& jScene : jProject.at("scenes")) {
             Scene& scene = project->addScene(jScene.at("name").get<std::string>());
             for (const json& jCut : jScene.at("cuts")) {
                 Cut& cut = scene.addCut(jCut.at("name").get<std::string>());
-                for (const json& jLayer : jCut.at("layers")) {
-                    Layer& layer = cut.addLayer(jLayer.at("name").get<std::string>());
-                    for (const json& jFrame : jLayer.at("frames")) {
-                        Frame& frame = layer.addFrame();
-                        const int w = jFrame.at("width").get<int>();
-                        const int h = jFrame.at("height").get<int>();
-                        if (w <= 0 || h <= 0) continue;  // 空フレーム
-
-                        const uint64_t offset = jFrame.at("blobOffset").get<uint64_t>();
-                        const uint64_t blobSize = jFrame.at("blobSize").get<uint64_t>();
-                        const uint64_t rawSize = jFrame.at("rawSize").get<uint64_t>();
-
-                        Bitmap bitmap(w, h);
-                        if (rawSize != bitmap.byteSize() || offset + blobSize > blobTotal) {
-                            setError(errorOut, "ファイルが壊れています(ピクセルデータ不整合)");
-                            return nullptr;
+                if (jCut.contains("cels")) {
+                    // v2: Cut→Cel→Layer
+                    for (const json& jCel : jCut.at("cels")) {
+                        Cel& cel = cut.addCel(jCel.at("name").get<std::string>());
+                        cel.setVisible(jCel.value("visible", true));
+                        for (const json& jLayer : jCel.at("layers")) {
+                            Layer& layer = cel.addLayer(jLayer.at("name").get<std::string>());
+                            if (!loadLayerFrames(layer, jLayer)) return nullptr;
                         }
-
-                        uLongf destLen = static_cast<uLongf>(rawSize);
-                        if (uncompress(bitmap.data(), &destLen, blobBase + offset, static_cast<uLong>(blobSize)) != Z_OK ||
-                            destLen != rawSize) {
-                            setError(errorOut, "ファイルが壊れています(展開に失敗)");
-                            return nullptr;
-                        }
-                        frame.bitmap() = std::move(bitmap);
+                    }
+                } else if (jCut.contains("layers")) {
+                    // v1互換: Cut直下のlayersを既定セル1つに包んで読み込む
+                    Cel& cel = cut.addCel("セル A");
+                    for (const json& jLayer : jCut.at("layers")) {
+                        Layer& layer = cel.addLayer(jLayer.at("name").get<std::string>());
+                        if (!loadLayerFrames(layer, jLayer)) return nullptr;
                     }
                 }
             }

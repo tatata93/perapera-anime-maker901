@@ -81,20 +81,31 @@ core::Cut& MainWindow::activeCut() {
     return m_project->scene(0).cut(0);
 }
 
-core::Layer& MainWindow::activeLayer() {
+core::Cel& MainWindow::activeCel() {
     core::Cut& cut = activeCut();
-    m_activeLayer = std::min(m_activeLayer, cut.layerCount() - 1);
-    return cut.layer(m_activeLayer);
+    m_activeCel = std::min(m_activeCel, cut.celCount() - 1);
+    return cut.cel(m_activeCel);
 }
 
-// カット内の全レイヤーから現在フレームのセルを集め、下→上の描画順でキャンバスに渡す
+core::Layer& MainWindow::activeLayer() {
+    core::Cel& cel = activeCel();
+    m_activeLayer = std::min(m_activeLayer, cel.layerCount() - 1);
+    return cel.layer(m_activeLayer);
+}
+
+// カット内の全セル×全レイヤーから現在フレームの絵を集め、下→上の描画順でキャンバスに渡す
 void MainWindow::updateCanvasLayers() {
     core::Cut& cut = activeCut();
     std::vector<const core::Bitmap*> stack;
-    for (size_t li = 0; li < cut.layerCount(); ++li) {
-        core::Layer& layer = cut.layer(li);
-        if (m_currentFrame < layer.frameCount()) {
-            stack.push_back(&layer.frame(m_currentFrame).bitmap());
+    for (size_t ci = 0; ci < cut.celCount(); ++ci) {
+        core::Cel& cel = cut.cel(ci);
+        if (!cel.visible()) continue;
+        for (size_t li = 0; li < cel.layerCount(); ++li) {
+            core::Layer& layer = cel.layer(li);
+            if (!layer.visible()) continue;
+            if (m_currentFrame < layer.frameCount()) {
+                stack.push_back(&layer.frame(m_currentFrame).bitmap());
+            }
         }
     }
 
@@ -108,11 +119,13 @@ void MainWindow::createNewDocument() {
     m_project = std::make_unique<core::Project>("Untitled");
     core::Scene& scene = m_project->addScene("Scene 1");
     core::Cut& cut = scene.addCut("Cut 1");
-    core::Layer& layer = cut.addLayer("Layer 1");
+    core::Cel& cel = cut.addCel("セル A");
+    core::Layer& layer = cel.addLayer("レイヤー 1");
     core::Frame& frame = layer.addFrame();
     frame.bitmap() = makeTransparentCel();
 
     m_currentFrame = 0;
+    m_activeCel = 0;
     m_activeLayer = 0;
     updateCanvasLayers();
     updateOnionSkin();
@@ -130,9 +143,13 @@ void MainWindow::setCurrentFrame(size_t index) {
 
 void MainWindow::addFrameAfterCurrent() {
     if (m_playing) return;
-    core::Layer& layer = activeLayer();
-    core::Frame& frame = layer.insertFrame(m_currentFrame + 1);
-    frame.bitmap() = makeTransparentCel();
+    // セル内の全レイヤーに同時にコマを追加し、レイヤー間でコマ数がずれないようにする
+    core::Cel& cel = activeCel();
+    for (size_t li = 0; li < cel.layerCount(); ++li) {
+        core::Layer& layer = cel.layer(li);
+        const size_t insertAt = std::min(m_currentFrame + 1, layer.frameCount());
+        layer.insertFrame(insertAt).bitmap() = makeTransparentCel();
+    }
     m_commands.clear();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 挿入でフレーム構造が変わったため
     setCurrentFrame(m_currentFrame + 1);
@@ -142,9 +159,12 @@ void MainWindow::addFrameAfterCurrent() {
 
 void MainWindow::deleteCurrentFrame() {
     if (m_playing) return;
-    core::Layer& layer = activeLayer();
-    if (layer.frameCount() <= 1) return;  // 最後の1枚は消さない
-    layer.removeFrame(m_currentFrame);
+    core::Cel& cel = activeCel();
+    if (activeLayer().frameCount() <= 1) return;  // 最後の1枚は消さない
+    for (size_t li = 0; li < cel.layerCount(); ++li) {
+        core::Layer& layer = cel.layer(li);
+        if (m_currentFrame < layer.frameCount()) layer.removeFrame(m_currentFrame);
+    }
     m_commands.clear();             // 削除されたBitmapを参照するコマンドを破棄
     m_canvas->clearTextureCache();  // 削除されたBitmapのテクスチャを破棄
     setCurrentFrame(m_currentFrame > 0 ? m_currentFrame - 1 : 0);
@@ -374,8 +394,9 @@ bool MainWindow::loadFromFile(const QString& path) {
         return false;
     }
     // MVPで扱える構造(1シーン・1カット・1レイヤー・1フレーム以上)を検証する
-    if (project->sceneCount() == 0 || project->scene(0).cutCount() == 0 || project->scene(0).cut(0).layerCount() == 0 ||
-        project->scene(0).cut(0).layer(0).frameCount() == 0) {
+    if (project->sceneCount() == 0 || project->scene(0).cutCount() == 0 || project->scene(0).cut(0).celCount() == 0 ||
+        project->scene(0).cut(0).cel(0).layerCount() == 0 ||
+        project->scene(0).cut(0).cel(0).layer(0).frameCount() == 0) {
         QMessageBox::warning(this, tr("読み込みエラー"), tr("プロジェクトにフレームがありません"));
         return false;
     }
@@ -383,6 +404,8 @@ bool MainWindow::loadFromFile(const QString& path) {
     if (m_playing) togglePlayback();
     m_commands.clear();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
     m_project = std::move(project);
+    m_activeCel = 0;
+    m_activeLayer = 0;
     m_canvas->clearTextureCache();
     setCurrentFrame(0);
     m_currentFilePath = path;

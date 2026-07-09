@@ -6,6 +6,8 @@ add_library(perapera_core STATIC
     Frame.h
     Layer.cpp
     Layer.h
+    Cel.cpp
+    Cel.h
     Cut.cpp
     Cut.h
     Scene.cpp

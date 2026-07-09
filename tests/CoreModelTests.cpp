@@ -2,12 +2,13 @@
 
 #include "core/Project.h"
 
-TEST_CASE("Project owns Scene -> Cut -> Layer -> Frame hierarchy", "[core]") {
+TEST_CASE("Project owns Scene -> Cut -> Cel -> Layer -> Frame hierarchy", "[core]") {
     core::Project project("Test Project");
 
     core::Scene& scene = project.addScene("Scene 1");
     core::Cut& cut = scene.addCut("Cut 1");
-    core::Layer& layer = cut.addLayer("Layer 1");
+    core::Cel& cel = cut.addCel("Cel A");
+    core::Layer& layer = cel.addLayer("Layer 1");
     core::Frame& frame = layer.addFrame();
 
     SECTION("hierarchy is reachable via index accessors") {
@@ -15,9 +16,11 @@ TEST_CASE("Project owns Scene -> Cut -> Layer -> Frame hierarchy", "[core]") {
         REQUIRE(project.scene(0).name() == "Scene 1");
         REQUIRE(project.scene(0).cutCount() == 1);
         REQUIRE(project.scene(0).cut(0).name() == "Cut 1");
-        REQUIRE(project.scene(0).cut(0).layerCount() == 1);
-        REQUIRE(project.scene(0).cut(0).layer(0).name() == "Layer 1");
-        REQUIRE(project.scene(0).cut(0).layer(0).frameCount() == 1);
+        REQUIRE(project.scene(0).cut(0).celCount() == 1);
+        REQUIRE(project.scene(0).cut(0).cel(0).name() == "Cel A");
+        REQUIRE(project.scene(0).cut(0).cel(0).layerCount() == 1);
+        REQUIRE(project.scene(0).cut(0).cel(0).layer(0).name() == "Layer 1");
+        REQUIRE(project.scene(0).cut(0).cel(0).layer(0).frameCount() == 1);
     }
 
     SECTION("frame bitmap can be resized and edited") {
@@ -50,8 +53,61 @@ TEST_CASE("Project owns Scene -> Cut -> Layer -> Frame hierarchy", "[core]") {
         REQUIRE(layer.frame(1).bitmap().width() == 8);
         REQUIRE(layer.frame(2).bitmap().isEmpty());
     }
+}
 
-    (void)cut;
+TEST_CASE("Layer and Cel visibility default to true and can be toggled", "[core]") {
+    core::Layer layer("Layer 1");
+    REQUIRE(layer.visible());
+    layer.setVisible(false);
+    REQUIRE_FALSE(layer.visible());
+
+    core::Cel cel("Cel A");
+    REQUIRE(cel.visible());
+    cel.setVisible(false);
+    REQUIRE_FALSE(cel.visible());
+}
+
+TEST_CASE("Cel::moveLayer reorders layers", "[core]") {
+    core::Cel cel("Cel A");
+    cel.addLayer("Layer 1");
+    cel.addLayer("Layer 2");
+    cel.addLayer("Layer 3");
+
+    SECTION("moving forward shifts intervening layers back") {
+        cel.moveLayer(0, 2);
+        REQUIRE(cel.layer(0).name() == "Layer 2");
+        REQUIRE(cel.layer(1).name() == "Layer 3");
+        REQUIRE(cel.layer(2).name() == "Layer 1");
+    }
+
+    SECTION("moving backward shifts intervening layers forward") {
+        cel.moveLayer(2, 0);
+        REQUIRE(cel.layer(0).name() == "Layer 3");
+        REQUIRE(cel.layer(1).name() == "Layer 1");
+        REQUIRE(cel.layer(2).name() == "Layer 2");
+    }
+
+    SECTION("out-of-range indices are ignored") {
+        cel.moveLayer(0, 5);
+        REQUIRE(cel.layer(0).name() == "Layer 1");
+    }
+
+    SECTION("moving a layer to itself is a no-op") {
+        cel.moveLayer(1, 1);
+        REQUIRE(cel.layer(1).name() == "Layer 2");
+    }
+}
+
+TEST_CASE("Cut::moveCel reorders cels", "[core]") {
+    core::Cut cut("Cut 1");
+    cut.addCel("Cel A");
+    cut.addCel("Cel B");
+    cut.addCel("Cel C");
+
+    cut.moveCel(0, 2);
+    REQUIRE(cut.cel(0).name() == "Cel B");
+    REQUIRE(cut.cel(1).name() == "Cel C");
+    REQUIRE(cut.cel(2).name() == "Cel A");
 }
 
 TEST_CASE("Project supports multiple scenes and cuts", "[core]") {

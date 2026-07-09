@@ -14,7 +14,10 @@ core::Project makeSampleProject() {
     core::Project project("Sample");
     core::Scene& scene = project.addScene("Scene 1");
     core::Cut& cut = scene.addCut("Cut A");
-    core::Layer& layer = cut.addLayer("Layer 1");
+    core::Cel& cel = cut.addCel("Cel A");
+    cel.setVisible(false);  // 属性の往復も確認する
+    core::Layer& layer = cel.addLayer("Layer 1");
+    layer.setVisible(false);
 
     core::Frame& f0 = layer.addFrame();
     f0.bitmap() = core::Bitmap(16, 8);
@@ -49,8 +52,14 @@ TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
     REQUIRE(loaded->scene(1).cutCount() == 1);
     REQUIRE(loaded->scene(1).cut(0).name() == "Cut B");
 
-    const core::Layer& layer = loaded->scene(0).cut(0).layer(0);
+    REQUIRE(loaded->scene(0).cut(0).celCount() == 1);
+    const core::Cel& cel = loaded->scene(0).cut(0).cel(0);
+    REQUIRE(cel.name() == "Cel A");
+    REQUIRE_FALSE(cel.visible());
+
+    const core::Layer& layer = cel.layer(0);
     REQUIRE(layer.name() == "Layer 1");
+    REQUIRE_FALSE(layer.visible());
     REQUIRE(layer.frameCount() == 3);
 
     const core::Bitmap& b0 = layer.frame(0).bitmap();
@@ -67,6 +76,33 @@ TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
     const core::Bitmap& b2 = layer.frame(2).bitmap();
     REQUIRE(b2.width() == 4);
     REQUIRE(b2.pixel(2, 2).a == 4);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("ProjectIO loads v1 files by wrapping layers into a default cel", "[core][io]") {
+    // v1(セル階層なし)のファイルを手組みで作成する
+    const auto path = tempFile("ppam_v1_compat.ppam");
+    const std::string jsonStr =
+        R"({"schemaVersion":1,"project":{"name":"Old","scenes":[{"name":"S1","cuts":[)"
+        R"({"name":"C1","layers":[{"name":"L1","frames":[{"width":0,"height":0}]}]}]}]}})";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write("PPAM", 4);
+        const uint32_t version = 1;
+        const uint64_t jsonSize = jsonStr.size();
+        out.write(reinterpret_cast<const char*>(&version), 4);
+        out.write(reinterpret_cast<const char*>(&jsonSize), 8);
+        out.write(jsonStr.data(), static_cast<std::streamsize>(jsonStr.size()));
+    }
+
+    std::string error;
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+    REQUIRE(loaded->scene(0).cut(0).celCount() == 1);
+    REQUIRE(loaded->scene(0).cut(0).cel(0).name() == "セル A");
+    REQUIRE(loaded->scene(0).cut(0).cel(0).layer(0).name() == "L1");
+    REQUIRE(loaded->scene(0).cut(0).cel(0).layer(0).frameCount() == 1);
 
     std::filesystem::remove(path);
 }
