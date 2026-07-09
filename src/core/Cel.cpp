@@ -25,7 +25,8 @@ void Cel::applyStepPattern(int step, size_t frameCount) {
     if (drawings == 0) return;
     for (size_t t = 0; t < frameCount; ++t) {
         const int drawing = static_cast<int>(t) / step;
-        m_exposure[t] = std::min(drawing, drawings - 1);  // 動画が尽きたら最後の絵で止め
+        if (drawing >= drawings) break;  // 動画が尽きたら以降は空欄のまま
+        m_exposure[t] = drawing;
     }
 }
 

@@ -142,11 +142,12 @@ TEST_CASE("Cel exposure sheet maps frames to drawings", "[core][sheet]") {
         REQUIRE(cel.exposure(5) == 2);
     }
 
-    SECTION("applyStepPattern: 動画が尽きたら最後の絵で止め") {
+    SECTION("applyStepPattern: 動画が尽きたら以降は空欄") {
         cut.setFrameCount(8);
-        cel.applyStepPattern(2, 8);
-        REQUIRE(cel.exposure(6) == 2);
-        REQUIRE(cel.exposure(7) == 2);
+        cel.applyStepPattern(2, 8);  // 動画3枚×2コマ=6コマ分だけ割付
+        REQUIRE(cel.exposure(5) == 2);
+        REQUIRE(cel.exposure(6) == -1);
+        REQUIRE(cel.exposure(7) == -1);
     }
 
     SECTION("setFrameCount(尺)の変更が全セルの露出表長に反映される") {
