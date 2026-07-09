@@ -59,8 +59,9 @@ void main() {
 )";
 
 constexpr float kOnionStrength = 0.55f;
-const QVector3D kPrevTint(0.95f, 0.35f, 0.35f);  // 前フレーム: 赤系
-const QVector3D kNextTint(0.30f, 0.75f, 0.35f);  // 次フレーム: 緑系
+const QVector3D kPrevTint(0.95f, 0.35f, 0.35f);       // 前フレーム: 赤系
+const QVector3D kNextTint(0.30f, 0.75f, 0.35f);       // 次フレーム: 緑系
+const QVector3D kLightTableTint(0.35f, 0.45f, 0.90f);  // ライトテーブル: 青系(オニオンと区別)
 
 }  // namespace
 
@@ -90,6 +91,11 @@ void GLCanvas::setBitmap(core::Bitmap* bitmap) {
 void GLCanvas::setOnionSkin(const core::Bitmap* prev, const core::Bitmap* next) {
     m_prevOnion = prev;
     m_nextOnion = next;
+    update();
+}
+
+void GLCanvas::setLightTable(std::vector<const core::Bitmap*> bitmaps) {
+    m_lightTable = std::move(bitmaps);
     update();
 }
 
@@ -279,9 +285,10 @@ QTransform GLCanvas::viewTransform() const {
     const qreal fitScale = qMin(ww / iw, wh / ih);
     const qreal scale = fitScale * m_zoom;
 
-    // widget = 中心+パン → 回転 → 拡縮 → 画像中心を原点へ、の順で画像座標に適用される
+    // widget = 中心+パン → 反転 → 回転 → 拡縮 → 画像中心を原点へ、の順で画像座標に適用される
     QTransform t;
     t.translate(ww * 0.5 + m_panOffset.x(), wh * 0.5 + m_panOffset.y());
+    if (m_mirrorView) t.scale(-1.0, 1.0);  // 左右反転表示(ミラーチェック)
     t.rotate(m_rotationDeg);
     t.scale(scale, scale);
     t.translate(-iw * 0.5, -ih * 0.5);
@@ -372,6 +379,25 @@ void GLCanvas::paintGL() {
     }
     glDisable(GL_BLEND);
 
+    // ライトテーブル(任意動画の透かし表示): オニオンと同じ乗算方式で、青系固定色に着色して重ねる
+    if (!m_lightTable.empty()) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ZERO, GL_SRC_COLOR);
+
+        m_program->setUniformValue("uTint", kLightTableTint);
+        m_program->setUniformValue("uOnionStrength", kOnionStrength);
+        m_program->setUniformValue("uUnderlayMix", 0.0f);
+        for (const core::Bitmap* bitmap : m_lightTable) {
+            QOpenGLTexture* tex = getOrCreateTexture(bitmap);
+            if (!tex) continue;
+            tex->bind();
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            tex->release();
+        }
+
+        glDisable(GL_BLEND);
+    }
+
     // オニオンスキン(乗算ブレンドで白地を無視して色線のみ重ねる)
     if (m_prevOnion || m_nextOnion) {
         glEnable(GL_BLEND);
@@ -445,6 +471,7 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
     }
     const QPointF img = widgetToImage(widgetPos);
     m_strokeActive = true;
+    m_smoothedImagePos = img;  // 手ブレ補正の起点
     if (m_strokeCommandSink) m_strokeSnapshot = *m_bitmap;  // Undo用に開始時点を保存
     const auto dirty = m_brush.beginStroke(*m_bitmap, static_cast<float>(img.x()), static_cast<float>(img.y()), pressure);
     m_strokeDirty = dirty;
@@ -454,7 +481,15 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
 
 void GLCanvas::pointerMove(QPointF widgetPos, float pressure) {
     if (!m_bitmap || !m_strokeActive) return;
-    const QPointF img = widgetToImage(widgetPos);
+    QPointF img = widgetToImage(widgetPos);
+
+    // 手ブレ補正: 生のペン位置へ指数移動平均で追従させ、線を滑らかにする
+    if (m_stabilizer > 0) {
+        const qreal alpha = 1.0 - 0.92 * (m_stabilizer / 100.0);  // 0→即追従, 100→強い平滑化
+        m_smoothedImagePos += (img - m_smoothedImagePos) * alpha;
+        img = m_smoothedImagePos;
+    }
+
     const auto dirty = m_brush.continueStroke(*m_bitmap, static_cast<float>(img.x()), static_cast<float>(img.y()), pressure);
     m_strokeDirty.unite(dirty);
     queueUpload(m_bitmap, dirty);

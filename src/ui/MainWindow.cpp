@@ -218,13 +218,15 @@ void MainWindow::togglePlayback() {
     if (m_playing) {
         m_playAction->setText(tr("停止"));
         m_canvas->setInputEnabled(false);
-        updateOnionSkin();  // 再生中はオニオンスキンを消す
+        updateOnionSkin();          // 再生中はオニオンスキンを消す
+        m_canvas->setLightTable({});  // 再生中はライトテーブルも消す
         m_playTimer->start(1000 / std::max(1, m_fpsSpin->value()));
     } else {
         m_playTimer->stop();
         m_playAction->setText(tr("再生"));
         m_canvas->setInputEnabled(true);
         updateOnionSkin();
+        updateLightTable();  // 再生停止でライトテーブルを復元する
     }
 }
 
@@ -269,6 +271,41 @@ void MainWindow::updateOnionSkin() {
     m_canvas->setOnionSkin(prev, next);
 }
 
+// 動画インデックス一覧→アクティブレイヤーの該当frame(i).bitmap()を集める。
+// 現在コマに割付中の動画は重複表示を避けるため除外する
+std::vector<const core::Bitmap*> MainWindow::collectLightTableBitmaps(const QList<int>& drawings) {
+    core::Cel& cel = activeCel();
+    core::Layer& layer = activeLayer();
+    const int current = cel.exposure(m_currentFrame);
+
+    std::vector<const core::Bitmap*> bitmaps;
+    for (int drawing : drawings) {
+        if (drawing < 0 || static_cast<size_t>(drawing) >= layer.frameCount()) continue;
+        if (drawing == current) continue;
+        bitmaps.push_back(&layer.frame(static_cast<size_t>(drawing)).bitmap());
+    }
+    return bitmaps;
+}
+
+void MainWindow::updateLightTable() {
+    if (m_playing) return;  // 再生中はtogglePlaybackが明示的に消すのでここでは触らない
+    if (!m_framePanel) {
+        m_canvas->setLightTable({});
+        return;
+    }
+    m_canvas->setLightTable(collectLightTableBitmaps(m_framePanel->lightTableDrawings()));
+}
+
+void MainWindow::debugSetLightTable(const QList<int>& drawings) {
+    m_canvas->setLightTable(collectLightTableBitmaps(drawings));
+}
+
+void MainWindow::debugSetOnionEnabled(bool enabled) {
+    m_onionEnabled = enabled;
+    if (m_onionAction) m_onionAction->setChecked(enabled);
+    updateOnionSkin();
+}
+
 void MainWindow::updateFrameLabel() {
     if (m_frameLabel) {
         m_frameLabel->setText(
@@ -303,6 +340,8 @@ void MainWindow::updateFrameLabel() {
         m_framePanel->setDrawings(displayOrder, cel.exposure(m_currentFrame));
         m_framePanel->setWindowTitle(tr("動画 - セル %1").arg(QString::fromStdString(cel.name())));
     }
+    // 動画一覧(チェック状態)の再構築後にライトテーブルも追従させる(構造変更後の破棄漏れ防止)
+    updateLightTable();
 }
 
 void MainWindow::openUnderlay() {
@@ -376,8 +415,10 @@ void MainWindow::setupPanels() {
         updateWindowTitle();
     });
     connect(m_framePanel, &FramePanel::addRequested, this, &MainWindow::addFrameAfterCurrent);
+    connect(m_framePanel, &FramePanel::duplicateRequested, this, &MainWindow::duplicateDrawing);
     connect(m_framePanel, &FramePanel::deleteRequested, this, &MainWindow::deleteDrawing);
     connect(m_framePanel, &FramePanel::sortModeChanged, this, [this] { updateFrameLabel(); });
+    connect(m_framePanel, &FramePanel::lightTableChanged, this, &MainWindow::updateLightTable);
 
     m_layerPanel = new LayerPanel(this);
     addDockWidget(Qt::RightDockWidgetArea, m_layerPanel);
@@ -748,6 +789,32 @@ void MainWindow::deleteDrawing(int idx) {
     updateWindowTitle();
 }
 
+void MainWindow::duplicateDrawing(int idx) {
+    if (m_playing) return;
+    core::Cel& cel = activeCel();
+    if (idx < 0 || static_cast<size_t>(idx) >= cel.drawingCount()) return;
+
+    // 新しい動画を作る(セル内全レイヤーに同時追加し、複製元動画idxの内容をコピーする)。
+    // 割付規則はaddFrameAfterCurrentと同じ: 現在コマが空欄ならその場、割付済みなら次コマ・尺延長
+    const int newDrawing = static_cast<int>(cel.drawingCount());
+    for (size_t li = 0; li < cel.layerCount(); ++li) {
+        core::Layer& layer = cel.layer(li);
+        const core::Bitmap sourceBitmap = layer.frame(static_cast<size_t>(idx)).bitmap();  // addFrame前にコピーしておく
+        layer.addFrame().bitmap() = sourceBitmap;
+    }
+    const bool currentIsEmpty = cel.exposure(m_currentFrame) == -1;
+    const size_t target = currentIsEmpty ? m_currentFrame : m_currentFrame + 1;
+    core::Cut& cut = activeCut();
+    if (target >= cut.frameCount()) cut.setFrameCount(target + 1);
+    cel.setExposure(target, newDrawing);
+
+    m_commands.clear();             // 構造変更のためUndo履歴を破棄
+    m_canvas->clearTextureCache();  // 動画構造が変わったため
+    setCurrentFrame(target);
+    m_dirty = true;
+    updateWindowTitle();
+}
+
 void MainWindow::toggleCelVisibility(int celIndex) {
     if (m_playing) return;
     core::Cut& cut = activeCut();
@@ -809,6 +876,12 @@ void MainWindow::setupMenus() {
         m_cleanView = checked;
         updateCanvasLayers();
     });
+    // 左右反転表示(ミラーチェック): デッサンの狂いを確認する定番機能
+    QAction* mirrorAction = viewMenu->addAction(tr("左右反転表示(&M)"));
+    mirrorAction->setCheckable(true);
+    mirrorAction->setShortcut(QKeySequence(Qt::Key_H));
+    connect(mirrorAction, &QAction::toggled, this, [this](bool checked) { m_canvas->setMirrorView(checked); });
+
     QAction* resetViewAction = viewMenu->addAction(tr("ビューをリセット(&R)"));
     resetViewAction->setShortcut(QKeySequence(tr("Ctrl+0")));
     connect(resetViewAction, &QAction::triggered, this, [this] { m_canvas->resetView(); });
@@ -1010,6 +1083,16 @@ void MainWindow::setupToolBar() {
     connect(m_penColorButton, &QToolButton::clicked, this, &MainWindow::choosePenColor);
     toolBar->addWidget(m_penColorButton);
     updatePenColorButton();
+
+    // 手ブレ補正(0=なし〜100=最大)
+    toolBar->addWidget(new QLabel(tr(" 補正: "), this));
+    auto* stabilizerSpin = new QSpinBox(this);
+    stabilizerSpin->setRange(0, 100);
+    stabilizerSpin->setValue(20);
+    stabilizerSpin->setFocusPolicy(Qt::ClickFocus);
+    stabilizerSpin->setToolTip(tr("手ブレ補正の強さ"));
+    connect(stabilizerSpin, &QSpinBox::valueChanged, this, [this](int v) { m_canvas->setStabilizer(v); });
+    toolBar->addWidget(stabilizerSpin);
 
     toolBar->addSeparator();
 

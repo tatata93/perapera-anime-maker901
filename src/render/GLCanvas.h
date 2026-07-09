@@ -5,6 +5,7 @@
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
 #include <QTransform>
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <unordered_map>
@@ -49,6 +50,9 @@ public:
     void setBitmap(core::Bitmap* bitmap);
     // オニオンスキン対象(前/次フレーム)。nullptrで非表示
     void setOnionSkin(const core::Bitmap* prev, const core::Bitmap* next);
+    // ライトテーブル(任意動画の透かし表示)。オニオンスキンと同じ乗算方式で、青系固定色に着色して重ねる。
+    // 空で非表示
+    void setLightTable(std::vector<const core::Bitmap*> bitmaps);
     // フレーム構造の変更(追加/削除)後に呼び、古いテクスチャを破棄する
     void clearTextureCache();
     // Undo/Redo等で外部からBitmapの一部が書き換えられた際に部分再アップロードを予約する
@@ -82,6 +86,15 @@ public:
     // ビュー操作: ズーム倍率(フィット基準)・回転(度)・パン。リセットでフィット表示に戻る
     void resetView();
     float zoom() const { return m_zoom; }
+
+    // 左右反転表示(ミラーチェック用)。表示のみ反転し、描画座標は正しく逆変換される
+    void setMirrorView(bool mirrored) {
+        m_mirrorView = mirrored;
+        update();
+    }
+
+    // 手ブレ補正の強さ(0=なし〜100=最大)。ペン/消しゴムのストロークを平滑化する
+    void setStabilizer(int strength) { m_stabilizer = std::clamp(strength, 0, 100); }
 
     // 端から端まで筆圧を変えながら1ストローク描く(動作確認用フック)
     void debugSimulateStroke();
@@ -130,6 +143,7 @@ private:
     std::vector<const core::Bitmap*> m_fillBoundary;  // 塗りつぶし境界(空なら表示スタック)
     const core::Bitmap* m_prevOnion = nullptr;
     const core::Bitmap* m_nextOnion = nullptr;
+    std::vector<const core::Bitmap*> m_lightTable;  // ライトテーブル表示対象(任意の動画群)
 
     core::BrushEngine m_brush;
     Tool m_tool = Tool::Pen;
@@ -155,7 +169,12 @@ private:
     qreal m_rotationDeg = 0.0;   // 時計回りの回転角(度)
     QPointF m_panOffset{0, 0};   // ウィジェット中心からのずれ(px)
     bool m_panning = false;
+    bool m_mirrorView = false;   // 左右反転表示(ミラーチェック)
     QPointF m_lastPanPos;
+
+    // 手ブレ補正
+    int m_stabilizer = 20;        // 強さ(0-100)
+    QPointF m_smoothedImagePos;   // 平滑化されたペン位置(画像座標)
 
     std::unique_ptr<QOpenGLShaderProgram> m_program;
     std::unordered_map<const core::Bitmap*, std::unique_ptr<QOpenGLTexture>> m_textures;

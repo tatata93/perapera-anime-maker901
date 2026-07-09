@@ -329,6 +329,24 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --lighttable-test <出力PNG> でオニオンデモ(動画3枚、1コマ打ち、
+    // コマ2=動画2を表示)を組んだ後、動画1・3をライトテーブル(青系透かし)に指定し、
+    // オニオンスキンは無効化した状態のフレームバッファを保存する。
+    // 期待結果: 青系の縦線2本(動画1・3)+黒の実線1本(動画2、通常表示)
+    const int lightTableIndex = args.indexOf("--lighttable-test");
+    if (lightTableIndex >= 0 && lightTableIndex + 1 < args.size()) {
+        const QString outputPath = args.at(lightTableIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupOnionDemo();  // 動画3枚、1コマ打ち、現在コマ2(動画2)を表示
+            window.debugSetLightTable(QList<int>{0, 2});  // 動画1・3を透かし指定
+            window.debugSetOnionEnabled(false);            // オニオンスキンは無効化
+            QTimer::singleShot(200, &window, [&window, outputPath] {
+                window.canvas()->grabFramebuffer().save(outputPath);
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
     // 動作確認用: --perf-test <出力TXT> でストローク描画+再描画を繰り返し、描画時間(ms)を出力する
     const int perfIndex = args.indexOf("--perf-test");
     if (perfIndex >= 0 && perfIndex + 1 < args.size()) {

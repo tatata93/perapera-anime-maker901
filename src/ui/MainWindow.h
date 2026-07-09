@@ -54,6 +54,12 @@ public:
     void debugSetCelVisible(int celIndex, bool visible);
     // 動画削除確認用: deleteDrawing()の公開ラッパー
     void debugDeleteDrawing(int idx) { deleteDrawing(idx); }
+    // 動画複製確認用: duplicateDrawing()の公開ラッパー
+    void debugDuplicateDrawing(int idx) { duplicateDrawing(idx); }
+    // ライトテーブル確認用: FramePanelのチェック操作を経由せず、指定した動画一覧を直接透かし表示に設定する
+    void debugSetLightTable(const QList<int>& drawings);
+    // オニオンスキン確認用: 有効/無効を直接切り替える
+    void debugSetOnionEnabled(bool enabled);
     // 塗りつぶし確認用: 閉じた矩形枠を現在フレームに描く
     void debugSetupFillDemo();
     // 塗分け線確認用: 矩形枠+色トレス線レイヤー(赤縦線)を作り、彩色レイヤーをアクティブにする
@@ -104,6 +110,11 @@ private:
 
     // 動画(絵)管理操作
     void deleteDrawing(int idx);
+    void duplicateDrawing(int idx);
+
+    // ライトテーブル(任意動画の透かし表示)
+    void updateLightTable();
+    std::vector<const core::Bitmap*> collectLightTableBitmaps(const QList<int>& drawings);
 
     // レイヤーパネル操作
     void updateLayerPanel();
