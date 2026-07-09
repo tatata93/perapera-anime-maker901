@@ -10,6 +10,7 @@
 
 class FramePanel;
 class GLCanvas;
+class QCloseEvent;
 class QLabel;
 class QSlider;
 class QSpinBox;
@@ -38,6 +39,15 @@ public:
     void debugRedo() { redo(); }
     // 下敷き確認用: ファイルダイアログを出さずに指定パスから下敷き連番を設定する
     void debugSetUnderlayFile(const QString& path);
+    // 自動保存確認用: performAutosave()を即実行し、保存先パスを返す(失敗時は空文字)
+    QString debugTriggerAutosave();
+
+    // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
+    // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる
+    void checkAutosaveRecovery();
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private:
     void createNewDocument();
@@ -74,6 +84,10 @@ private:
     void choosePenColor();
     void updatePenColorButton();
 
+    // 自動保存・クラッシュリカバリ
+    QString autosavePath() const;
+    bool performAutosave();
+
     std::unique_ptr<core::Project> m_project;
     core::CommandStack m_commands;
     GLCanvas* m_canvas = nullptr;
@@ -89,6 +103,10 @@ private:
     QAction* m_onionAction = nullptr;
     FramePanel* m_framePanel = nullptr;
     QString m_currentFilePath;
+    bool m_dirty = false;  // 未保存の変更があるか
+
+    // 自動保存
+    QTimer* m_autosaveTimer = nullptr;
 
     // ブラシ設定UI(太さスライダー・色選択ボタン)
     QSlider* m_penRadiusSlider = nullptr;
