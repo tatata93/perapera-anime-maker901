@@ -25,6 +25,7 @@ public:
 
     Pixel pixel(int x, int y) const;
     void setPixel(int x, int y, Pixel color);
+    void fill(Pixel color);
 
 private:
     int m_width = 0;

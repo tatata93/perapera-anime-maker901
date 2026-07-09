@@ -22,4 +22,13 @@ void Bitmap::setPixel(int x, int y, Pixel color) {
     m_pixels[offset + 3] = color.a;
 }
 
+void Bitmap::fill(Pixel color) {
+    for (size_t i = 0; i + 3 < m_pixels.size(); i += 4) {
+        m_pixels[i] = color.r;
+        m_pixels[i + 1] = color.g;
+        m_pixels[i + 2] = color.b;
+        m_pixels[i + 3] = color.a;
+    }
+}
+
 }  // namespace core

@@ -1,6 +1,8 @@
 add_library(perapera_core STATIC
     Bitmap.cpp
     Bitmap.h
+    BrushEngine.cpp
+    BrushEngine.h
     Frame.h
     Layer.cpp
     Layer.h
