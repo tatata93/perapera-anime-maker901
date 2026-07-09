@@ -1,3 +1,5 @@
+add_subdirectory(core)
+
 add_executable(perapera-anime-maker901
     main.cpp
     ui/MainWindow.cpp
@@ -7,6 +9,7 @@ add_executable(perapera-anime-maker901
 )
 
 target_link_libraries(perapera-anime-maker901 PRIVATE
+    perapera_core
     Qt6::Widgets
     Qt6::OpenGLWidgets
 )

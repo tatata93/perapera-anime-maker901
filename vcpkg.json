@@ -1,0 +1,7 @@
+{
+  "name": "perapera-anime-maker901",
+  "version": "0.1.0",
+  "dependencies": [
+    "catch2"
+  ]
+}
