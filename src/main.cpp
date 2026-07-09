@@ -269,6 +269,40 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --drawing-delete-test <PNG1> <PNG2> でオニオンデモ(動画3枚、1コマ打ち、
+    // コマ2=動画2を表示)を組んだ状態を保存後、動画2を削除して(コマ2が空欄になり、
+    // 旧動画3が動画2に詰まる)再度保存する
+    const int drawingDeleteIndex = args.indexOf("--drawing-delete-test");
+    if (drawingDeleteIndex >= 0 && drawingDeleteIndex + 2 < args.size()) {
+        const QString out1 = args.at(drawingDeleteIndex + 1);
+        const QString out2 = args.at(drawingDeleteIndex + 2);
+        QTimer::singleShot(500, &window, [&window, out1, out2] {
+            window.debugSetupOnionDemo();  // 動画3枚、1コマ打ち、現在コマ2(動画2)を表示
+            QTimer::singleShot(200, &window, [&window, out1, out2] {
+                window.canvas()->grabFramebuffer().save(out1);  // 動画2(黒縦線)
+                window.debugDeleteDrawing(1);                    // 動画2を削除
+                QTimer::singleShot(200, &window, [&window, out2] {
+                    window.canvas()->grabFramebuffer().save(out2);  // コマ2は空欄→白紙
+                    QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                });
+            });
+        });
+    }
+
+    // 動作確認用: --cels-ui-test <出力PNG> でセルデモ(セルA/セルB)のウィンドウ全体を保存する。
+    // タイムシートの列反転確認用(セルB列が左、セルA列が右に表示されるはず)
+    const int celsUiIndex = args.indexOf("--cels-ui-test");
+    if (celsUiIndex >= 0 && celsUiIndex + 1 < args.size()) {
+        const QString outputPath = args.at(celsUiIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupCelDemo();
+            QTimer::singleShot(200, &window, [&window, outputPath] {
+                window.grab().save(outputPath);
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
     // 動作確認用: --perf-test <出力TXT> でストローク描画+再描画を繰り返し、描画時間(ms)を出力する
     const int perfIndex = args.indexOf("--perf-test");
     if (perfIndex >= 0 && perfIndex + 1 < args.size()) {

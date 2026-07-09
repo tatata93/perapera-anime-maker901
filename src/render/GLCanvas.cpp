@@ -265,12 +265,12 @@ void GLCanvas::flushPendingUpload() {
 }
 
 QTransform GLCanvas::viewTransform() const {
-    if (!m_bitmap || m_bitmap->isEmpty()) return {};
+    if (m_canvasWidth <= 0 || m_canvasHeight <= 0) return {};
 
     const qreal ww = width();
     const qreal wh = height();
-    const qreal iw = m_bitmap->width();
-    const qreal ih = m_bitmap->height();
+    const qreal iw = m_canvasWidth;
+    const qreal ih = m_canvasHeight;
     const qreal fitScale = qMin(ww / iw, wh / ih);
     const qreal scale = fitScale * m_zoom;
 
@@ -308,7 +308,8 @@ void GLCanvas::paintGL() {
         m_paintMsEma = m_paintMsEma <= 0.0 ? ms : m_paintMsEma * 0.9 + ms * 0.1;
     };
 
-    if (!m_bitmap || m_bitmap->isEmpty() || !m_program) {
+    // 編集対象が空(割付なしのコマ等)でも紙と他セルは描く
+    if (!m_program || m_canvasWidth <= 0 || m_canvasHeight <= 0) {
         recordTime();
         return;
     }
@@ -317,8 +318,8 @@ void GLCanvas::paintGL() {
     const QTransform t = viewTransform();
     const qreal ww = width();
     const qreal wh = height();
-    const qreal iw = m_bitmap->width();
-    const qreal ih = m_bitmap->height();
+    const qreal iw = m_canvasWidth;
+    const qreal ih = m_canvasHeight;
     const QPointF tl = t.map(QPointF(0, 0));
     const QPointF tr = t.map(QPointF(iw, 0));
     const QPointF bl = t.map(QPointF(0, ih));

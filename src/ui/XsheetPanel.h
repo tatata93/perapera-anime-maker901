@@ -10,6 +10,7 @@ class QTableWidgetItem;
 class QSpinBox;
 
 // タイムシート(Xsheet)パネル。行=コマ(行ヘッダ「1」「2」...)、列=セル(列ヘッダ=セル名)。
+// 実際のタイムシートの慣習に合わせ、列0(左端)が最前面(セルの内部インデックス末尾)になるよう表示を反転する。
 // 各セル欄には動画番号を1始まりで表示・入力する(内部の露出値は0始まり、空欄は-1)。
 class XsheetPanel : public QDockWidget {
     Q_OBJECT
@@ -39,6 +40,11 @@ private:
     void onItemChanged(QTableWidgetItem* item);
     void onCellClicked(int row, int column);
     void showHeaderContextMenu(const QPoint& pos);
+
+    // 表示列(0=左端)とセル内部インデックス(0=最奥)を相互変換する。
+    // タイムシートの慣習(左=最前面)に合わせて反転させる。シグナルは常に内部インデックスを渡す
+    int colToCel(int col) const;
+    int celToCol(int celIndex) const;
 
     QTableWidget* m_table = nullptr;
     QSpinBox* m_frameCountSpin = nullptr;

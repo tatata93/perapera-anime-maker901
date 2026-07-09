@@ -29,8 +29,15 @@ public:
     explicit GLCanvas(QWidget* parent = nullptr);
     ~GLCanvas() override;
 
+    // キャンバス(作画用紙)のサイズ。編集対象が空のコマでも紙を描くために独立して持つ
+    void setCanvasSize(int width, int height) {
+        m_canvasWidth = width;
+        m_canvasHeight = height;
+    }
+
     // レイヤースタック(下→上の描画順)と編集対象を設定する(所有権は持たない)。
-    // 紙(白)はキャンバス側が背景として描画し、各セルは透明ビットマップとして重なる
+    // 紙(白)はキャンバス側が背景として描画し、各セルは透明ビットマップとして重なる。
+    // activeがnullptr(割付なしのコマ等)でも紙とスタックは描画される
     void setLayerStack(std::vector<const core::Bitmap*> stack, core::Bitmap* active);
     // 単一レイヤーの簡易版(スタック={bitmap}として扱う)
     void setBitmap(core::Bitmap* bitmap);
@@ -126,6 +133,10 @@ private:
     StrokeCommandSink m_strokeCommandSink;
     core::Bitmap m_strokeSnapshot;   // ストローク開始時点の全体コピー(Undo用)
     core::DirtyRect m_strokeDirty{};  // ストローク全体の書き換え矩形
+
+    // キャンバスサイズ(作画用紙の画素数)
+    int m_canvasWidth = 0;
+    int m_canvasHeight = 0;
 
     // ビュー状態
     float m_zoom = 1.0f;         // フィット表示を1.0とする倍率

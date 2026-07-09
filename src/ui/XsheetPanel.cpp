@@ -2,6 +2,7 @@
 
 #include <QAbstractItemView>
 #include <QAction>
+#include <QColor>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -81,7 +82,7 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
 void XsheetPanel::onItemChanged(QTableWidgetItem* item) {
     if (m_updating) return;
     const int frame = item->row();
-    const int celIndex = item->column();
+    const int celIndex = colToCel(item->column());
 
     const QString text = item->text().trimmed();
     int drawing = -1;  // 空欄扱い
@@ -94,20 +95,29 @@ void XsheetPanel::onItemChanged(QTableWidgetItem* item) {
 }
 
 void XsheetPanel::onCellClicked(int row, int column) {
-    emit cellClicked(column, row);
+    emit cellClicked(colToCel(column), row);
 }
 
 void XsheetPanel::showHeaderContextMenu(const QPoint& pos) {
     QHeaderView* header = m_table->horizontalHeader();
-    const int celIndex = header->logicalIndexAt(pos);
-    if (celIndex < 0) return;
+    const int column = header->logicalIndexAt(pos);
+    if (column < 0) return;
 
     QMenu menu(this);
     QAction* toggleAction = menu.addAction(tr("表示/非表示"));
     QAction* chosen = menu.exec(header->viewport()->mapToGlobal(pos));
     if (chosen == toggleAction) {
-        emit celVisibilityToggleRequested(celIndex);
+        emit celVisibilityToggleRequested(colToCel(column));
     }
+}
+
+int XsheetPanel::colToCel(int col) const {
+    // 列0(左端)を内部インデックスの末尾(最前面)に対応させる
+    return m_table->columnCount() - 1 - col;
+}
+
+int XsheetPanel::celToCol(int celIndex) const {
+    return m_table->columnCount() - 1 - celIndex;
 }
 
 void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVisible,
@@ -128,8 +138,10 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
         }
     }
 
-    // 列ヘッダ: 非表示セルには「 (非表示)」を付け、アクティブセルは太字にする
+    // 列ヘッダ: タイムシートの慣習(左=最前面)に合わせ、列0(左端)=内部インデックス末尾として反転表示する。
+    // 非表示セルには「 (非表示)」を付け、アクティブセルは太字にする
     for (int c = 0; c < celCount; ++c) {
+        const int col = celToCol(c);
         QString label = celNames.at(c);
         const bool visible = c < celVisible.size() ? celVisible.at(c) : true;
         if (!visible) label += tr(" (非表示)");
@@ -137,7 +149,7 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
         QFont font = headerItem->font();
         font.setBold(c == activeCel);
         headerItem->setFont(font);
-        m_table->setHorizontalHeaderItem(c, headerItem);
+        m_table->setHorizontalHeaderItem(col, headerItem);
     }
 
     QStringList rowLabels;
@@ -145,23 +157,25 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
     for (int f = 0; f < frameCount; ++f) rowLabels << QString::number(f + 1);
     m_table->setVerticalHeaderLabels(rowLabels);
 
+    // アクティブセル列の全セル欄を薄い背景色にして、選択位置を明確にする(非アクティブ列は白)
+    static const QColor kActiveColumnBackground(225, 238, 255);
     for (int c = 0; c < celCount; ++c) {
+        const int col = celToCol(c);
         const QList<int>& column = exposures.at(c);
+        const QColor background = (c == activeCel) ? kActiveColumnBackground : QColor(Qt::white);
         for (int f = 0; f < frameCount; ++f) {
-            QTableWidgetItem* item = m_table->item(f, c);
+            QTableWidgetItem* item = m_table->item(f, col);
             const int drawing = f < column.size() ? column.at(f) : -1;
             item->setText(drawing >= 0 ? QString::number(drawing + 1) : QString());
+            item->setBackground(background);
         }
     }
 
-    if (frameCount > 0) {
+    if (frameCount > 0 && celCount > 0) {
         const int row = std::clamp(currentFrame, 0, frameCount - 1);
-        m_table->selectRow(row);  // 現在コマの行を選択表示する
-        if (celCount > 0) {
-            const int col = std::clamp(activeCel, 0, celCount - 1);
-            // selectRowによる行選択を崩さず、キーボード操作用のカレントセルだけ設定する
-            m_table->setCurrentCell(row, col, QItemSelectionModel::NoUpdate);
-        }
+        const int col = celToCol(std::clamp(activeCel, 0, celCount - 1));
+        // 現在コマ×アクティブセルの1マスだけを明確に選択表示する
+        m_table->setCurrentCell(row, col, QItemSelectionModel::ClearAndSelect);
     }
 
     m_updating = false;

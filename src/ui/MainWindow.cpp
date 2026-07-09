@@ -53,6 +53,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("perapera-anime-maker901");
 
     m_canvas = new GLCanvas(this);
+    m_canvas->setCanvasSize(kCanvasWidth, kCanvasHeight);
     setCentralWidget(m_canvas);
     m_canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
         m_commands.push(std::move(command));  // pushは冪等なexecute(after画素の再書き込み)を伴う
@@ -260,9 +261,33 @@ void MainWindow::updateFrameLabel() {
             QStringLiteral(" コマ %1 / %2 ").arg(m_currentFrame + 1).arg(activeCut().frameCount()));
     }
     if (m_framePanel) {
+        core::Cel& cel = activeCel();
+        const int drawingCount = static_cast<int>(cel.drawingCount());
+
+        QList<int> displayOrder;
+        displayOrder.reserve(drawingCount);
+        if (m_framePanel->sortMode() == 1) {
+            // 再生順: 露出表を先頭から走査し、動画の初出順に並べる
+            QList<bool> used;
+            used.fill(false, drawingCount);
+            for (size_t f = 0; f < activeCut().frameCount(); ++f) {
+                const int drawing = cel.exposure(f);
+                if (drawing < 0 || drawing >= drawingCount || used[drawing]) continue;
+                used[drawing] = true;
+                displayOrder.append(drawing);
+            }
+            // シートに登場しない動画は末尾に番号順で追加する
+            for (int d = 0; d < drawingCount; ++d) {
+                if (!used[d]) displayOrder.append(d);
+            }
+        } else {
+            // 番号順
+            for (int d = 0; d < drawingCount; ++d) displayOrder.append(d);
+        }
+
         // 動画(絵)一覧。選択=現在コマに割り付けられた動画
-        m_framePanel->setFrames(static_cast<int>(activeCel().drawingCount()),
-                                activeCel().exposure(m_currentFrame));
+        m_framePanel->setDrawings(displayOrder, cel.exposure(m_currentFrame));
+        m_framePanel->setWindowTitle(tr("動画 - セル %1").arg(QString::fromStdString(cel.name())));
     }
 }
 
@@ -336,6 +361,8 @@ void MainWindow::setupPanels() {
         updateOnionSkin();
         updateWindowTitle();
     });
+    connect(m_framePanel, &FramePanel::deleteRequested, this, &MainWindow::deleteDrawing);
+    connect(m_framePanel, &FramePanel::sortModeChanged, this, [this] { updateFrameLabel(); });
 
     m_layerPanel = new LayerPanel(this);
     addDockWidget(Qt::RightDockWidgetArea, m_layerPanel);
@@ -472,6 +499,7 @@ void MainWindow::updateLayerPanel() {
         visible.append(layer.visible());
     }
     m_layerPanel->setLayers(names, visible, static_cast<int>(m_activeLayer));
+    m_layerPanel->setWindowTitle(tr("レイヤー - セル %1").arg(QString::fromStdString(cel.name())));
 }
 
 void MainWindow::addLayerToActiveCel() {
@@ -649,6 +677,40 @@ void MainWindow::moveActiveCel(int delta) {
     // 重なり順が変わるだけでBitmapは無傷なためテクスチャキャッシュの破棄は不要
     m_dirty = true;
     updateCanvasLayers();
+    updateXsheetPanel();
+    updateLayerPanel();
+    updateFrameLabel();
+    updateWindowTitle();
+}
+
+// アクティブセルから動画(絵)1枚を削除する。全レイヤーから該当コマを取り除き、
+// 露出表(タイムシートの割付)を詰め直す
+void MainWindow::deleteDrawing(int idx) {
+    if (m_playing) return;
+    core::Cel& cel = activeCel();
+    if (cel.drawingCount() <= 1) return;  // 最後の1枚は消さない
+    if (idx < 0 || static_cast<size_t>(idx) >= cel.drawingCount()) return;
+
+    for (size_t li = 0; li < cel.layerCount(); ++li) {
+        cel.layer(li).removeFrame(static_cast<size_t>(idx));
+    }
+
+    // 露出表を修正: 削除された動画を指していたコマは空欄(-1)に、それより後ろの動画番号は1つ詰める
+    core::Cut& cut = activeCut();
+    for (size_t f = 0; f < cut.frameCount(); ++f) {
+        const int e = cel.exposure(f);
+        if (e == idx) {
+            cel.setExposure(f, -1);
+        } else if (e > idx) {
+            cel.setExposure(f, e - 1);
+        }
+    }
+
+    m_commands.clear();             // 動画のBitmapが破棄されたためUndo履歴を破棄
+    m_canvas->clearTextureCache();  // 同上、テクスチャキャッシュも破棄
+    m_dirty = true;
+    updateCanvasLayers();
+    updateOnionSkin();
     updateXsheetPanel();
     updateLayerPanel();
     updateFrameLabel();
