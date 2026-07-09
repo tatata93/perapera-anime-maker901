@@ -1,8 +1,10 @@
 #include "MainWindow.h"
 
 #include <QActionGroup>
+#include <QCloseEvent>
 #include <QColorDialog>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QImage>
@@ -11,6 +13,8 @@
 #include <QMessageBox>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStandardPaths>
+#include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
@@ -27,6 +31,10 @@ constexpr int kCanvasWidth = 1920;
 constexpr int kCanvasHeight = 1080;
 constexpr int kDefaultFps = 12;
 
+// 自動保存: ファイル名と保存間隔(3分)
+const QString kAutosaveFileName = QStringLiteral("autosave.ppam");
+constexpr int kAutosaveIntervalMs = 180 * 1000;
+
 core::Bitmap makePaperBitmap() {
     core::Bitmap bitmap(kCanvasWidth, kCanvasHeight);
     bitmap.fill({255, 255, 255, 255});
@@ -41,10 +49,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setCentralWidget(m_canvas);
     m_canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
         m_commands.push(std::move(command));  // pushは冪等なexecute(after画素の再書き込み)を伴う
+        m_dirty = true;
+        updateWindowTitle();
     });
 
     m_playTimer = new QTimer(this);
     connect(m_playTimer, &QTimer::timeout, this, &MainWindow::onPlaybackTick);
+
+    // 自動保存: 3分間隔で、未保存の変更がある場合のみ実行する
+    m_autosaveTimer = new QTimer(this);
+    connect(m_autosaveTimer, &QTimer::timeout, this, [this] {
+        if (m_dirty) performAutosave();
+    });
+    m_autosaveTimer->start(kAutosaveIntervalMs);
 
     setDockNestingEnabled(true);
 
@@ -94,6 +111,8 @@ void MainWindow::addFrameAfterCurrent() {
     m_commands.clear();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 挿入でフレーム構造が変わったため
     setCurrentFrame(m_currentFrame + 1);
+    m_dirty = true;
+    updateWindowTitle();
 }
 
 void MainWindow::deleteCurrentFrame() {
@@ -104,6 +123,8 @@ void MainWindow::deleteCurrentFrame() {
     m_commands.clear();             // 削除されたBitmapを参照するコマンドを破棄
     m_canvas->clearTextureCache();  // 削除されたBitmapのテクスチャを破棄
     setCurrentFrame(m_currentFrame > 0 ? m_currentFrame - 1 : 0);
+    m_dirty = true;
+    updateWindowTitle();
 }
 
 void MainWindow::togglePlayback() {
@@ -290,11 +311,11 @@ void MainWindow::redo() {
 
 void MainWindow::updateWindowTitle() {
     const QString base = QStringLiteral("perapera-anime-maker901");
-    if (m_currentFilePath.isEmpty()) {
-        setWindowTitle(base);
-    } else {
-        setWindowTitle(QStringLiteral("%1 - %2").arg(base, QFileInfo(m_currentFilePath).fileName()));
+    QString title = m_currentFilePath.isEmpty() ? base : QStringLiteral("%1 - %2").arg(base, QFileInfo(m_currentFilePath).fileName());
+    if (m_dirty) {
+        title = QStringLiteral("*%1").arg(title);  // 未保存の変更があることを示す
     }
+    setWindowTitle(title);
 }
 
 void MainWindow::newDocument() {
@@ -304,6 +325,7 @@ void MainWindow::newDocument() {
     m_canvas->clearTextureCache();  // 旧プロジェクトのBitmapポインタ再利用に備えて破棄
     updateFrameLabel();
     m_currentFilePath.clear();
+    m_dirty = false;
     updateWindowTitle();
 }
 
@@ -314,6 +336,7 @@ bool MainWindow::saveToFile(const QString& path) {
         return false;
     }
     m_currentFilePath = path;
+    m_dirty = false;
     updateWindowTitle();
     return true;
 }
@@ -338,6 +361,7 @@ bool MainWindow::loadFromFile(const QString& path) {
     m_canvas->clearTextureCache();
     setCurrentFrame(0);
     m_currentFilePath = path;
+    m_dirty = false;
     updateWindowTitle();
     return true;
 }
@@ -489,4 +513,67 @@ void MainWindow::debugSetupOnionDemo() {
     m_onionEnabled = true;
     if (m_onionAction) m_onionAction->setChecked(true);
     setCurrentFrame(1);
+}
+
+QString MainWindow::autosavePath() const {
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return QDir(dir).filePath(kAutosaveFileName);
+}
+
+bool MainWindow::performAutosave() {
+    // ユーザーの保存(m_currentFilePath/m_dirty)とは無関係に、専用パスへ直接保存する
+    const QString path = autosavePath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+
+    std::string error;
+    if (!core::ProjectIO::save(*m_project, std::filesystem::path(path.toStdWString()), &error)) {
+        return false;
+    }
+    statusBar()->showMessage(tr("自動保存しました"), 3000);
+    return true;
+}
+
+QString MainWindow::debugTriggerAutosave() {
+    return performAutosave() ? autosavePath() : QString();
+}
+
+void MainWindow::checkAutosaveRecovery() {
+    const QString path = autosavePath();
+    if (!QFileInfo::exists(path)) return;
+
+    const auto reply =
+        QMessageBox::question(this, tr("自動保存データの復元"), tr("前回のセッションの自動保存データが見つかりました。復元しますか？"),
+                               QMessageBox::Yes | QMessageBox::No);
+    if (reply == QMessageBox::Yes) {
+        if (loadFromFile(path)) {
+            m_currentFilePath.clear();  // 復元後は名前を付けて保存を促す
+            m_dirty = true;
+            updateWindowTitle();
+        }
+    } else {
+        QFile::remove(path);
+    }
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    if (m_dirty) {
+        const auto reply = QMessageBox::question(this, tr("確認"), tr("保存されていない変更があります。保存しますか？"),
+                                                   QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        if (reply == QMessageBox::Cancel) {
+            event->ignore();
+            return;
+        }
+        if (reply == QMessageBox::Save) {
+            save();
+            if (m_dirty) {
+                // 名前を付けて保存がキャンセルされた等で保存が完了しなかった場合はクローズしない
+                event->ignore();
+                return;
+            }
+        }
+        // Discardの場合は変更を破棄してそのままクローズする
+    }
+
+    QFile::remove(autosavePath());  // 正常終了なのでリカバリ用データは不要
+    event->accept();
 }

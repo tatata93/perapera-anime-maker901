@@ -1,5 +1,7 @@
 #include <QApplication>
+#include <QFile>
 #include <QTimer>
+#include <algorithm>
 
 #include "render/GLCanvas.h"
 #include "ui/MainWindow.h"
@@ -11,9 +13,17 @@ int main(int argc, char* argv[]) {
     window.resize(1280, 800);
     window.show();
 
+    const QStringList args = app.arguments();
+
+    // "--"で始まる動作確認用フックが1つもない場合のみクラッシュリカバリ確認を行う。
+    // ヘッドレステスト実行時に復元ダイアログが出て止まってしまうのを防ぐ
+    const bool hasTestFlag = std::any_of(args.begin(), args.end(), [](const QString& arg) { return arg.startsWith("--"); });
+    if (!hasTestFlag) {
+        window.checkAutosaveRecovery();
+    }
+
     // 動作確認用: --stroke-test <出力PNG> でストロークを自動描画し、
     // フレームバッファを保存して終了する
-    const QStringList args = app.arguments();
     const int testIndex = args.indexOf("--stroke-test");
     if (testIndex >= 0 && testIndex + 1 < args.size()) {
         const QString outputPath = args.at(testIndex + 1);
@@ -21,7 +31,7 @@ int main(int argc, char* argv[]) {
             window.canvas()->debugSimulateStroke();
             QTimer::singleShot(200, &window, [&window, outputPath] {
                 window.canvas()->grabFramebuffer().save(outputPath);
-                QApplication::quit();
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
         });
     }
@@ -35,7 +45,7 @@ int main(int argc, char* argv[]) {
             window.debugSetupOnionDemo();
             QTimer::singleShot(200, &window, [&window, outputPath] {
                 window.canvas()->grabFramebuffer().save(outputPath);
-                QApplication::quit();
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
         });
     }
@@ -49,7 +59,7 @@ int main(int argc, char* argv[]) {
             window.canvas()->debugSetView(2.0f, 15.0, QPointF(40, -20));
             QTimer::singleShot(200, &window, [&window, outputPath] {
                 window.canvas()->grabFramebuffer().save(outputPath);
-                QApplication::quit();
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
         });
     }
@@ -70,7 +80,7 @@ int main(int argc, char* argv[]) {
                     window.debugRedo();
                     QTimer::singleShot(100, &window, [&window, out3] {
                         window.canvas()->grabFramebuffer().save(out3);  // 線が復元
-                        QApplication::quit();
+                        QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
                     });
                 });
             });
@@ -85,7 +95,7 @@ int main(int argc, char* argv[]) {
             window.debugSetupOnionDemo();
             QTimer::singleShot(200, &window, [&window, outputPath] {
                 window.grab().save(outputPath);
-                QApplication::quit();
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
         });
     }
@@ -108,6 +118,25 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --autosave-test <出力PNG> でストローク描画→自動保存→新規(白紙化)→
+    // 自動保存データの読み込みを行い、自動保存/クラッシュリカバリを一括検証する
+    const int autosaveIndex = args.indexOf("--autosave-test");
+    if (autosaveIndex >= 0 && autosaveIndex + 1 < args.size()) {
+        const QString outputPath = args.at(autosaveIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.canvas()->debugSimulateStroke();
+            const QString autosavedPath = window.debugTriggerAutosave();
+            window.debugNewDocument();  // 一度白紙に戻す
+            const bool loaded = !autosavedPath.isEmpty() && window.debugLoadFrom(autosavedPath);
+            QTimer::singleShot(200, &window, [&window, outputPath, autosavedPath, loaded] {
+                window.canvas()->grabFramebuffer().save(outputPath);
+                // テストで作った自動保存ファイルを残すと次回通常起動時に偽のリカバリ提案が出るため削除する
+                if (!autosavedPath.isEmpty()) QFile::remove(autosavedPath);
+                QApplication::exit((!autosavedPath.isEmpty() && loaded) ? 0 : 1);
+            });
+        });
+    }
+
     // 動作確認用: --play-test <PNG1> <PNG2> で再生中の画面を2回保存して終了する。
     // 2枚が異なればフレームが切り替わっている
     const int playIndex = args.indexOf("--play-test");
@@ -122,7 +151,7 @@ int main(int argc, char* argv[]) {
                 // 3フレーム×83ms=249msの再生周期と重ならない遅延にする
                 QTimer::singleShot(320, &window, [&window, out2] {
                     window.canvas()->grabFramebuffer().save(out2);
-                    QApplication::quit();
+                    QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
                 });
             });
         });
@@ -139,7 +168,7 @@ int main(int argc, char* argv[]) {
             window.debugSetUnderlayFile(underlayPath);
             QTimer::singleShot(200, &window, [&window, outputPath] {
                 window.canvas()->grabFramebuffer().save(outputPath);
-                QApplication::quit();
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
         });
     }
