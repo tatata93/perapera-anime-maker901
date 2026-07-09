@@ -86,8 +86,9 @@ void GLCanvas::setTool(Tool tool) {
 void GLCanvas::applySettingsFor(Tool tool) {
     auto& settings = m_brush.settings();
     if (tool == Tool::Pen) {
-        settings.radius = 6.0f;
-        settings.color = {0, 0, 0, 255};
+        settings.radius = m_penRadius;
+        settings.color = {static_cast<uint8_t>(m_penColor.red()), static_cast<uint8_t>(m_penColor.green()),
+                           static_cast<uint8_t>(m_penColor.blue()), static_cast<uint8_t>(m_penColor.alpha())};
         settings.pressureAffectsRadius = true;
     } else {
         // 消しゴム: 紙(白)に戻す。ペンより太めで筆圧の影響は受けない
@@ -95,6 +96,16 @@ void GLCanvas::applySettingsFor(Tool tool) {
         settings.color = {255, 255, 255, 255};
         settings.pressureAffectsRadius = false;
     }
+}
+
+void GLCanvas::setPenRadius(float radius) {
+    m_penRadius = radius;
+    if (m_tool == Tool::Pen) applyToolSettings();
+}
+
+void GLCanvas::setPenColor(QColor color) {
+    m_penColor = color;
+    if (m_tool == Tool::Pen) applyToolSettings();
 }
 
 void GLCanvas::initializeGL() {

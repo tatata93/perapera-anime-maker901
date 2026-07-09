@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QColor>
 #include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
@@ -37,6 +38,11 @@ public:
     void setTool(Tool tool);
     Tool tool() const { return m_tool; }
     void setInputEnabled(bool enabled) { m_inputEnabled = enabled; }
+
+    // ペンツールの半径・色を設定する(消しゴムの設定には影響しない)。
+    // 現在ツールがペンの場合は即座に反映する
+    void setPenRadius(float radius);
+    void setPenColor(QColor color);
 
     // ストローク完了時にUndo用コマンドを受け取るコールバック(MainWindowがCommandStackへ積む)
     using StrokeCommandSink = std::function<void(std::unique_ptr<core::Command>)>;
@@ -90,6 +96,10 @@ private:
     Tool m_tool = Tool::Pen;
     bool m_strokeActive = false;
     bool m_inputEnabled = true;
+
+    // ペンツールの半径・色(ツールバーのUIから変更される)
+    float m_penRadius = 6.0f;
+    QColor m_penColor = Qt::black;
 
     StrokeCommandSink m_strokeCommandSink;
     core::Bitmap m_strokeSnapshot;   // ストローク開始時点の全体コピー(Undo用)

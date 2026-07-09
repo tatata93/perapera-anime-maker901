@@ -1,14 +1,17 @@
 #include "MainWindow.h"
 
 #include <QActionGroup>
+#include <QColorDialog>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QSlider>
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <algorithm>
 #include <filesystem>
 
@@ -140,6 +143,20 @@ void MainWindow::updateFrameLabel() {
     if (m_framePanel) {
         m_framePanel->setFrames(count, static_cast<int>(m_currentFrame));
     }
+}
+
+void MainWindow::choosePenColor() {
+    const QColor chosen = QColorDialog::getColor(m_penColor, this, tr("ペンの色を選択"));
+    if (!chosen.isValid()) return;  // キャンセル時は何もしない
+    m_penColor = chosen;
+    m_canvas->setPenColor(m_penColor);
+    updatePenColorButton();
+}
+
+void MainWindow::updatePenColorButton() {
+    if (!m_penColorButton) return;
+    m_penColorButton->setStyleSheet(
+        QStringLiteral("background-color: %1; border: 1px solid #444;").arg(m_penColor.name()));
 }
 
 void MainWindow::setupPanels() {
@@ -295,6 +312,33 @@ void MainWindow::setupToolBar() {
     eraserAction->setShortcut(QKeySequence(Qt::Key_E));
     group->addAction(eraserAction);
     connect(eraserAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Eraser); });
+
+    toolBar->addSeparator();
+
+    // --- ブラシ設定(太さ・色) ---
+    toolBar->addWidget(new QLabel(tr(" 太さ: "), this));
+
+    m_penRadiusSlider = new QSlider(Qt::Horizontal, this);
+    m_penRadiusSlider->setRange(1, 64);
+    m_penRadiusSlider->setValue(6);
+    m_penRadiusSlider->setFixedWidth(120);
+    // Spaceキーでの再生操作にフォーカスを奪わないよう、クリック時のみフォーカスを持たせる
+    m_penRadiusSlider->setFocusPolicy(Qt::ClickFocus);
+    connect(m_penRadiusSlider, &QSlider::valueChanged, this, [this](int value) {
+        m_canvas->setPenRadius(static_cast<float>(value));
+        m_penRadiusValueLabel->setText(QString::number(value));
+    });
+    toolBar->addWidget(m_penRadiusSlider);
+
+    m_penRadiusValueLabel = new QLabel(QString::number(m_penRadiusSlider->value()), this);
+    toolBar->addWidget(m_penRadiusValueLabel);
+
+    m_penColorButton = new QToolButton(this);
+    m_penColorButton->setFixedSize(24, 24);
+    m_penColorButton->setToolTip(tr("ペンの色"));
+    connect(m_penColorButton, &QToolButton::clicked, this, &MainWindow::choosePenColor);
+    toolBar->addWidget(m_penColorButton);
+    updatePenColorButton();
 
     toolBar->addSeparator();
 

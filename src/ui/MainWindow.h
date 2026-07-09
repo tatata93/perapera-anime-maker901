@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QColor>
 #include <QMainWindow>
 #include <memory>
 
@@ -9,8 +10,10 @@
 class FramePanel;
 class GLCanvas;
 class QLabel;
+class QSlider;
 class QSpinBox;
 class QTimer;
+class QToolButton;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -58,6 +61,10 @@ private:
     void updateOnionSkin();
     void updateFrameLabel();
 
+    // ブラシ設定UI
+    void choosePenColor();
+    void updatePenColorButton();
+
     std::unique_ptr<core::Project> m_project;
     core::CommandStack m_commands;
     GLCanvas* m_canvas = nullptr;
@@ -73,4 +80,10 @@ private:
     QAction* m_onionAction = nullptr;
     FramePanel* m_framePanel = nullptr;
     QString m_currentFilePath;
+
+    // ブラシ設定UI(太さスライダー・色選択ボタン)
+    QSlider* m_penRadiusSlider = nullptr;
+    QLabel* m_penRadiusValueLabel = nullptr;
+    QToolButton* m_penColorButton = nullptr;
+    QColor m_penColor = Qt::black;
 };
