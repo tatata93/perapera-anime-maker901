@@ -25,6 +25,7 @@
 #include "core/ProjectIO.h"
 #include "render/GLCanvas.h"
 #include "ui/FramePanel.h"
+#include "ui/LayerPanel.h"
 
 namespace {
 constexpr int kCanvasWidth = 1920;
@@ -278,6 +279,91 @@ void MainWindow::setupPanels() {
     connect(m_framePanel, &FramePanel::frameSelected, this, [this](int index) {
         if (!m_playing) setCurrentFrame(static_cast<size_t>(index));
     });
+
+    m_layerPanel = new LayerPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_layerPanel);
+    connect(m_layerPanel, &LayerPanel::layerSelected, this, [this](int index) {
+        if (m_playing) return;
+        m_activeLayer = static_cast<size_t>(index);
+        updateCanvasLayers();
+        updateOnionSkin();
+    });
+    connect(m_layerPanel, &LayerPanel::visibilityChanged, this, [this](int index, bool visible) {
+        core::Cel& cel = activeCel();
+        if (static_cast<size_t>(index) >= cel.layerCount()) return;
+        cel.layer(static_cast<size_t>(index)).setVisible(visible);
+        updateCanvasLayers();
+        m_dirty = true;
+        updateWindowTitle();
+    });
+    connect(m_layerPanel, &LayerPanel::addRequested, this, &MainWindow::addLayerToActiveCel);
+    connect(m_layerPanel, &LayerPanel::removeRequested, this, &MainWindow::removeActiveLayer);
+    connect(m_layerPanel, &LayerPanel::moveUpRequested, this, [this] { moveActiveLayer(+1); });
+    connect(m_layerPanel, &LayerPanel::moveDownRequested, this, [this] { moveActiveLayer(-1); });
+
+    updateLayerPanel();
+}
+
+void MainWindow::updateLayerPanel() {
+    if (!m_layerPanel) return;
+    core::Cel& cel = activeCel();
+    QStringList names;
+    QList<bool> visible;
+    for (size_t li = 0; li < cel.layerCount(); ++li) {
+        names.append(QString::fromStdString(cel.layer(li).name()));
+        visible.append(cel.layer(li).visible());
+    }
+    m_layerPanel->setLayers(names, visible, static_cast<int>(m_activeLayer));
+}
+
+void MainWindow::addLayerToActiveCel() {
+    if (m_playing) return;
+    core::Cel& cel = activeCel();
+    const size_t frameCount = activeLayer().frameCount();
+    core::Layer& layer = cel.addLayer(tr("レイヤー %1").arg(cel.layerCount() + 1).toStdString());
+    for (size_t fi = 0; fi < frameCount; ++fi) {
+        layer.addFrame().bitmap() = makeTransparentCel();  // 既存レイヤーとコマ数を揃える
+    }
+    m_activeLayer = cel.layerCount() - 1;
+    m_commands.clear();
+    m_canvas->clearTextureCache();
+    m_dirty = true;
+    updateCanvasLayers();
+    updateOnionSkin();
+    updateLayerPanel();
+    updateWindowTitle();
+}
+
+void MainWindow::removeActiveLayer() {
+    if (m_playing) return;
+    core::Cel& cel = activeCel();
+    if (cel.layerCount() <= 1) return;  // 最後の1枚は消さない
+    cel.removeLayer(m_activeLayer);
+    m_activeLayer = std::min(m_activeLayer, cel.layerCount() - 1);
+    m_commands.clear();
+    m_canvas->clearTextureCache();
+    m_dirty = true;
+    updateCanvasLayers();
+    updateOnionSkin();
+    updateLayerPanel();
+    updateWindowTitle();
+}
+
+void MainWindow::moveActiveLayer(int delta) {
+    if (m_playing) return;
+    core::Cel& cel = activeCel();
+    const int from = static_cast<int>(m_activeLayer);
+    const int to = from + delta;
+    if (to < 0 || static_cast<size_t>(to) >= cel.layerCount()) return;
+    cel.moveLayer(static_cast<size_t>(from), static_cast<size_t>(to));
+    m_activeLayer = static_cast<size_t>(to);
+    m_commands.clear();
+    m_canvas->clearTextureCache();
+    m_dirty = true;
+    updateCanvasLayers();
+    updateOnionSkin();
+    updateLayerPanel();
+    updateWindowTitle();
 }
 
 void MainWindow::setupMenus() {
@@ -313,6 +399,7 @@ void MainWindow::setupMenus() {
     // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
     viewMenu->addAction(m_framePanel->toggleViewAction());
+    viewMenu->addAction(m_layerPanel->toggleViewAction());
     viewMenu->addSeparator();
     QAction* resetViewAction = viewMenu->addAction(tr("ビューをリセット(&R)"));
     resetViewAction->setShortcut(QKeySequence(tr("Ctrl+0")));
@@ -369,6 +456,7 @@ void MainWindow::newDocument() {
     createNewDocument();
     m_canvas->clearTextureCache();  // 旧プロジェクトのBitmapポインタ再利用に備えて破棄
     updateFrameLabel();
+    updateLayerPanel();
     m_currentFilePath.clear();
     m_dirty = false;
     updateWindowTitle();
@@ -408,6 +496,7 @@ bool MainWindow::loadFromFile(const QString& path) {
     m_activeLayer = 0;
     m_canvas->clearTextureCache();
     setCurrentFrame(0);
+    updateLayerPanel();
     m_currentFilePath = path;
     m_dirty = false;
     updateWindowTitle();
@@ -561,6 +650,39 @@ void MainWindow::debugSetupOnionDemo() {
     m_onionEnabled = true;
     if (m_onionAction) m_onionAction->setChecked(true);
     setCurrentFrame(1);
+}
+
+void MainWindow::debugSetupLayerDemo() {
+    // レイヤー2枚構成: 下=赤の縦線 / 上=青の横線
+    addLayerToActiveCel();  // レイヤー2を追加(アクティブになる)
+    core::Cel& cel = activeCel();
+
+    core::BrushEngine engine;
+    engine.settings().radius = 12.0f;
+
+    core::Bitmap& bottom = cel.layer(0).frame(m_currentFrame).bitmap();
+    engine.settings().color = {200, 40, 40, 255};
+    engine.beginStroke(bottom, kCanvasWidth * 0.4f, kCanvasHeight * 0.25f, 0.9f);
+    engine.continueStroke(bottom, kCanvasWidth * 0.4f, kCanvasHeight * 0.75f, 0.9f);
+    engine.endStroke();
+
+    core::Bitmap& top = cel.layer(1).frame(m_currentFrame).bitmap();
+    engine.settings().color = {40, 40, 200, 255};
+    engine.beginStroke(top, kCanvasWidth * 0.25f, kCanvasHeight * 0.5f, 0.9f);
+    engine.continueStroke(top, kCanvasWidth * 0.75f, kCanvasHeight * 0.5f, 0.9f);
+    engine.endStroke();
+
+    m_canvas->clearTextureCache();
+    updateCanvasLayers();
+    updateLayerPanel();
+}
+
+void MainWindow::debugSetLayerVisible(int layerIndex, bool visible) {
+    core::Cel& cel = activeCel();
+    if (static_cast<size_t>(layerIndex) >= cel.layerCount()) return;
+    cel.layer(static_cast<size_t>(layerIndex)).setVisible(visible);
+    updateCanvasLayers();
+    updateLayerPanel();
 }
 
 QString MainWindow::autosavePath() const {

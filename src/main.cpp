@@ -173,5 +173,24 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --layers-test <PNG1> <PNG2> でレイヤー2枚(赤縦線+青横線)を表示保存後、
+    // 下レイヤーを非表示にして保存する(PNG2は青横線のみになるはず)
+    const int layersIndex = args.indexOf("--layers-test");
+    if (layersIndex >= 0 && layersIndex + 2 < args.size()) {
+        const QString out1 = args.at(layersIndex + 1);
+        const QString out2 = args.at(layersIndex + 2);
+        QTimer::singleShot(500, &window, [&window, out1, out2] {
+            window.debugSetupLayerDemo();
+            QTimer::singleShot(200, &window, [&window, out1, out2] {
+                window.canvas()->grabFramebuffer().save(out1);  // 両レイヤー表示
+                window.debugSetLayerVisible(0, false);          // 下(赤)を非表示
+                QTimer::singleShot(200, &window, [&window, out2] {
+                    window.canvas()->grabFramebuffer().save(out2);  // 青のみ
+                    QApplication::exit(0);
+                });
+            });
+        });
+    }
+
     return app.exec();
 }

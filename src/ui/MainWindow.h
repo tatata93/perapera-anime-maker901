@@ -10,6 +10,7 @@
 
 class FramePanel;
 class GLCanvas;
+class LayerPanel;
 class QCloseEvent;
 class QLabel;
 class QSlider;
@@ -39,6 +40,9 @@ public:
     void debugRedo() { redo(); }
     // 下敷き確認用: ファイルダイアログを出さずに指定パスから下敷き連番を設定する
     void debugSetUnderlayFile(const QString& path);
+    // レイヤー確認用: レイヤー2枚(下=赤縦線/上=青横線)のデモを作る
+    void debugSetupLayerDemo();
+    void debugSetLayerVisible(int layerIndex, bool visible);
     // 自動保存確認用: performAutosave()を即実行し、保存先パスを返す(失敗時は空文字)
     QString debugTriggerAutosave();
 
@@ -77,6 +81,12 @@ private:
     void updateOnionSkin();
     void updateFrameLabel();
 
+    // レイヤーパネル操作
+    void updateLayerPanel();
+    void addLayerToActiveCel();
+    void removeActiveLayer();
+    void moveActiveLayer(int delta);
+
     // 下敷き(参照画像/連番シーケンス)。セッション限定でプロジェクトには保存しない
     void openUnderlay();
     void clearUnderlaySequence();
@@ -107,6 +117,7 @@ private:
     QAction* m_playAction = nullptr;
     QAction* m_onionAction = nullptr;
     FramePanel* m_framePanel = nullptr;
+    LayerPanel* m_layerPanel = nullptr;
     QString m_currentFilePath;
     bool m_dirty = false;  // 未保存の変更があるか
 
