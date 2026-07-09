@@ -3,6 +3,7 @@
 #include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
+#include <QTransform>
 #include <functional>
 #include <memory>
 #include <unordered_map>
@@ -41,8 +42,19 @@ public:
     using StrokeCommandSink = std::function<void(std::unique_ptr<core::Command>)>;
     void setStrokeCommandSink(StrokeCommandSink sink) { m_strokeCommandSink = std::move(sink); }
 
+    // ビュー操作: ズーム倍率(フィット基準)・回転(度)・パン。リセットでフィット表示に戻る
+    void resetView();
+    float zoom() const { return m_zoom; }
+
     // 端から端まで筆圧を変えながら1ストローク描く(動作確認用フック)
     void debugSimulateStroke();
+    // ビュー状態を直接設定する(動作確認用フック)
+    void debugSetView(float zoom, qreal rotationDeg, QPointF panOffset) {
+        m_zoom = zoom;
+        m_rotationDeg = rotationDeg;
+        m_panOffset = panOffset;
+        update();
+    }
 
 protected:
     void initializeGL() override;
@@ -53,13 +65,15 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
 
 private:
     void pointerBegin(QPointF widgetPos, float pressure);
     void pointerMove(QPointF widgetPos, float pressure);
     void pointerEnd();
 
-    QRectF imageRectInWidget() const;
+    // 画像座標→ウィジェット座標の変換(フィット×ズーム×回転×パン)
+    QTransform viewTransform() const;
     QPointF widgetToImage(QPointF widgetPos) const;
     void applyToolSettings() { applySettingsFor(m_tool); }
     void applySettingsFor(Tool tool);
@@ -80,6 +94,13 @@ private:
     StrokeCommandSink m_strokeCommandSink;
     core::Bitmap m_strokeSnapshot;   // ストローク開始時点の全体コピー(Undo用)
     core::DirtyRect m_strokeDirty{};  // ストローク全体の書き換え矩形
+
+    // ビュー状態
+    float m_zoom = 1.0f;         // フィット表示を1.0とする倍率
+    qreal m_rotationDeg = 0.0;   // 時計回りの回転角(度)
+    QPointF m_panOffset{0, 0};   // ウィジェット中心からのずれ(px)
+    bool m_panning = false;
+    QPointF m_lastPanPos;
 
     std::unique_ptr<QOpenGLShaderProgram> m_program;
     std::unordered_map<const core::Bitmap*, std::unique_ptr<QOpenGLTexture>> m_textures;

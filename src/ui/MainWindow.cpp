@@ -183,6 +183,10 @@ void MainWindow::setupMenus() {
     // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
     viewMenu->addAction(m_framePanel->toggleViewAction());
+    viewMenu->addSeparator();
+    QAction* resetViewAction = viewMenu->addAction(tr("ビューをリセット(&R)"));
+    resetViewAction->setShortcut(QKeySequence(tr("Ctrl+0")));
+    connect(resetViewAction, &QAction::triggered, this, [this] { m_canvas->resetView(); });
 }
 
 void MainWindow::undo() {

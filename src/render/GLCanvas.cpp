@@ -168,24 +168,34 @@ void GLCanvas::uploadDirty(const core::DirtyRect& rect) {
     update();
 }
 
-QRectF GLCanvas::imageRectInWidget() const {
+QTransform GLCanvas::viewTransform() const {
     if (!m_bitmap || m_bitmap->isEmpty()) return {};
 
     const qreal ww = width();
     const qreal wh = height();
     const qreal iw = m_bitmap->width();
     const qreal ih = m_bitmap->height();
-    const qreal scale = qMin(ww / iw, wh / ih);
-    const qreal dw = iw * scale;
-    const qreal dh = ih * scale;
-    return {(ww - dw) * 0.5, (wh - dh) * 0.5, dw, dh};
+    const qreal fitScale = qMin(ww / iw, wh / ih);
+    const qreal scale = fitScale * m_zoom;
+
+    // widget = 中心+パン → 回転 → 拡縮 → 画像中心を原点へ、の順で画像座標に適用される
+    QTransform t;
+    t.translate(ww * 0.5 + m_panOffset.x(), wh * 0.5 + m_panOffset.y());
+    t.rotate(m_rotationDeg);
+    t.scale(scale, scale);
+    t.translate(-iw * 0.5, -ih * 0.5);
+    return t;
 }
 
 QPointF GLCanvas::widgetToImage(QPointF widgetPos) const {
-    const QRectF rect = imageRectInWidget();
-    if (rect.isEmpty()) return {};
-    const qreal scale = m_bitmap->width() / rect.width();
-    return {(widgetPos.x() - rect.x()) * scale, (widgetPos.y() - rect.y()) * scale};
+    return viewTransform().inverted().map(widgetPos);
+}
+
+void GLCanvas::resetView() {
+    m_zoom = 1.0f;
+    m_rotationDeg = 0.0;
+    m_panOffset = QPointF(0, 0);
+    update();
 }
 
 void GLCanvas::paintGL() {
@@ -196,24 +206,26 @@ void GLCanvas::paintGL() {
     QOpenGLTexture* currentTex = getOrCreateTexture(m_bitmap);
     if (!currentTex) return;
 
-    // 画像の表示矩形をNDCへ変換した頂点(pos.xy + uv)を毎フレーム組み立てる
-    const QRectF rect = imageRectInWidget();
+    // 画像の四隅をビュー変換(ズーム/回転/パン込み)でウィジェット座標→NDCへ落とす
+    const QTransform t = viewTransform();
     const qreal ww = width();
     const qreal wh = height();
+    const qreal iw = m_bitmap->width();
+    const qreal ih = m_bitmap->height();
+    const QPointF tl = t.map(QPointF(0, 0));
+    const QPointF tr = t.map(QPointF(iw, 0));
+    const QPointF bl = t.map(QPointF(0, ih));
+    const QPointF br = t.map(QPointF(iw, ih));
+
     const auto toNdcX = [ww](qreal x) { return static_cast<float>(x / ww * 2.0 - 1.0); };
     const auto toNdcY = [wh](qreal y) { return static_cast<float>(1.0 - y / wh * 2.0); };
 
-    const float x0 = toNdcX(rect.left());
-    const float x1 = toNdcX(rect.right());
-    const float y0 = toNdcY(rect.top());
-    const float y1 = toNdcY(rect.bottom());
-
     // テクスチャの行0=画像上端なので、上端頂点にv=0を割り当てる
     const float vertices[] = {
-        x0, y0, 0.0f, 0.0f,  //
-        x1, y0, 1.0f, 0.0f,  //
-        x0, y1, 0.0f, 1.0f,  //
-        x1, y1, 1.0f, 1.0f,  //
+        toNdcX(tl.x()), toNdcY(tl.y()), 0.0f, 0.0f,  //
+        toNdcX(tr.x()), toNdcY(tr.y()), 1.0f, 0.0f,  //
+        toNdcX(bl.x()), toNdcY(bl.y()), 0.0f, 1.0f,  //
+        toNdcX(br.x()), toNdcY(br.y()), 1.0f, 1.0f,  //
     };
 
     m_program->bind();
@@ -315,18 +327,59 @@ void GLCanvas::tabletEvent(QTabletEvent* event) {
 }
 
 void GLCanvas::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::MiddleButton) {
+        m_panning = true;
+        m_lastPanPos = event->position();
+        setCursor(Qt::ClosedHandCursor);
+        return;
+    }
     if (event->source() != Qt::MouseEventNotSynthesized) return;
     if (event->button() == Qt::LeftButton) pointerBegin(event->position(), 1.0f);
 }
 
 void GLCanvas::mouseMoveEvent(QMouseEvent* event) {
+    if (m_panning) {
+        m_panOffset += event->position() - m_lastPanPos;
+        m_lastPanPos = event->position();
+        update();
+        return;
+    }
     if (event->source() != Qt::MouseEventNotSynthesized) return;
     if (event->buttons() & Qt::LeftButton) pointerMove(event->position(), 1.0f);
 }
 
 void GLCanvas::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() == Qt::MiddleButton) {
+        m_panning = false;
+        unsetCursor();
+        return;
+    }
     if (event->source() != Qt::MouseEventNotSynthesized) return;
     if (event->button() == Qt::LeftButton) pointerEnd();
+}
+
+void GLCanvas::wheelEvent(QWheelEvent* event) {
+    if (!m_bitmap) return;
+
+    // Alt押下時はQtが水平デルタとして届けることがあるため両方を見る
+    const int delta = event->angleDelta().y() != 0 ? event->angleDelta().y() : event->angleDelta().x();
+    if (delta == 0) return;
+
+    const QPointF cursor = event->position();
+    const QPointF anchorImg = widgetToImage(cursor);  // カーソル下の画像座標を固定点にする
+
+    if (event->modifiers() & Qt::AltModifier) {
+        m_rotationDeg += (delta > 0) ? 15.0 : -15.0;  // 15度刻みで回転
+    } else {
+        const float factor = (delta > 0) ? 1.25f : 0.8f;
+        m_zoom = std::clamp(m_zoom * factor, 0.05f, 32.0f);
+    }
+
+    // 固定点がカーソル位置に留まるようパンを補正する
+    const QPointF moved = viewTransform().map(anchorImg);
+    m_panOffset += cursor - moved;
+    update();
+    event->accept();
 }
 
 void GLCanvas::debugSimulateStroke() {

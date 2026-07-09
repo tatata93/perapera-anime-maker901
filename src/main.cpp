@@ -40,6 +40,20 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --view-test <出力PNG> でズーム2倍+回転15度+ストロークの表示を保存する
+    const int viewIndex = args.indexOf("--view-test");
+    if (viewIndex >= 0 && viewIndex + 1 < args.size()) {
+        const QString outputPath = args.at(viewIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.canvas()->debugSimulateStroke();  // 変換前に画像座標で描く
+            window.canvas()->debugSetView(2.0f, 15.0, QPointF(40, -20));
+            QTimer::singleShot(200, &window, [&window, outputPath] {
+                window.canvas()->grabFramebuffer().save(outputPath);
+                QApplication::quit();
+            });
+        });
+    }
+
     // 動作確認用: --undo-test <PNG1> <PNG2> <PNG3> でストローク→Undo→Redoの3状態を保存する
     const int undoIndex = args.indexOf("--undo-test");
     if (undoIndex >= 0 && undoIndex + 3 < args.size()) {
