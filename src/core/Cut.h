@@ -17,6 +17,10 @@ public:
     const std::string& name() const { return m_name; }
     void setName(std::string name) { m_name = std::move(name); }
 
+    // カットの尺(総コマ数)。タイムシートの行数に相当する
+    size_t frameCount() const { return m_frameCount; }
+    void setFrameCount(size_t count);
+
     Cel& addCel(std::string name);
     void removeCel(size_t index);
     // セルをfrom位置からto位置へ移動する(範囲外の場合は何もしない)
@@ -29,6 +33,7 @@ public:
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Cel>> m_cels;
+    size_t m_frameCount = 1;  // 尺(最低1コマ)
 };
 
 }  // namespace core

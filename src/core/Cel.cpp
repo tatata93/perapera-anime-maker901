@@ -1,5 +1,7 @@
 #include "Cel.h"
 
+#include <algorithm>
+
 namespace core {
 
 Layer& Cel::addLayer(std::string name) {
@@ -9,6 +11,22 @@ Layer& Cel::addLayer(std::string name) {
 
 void Cel::removeLayer(size_t index) {
     m_layers.erase(m_layers.begin() + static_cast<ptrdiff_t>(index));
+}
+
+void Cel::setExposure(size_t frame, int drawing) {
+    if (frame >= m_exposure.size()) m_exposure.resize(frame + 1, -1);
+    m_exposure[frame] = drawing;
+}
+
+void Cel::applyStepPattern(int step, size_t frameCount) {
+    if (step < 1) step = 1;
+    m_exposure.assign(frameCount, -1);
+    const int drawings = static_cast<int>(drawingCount());
+    if (drawings == 0) return;
+    for (size_t t = 0; t < frameCount; ++t) {
+        const int drawing = static_cast<int>(t) / step;
+        m_exposure[t] = std::min(drawing, drawings - 1);  // 動画が尽きたら最後の絵で止め
+    }
 }
 
 void Cel::moveLayer(size_t from, size_t to) {

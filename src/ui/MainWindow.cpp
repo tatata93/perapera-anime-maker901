@@ -32,7 +32,7 @@
 namespace {
 constexpr int kCanvasWidth = 1920;
 constexpr int kCanvasHeight = 1080;
-constexpr int kDefaultFps = 12;
+constexpr int kDefaultFps = 24;  // タイムシートは24fps基準
 
 // 自動保存: ファイル名と保存間隔(3分)
 const QString kAutosaveFileName = QStringLiteral("autosave.ppam");
@@ -106,25 +106,30 @@ core::Layer& MainWindow::activeLayer() {
     return cel.layer(m_activeLayer);
 }
 
-// カット内の全セル×全レイヤーから現在フレームの絵を集め、下→上の描画順でキャンバスに渡す
+// 現在のコマ(シート位置)に露出表で割り付けられた動画を、セル×レイヤーの順で集めて渡す
 void MainWindow::updateCanvasLayers() {
     core::Cut& cut = activeCut();
     std::vector<const core::Bitmap*> stack;
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
         core::Cel& cel = cut.cel(ci);
         if (!cel.visible()) continue;
+        const int drawing = cel.exposure(m_currentFrame);
+        if (drawing < 0) continue;  // このコマにセルなし
         for (size_t li = 0; li < cel.layerCount(); ++li) {
             core::Layer& layer = cel.layer(li);
             if (!layer.visible()) continue;
-            if (m_currentFrame < layer.frameCount()) {
-                stack.push_back(&layer.frame(m_currentFrame).bitmap());
+            if (static_cast<size_t>(drawing) < layer.frameCount()) {
+                stack.push_back(&layer.frame(static_cast<size_t>(drawing)).bitmap());
             }
         }
     }
 
-    core::Layer& active = activeLayer();
-    core::Bitmap* editTarget =
-        m_currentFrame < active.frameCount() ? &active.frame(m_currentFrame).bitmap() : nullptr;
+    // 編集対象 = アクティブセルの現在コマに割り付けられた動画のアクティブレイヤー
+    core::Bitmap* editTarget = nullptr;
+    const int activeDrawing = activeCel().exposure(m_currentFrame);
+    if (activeDrawing >= 0 && static_cast<size_t>(activeDrawing) < activeLayer().frameCount()) {
+        editTarget = &activeLayer().frame(static_cast<size_t>(activeDrawing)).bitmap();
+    }
     m_canvas->setLayerStack(std::move(stack), editTarget);
 }
 
@@ -132,10 +137,12 @@ void MainWindow::createNewDocument() {
     m_project = std::make_unique<core::Project>("Untitled");
     core::Scene& scene = m_project->addScene("Scene 1");
     core::Cut& cut = scene.addCut("Cut 1");
-    core::Cel& cel = cut.addCel("セル A");
+    core::Cel& cel = cut.addCel("A");
     core::Layer& layer = cel.addLayer("レイヤー 1");
     core::Frame& frame = layer.addFrame();
     frame.bitmap() = makeTransparentCel();
+    cut.setFrameCount(1);
+    cel.setExposure(0, 0);  // コマ1に動画1を割付
 
     m_currentFrame = 0;
     m_activeCel = 0;
@@ -145,9 +152,9 @@ void MainWindow::createNewDocument() {
 }
 
 void MainWindow::setCurrentFrame(size_t index) {
-    core::Layer& layer = activeLayer();
-    if (layer.frameCount() == 0) return;
-    m_currentFrame = std::min(index, layer.frameCount() - 1);
+    core::Cut& cut = activeCut();
+    if (cut.frameCount() == 0) return;
+    m_currentFrame = std::min(index, cut.frameCount() - 1);
     updateCanvasLayers();
     updateOnionSkin();
     updateFrameLabel();
@@ -156,31 +163,32 @@ void MainWindow::setCurrentFrame(size_t index) {
 
 void MainWindow::addFrameAfterCurrent() {
     if (m_playing) return;
-    // セル内の全レイヤーに同時にコマを追加し、レイヤー間でコマ数がずれないようにする
+    // 新しい動画を作り(セル内全レイヤーに同時追加)、次のコマに割り付ける。
+    // 次のコマが尺を超える場合は尺を伸ばす
     core::Cel& cel = activeCel();
+    const int newDrawing = static_cast<int>(cel.drawingCount());
     for (size_t li = 0; li < cel.layerCount(); ++li) {
-        core::Layer& layer = cel.layer(li);
-        const size_t insertAt = std::min(m_currentFrame + 1, layer.frameCount());
-        layer.insertFrame(insertAt).bitmap() = makeTransparentCel();
+        cel.layer(li).addFrame().bitmap() = makeTransparentCel();
     }
+    const size_t target = m_currentFrame + 1;
+    core::Cut& cut = activeCut();
+    if (target >= cut.frameCount()) cut.setFrameCount(target + 1);
+    cel.setExposure(target, newDrawing);
+
     m_commands.clear();             // 構造変更のためUndo履歴を破棄
-    m_canvas->clearTextureCache();  // 挿入でフレーム構造が変わったため
-    setCurrentFrame(m_currentFrame + 1);
+    m_canvas->clearTextureCache();  // 動画構造が変わったため
+    setCurrentFrame(target);
     m_dirty = true;
     updateWindowTitle();
 }
 
 void MainWindow::deleteCurrentFrame() {
     if (m_playing) return;
-    core::Cel& cel = activeCel();
-    if (activeLayer().frameCount() <= 1) return;  // 最後の1枚は消さない
-    for (size_t li = 0; li < cel.layerCount(); ++li) {
-        core::Layer& layer = cel.layer(li);
-        if (m_currentFrame < layer.frameCount()) layer.removeFrame(m_currentFrame);
-    }
-    m_commands.clear();             // 削除されたBitmapを参照するコマンドを破棄
-    m_canvas->clearTextureCache();  // 削除されたBitmapのテクスチャを破棄
-    setCurrentFrame(m_currentFrame > 0 ? m_currentFrame - 1 : 0);
+    // 現在コマの割付を空にする(動画自体は残る=シート上のセル欄を消す操作)
+    activeCel().setExposure(m_currentFrame, -1);
+    updateCanvasLayers();
+    updateOnionSkin();
+    updateFrameLabel();
     m_dirty = true;
     updateWindowTitle();
 }
@@ -201,7 +209,7 @@ void MainWindow::togglePlayback() {
 }
 
 void MainWindow::onPlaybackTick() {
-    const size_t count = activeLayer().frameCount();
+    const size_t count = activeCut().frameCount();
     if (count == 0) return;
     setCurrentFrame((m_currentFrame + 1) % count);
 }
@@ -211,19 +219,45 @@ void MainWindow::updateOnionSkin() {
         m_canvas->setOnionSkin(nullptr, nullptr);
         return;
     }
+    // 前後の「異なる動画」を探して表示する(2コマ打ち等で同じ絵が続く区間はスキップ)
+    core::Cel& cel = activeCel();
     core::Layer& layer = activeLayer();
-    const core::Bitmap* prev = m_currentFrame > 0 ? &layer.frame(m_currentFrame - 1).bitmap() : nullptr;
-    const core::Bitmap* next = m_currentFrame + 1 < layer.frameCount() ? &layer.frame(m_currentFrame + 1).bitmap() : nullptr;
+    const core::Cut& cut = activeCut();
+    const int current = cel.exposure(m_currentFrame);
+
+    const auto drawingBitmap = [&layer](int drawing) -> const core::Bitmap* {
+        if (drawing < 0 || static_cast<size_t>(drawing) >= layer.frameCount()) return nullptr;
+        return &layer.frame(static_cast<size_t>(drawing)).bitmap();
+    };
+
+    const core::Bitmap* prev = nullptr;
+    for (size_t t = m_currentFrame; t > 0; --t) {
+        const int e = cel.exposure(t - 1);
+        if (e >= 0 && e != current) {
+            prev = drawingBitmap(e);
+            break;
+        }
+    }
+    const core::Bitmap* next = nullptr;
+    for (size_t t = m_currentFrame + 1; t < cut.frameCount(); ++t) {
+        const int e = cel.exposure(t);
+        if (e >= 0 && e != current) {
+            next = drawingBitmap(e);
+            break;
+        }
+    }
     m_canvas->setOnionSkin(prev, next);
 }
 
 void MainWindow::updateFrameLabel() {
-    const int count = static_cast<int>(activeLayer().frameCount());
     if (m_frameLabel) {
-        m_frameLabel->setText(QStringLiteral(" %1 / %2 ").arg(m_currentFrame + 1).arg(count));
+        m_frameLabel->setText(
+            QStringLiteral(" コマ %1 / %2 ").arg(m_currentFrame + 1).arg(activeCut().frameCount()));
     }
     if (m_framePanel) {
-        m_framePanel->setFrames(count, static_cast<int>(m_currentFrame));
+        // 動画(絵)一覧。選択=現在コマに割り付けられた動画
+        m_framePanel->setFrames(static_cast<int>(activeCel().drawingCount()),
+                                activeCel().exposure(m_currentFrame));
     }
 }
 
@@ -289,7 +323,13 @@ void MainWindow::setupPanels() {
     m_framePanel = new FramePanel(this);
     addDockWidget(Qt::RightDockWidgetArea, m_framePanel);
     connect(m_framePanel, &FramePanel::frameSelected, this, [this](int index) {
-        if (!m_playing) setCurrentFrame(static_cast<size_t>(index));
+        // 動画一覧のクリック = 現在コマにその動画を割り付ける(タイムシート編集)
+        if (m_playing) return;
+        activeCel().setExposure(m_currentFrame, index);
+        m_dirty = true;
+        updateCanvasLayers();
+        updateOnionSkin();
+        updateWindowTitle();
     });
 
     m_layerPanel = new LayerPanel(this);
@@ -742,6 +782,10 @@ void MainWindow::debugSetupOnionDemo() {
         engine.continueStroke(bitmap, x, kCanvasHeight * 0.75f, 0.9f);
         engine.endStroke();
     }
+
+    // タイムシート: 尺3コマ、1コマ打ちで動画1,2,3を割付
+    activeCut().setFrameCount(3);
+    for (size_t t = 0; t < 3; ++t) activeCel().setExposure(t, static_cast<int>(t));
 
     m_canvas->clearTextureCache();
     m_onionEnabled = true;

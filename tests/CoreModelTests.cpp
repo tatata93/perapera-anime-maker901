@@ -109,6 +109,54 @@ TEST_CASE("Cel::moveLayer reorders layers", "[core]") {
     }
 }
 
+TEST_CASE("Cel exposure sheet maps frames to drawings", "[core][sheet]") {
+    core::Cut cut("Cut 1");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L1");
+    layer.addFrame();
+    layer.addFrame();
+    layer.addFrame();  // 動画3枚
+
+    SECTION("default exposure is empty (-1)") {
+        cut.setFrameCount(4);
+        REQUIRE(cel.exposure(0) == -1);
+        REQUIRE(cel.exposure(3) == -1);
+        REQUIRE(cel.exposure(99) == -1);  // 範囲外も-1
+    }
+
+    SECTION("setExposure assigns a drawing to a frame") {
+        cut.setFrameCount(4);
+        cel.setExposure(2, 1);
+        REQUIRE(cel.exposure(2) == 1);
+        REQUIRE(cel.exposure(1) == -1);
+    }
+
+    SECTION("applyStepPattern: 2コマ打ち") {
+        cut.setFrameCount(6);
+        cel.applyStepPattern(2, 6);
+        REQUIRE(cel.exposure(0) == 0);
+        REQUIRE(cel.exposure(1) == 0);
+        REQUIRE(cel.exposure(2) == 1);
+        REQUIRE(cel.exposure(3) == 1);
+        REQUIRE(cel.exposure(4) == 2);
+        REQUIRE(cel.exposure(5) == 2);
+    }
+
+    SECTION("applyStepPattern: 動画が尽きたら最後の絵で止め") {
+        cut.setFrameCount(8);
+        cel.applyStepPattern(2, 8);
+        REQUIRE(cel.exposure(6) == 2);
+        REQUIRE(cel.exposure(7) == 2);
+    }
+
+    SECTION("setFrameCount(尺)の変更が全セルの露出表長に反映される") {
+        cut.setFrameCount(10);
+        REQUIRE(cel.exposures().size() == 10);
+        cut.setFrameCount(2);
+        REQUIRE(cel.exposures().size() == 2);
+    }
+}
+
 TEST_CASE("Cut::moveCel reorders cels", "[core]") {
     core::Cut cut("Cut 1");
     cut.addCel("Cel A");

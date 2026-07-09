@@ -31,9 +31,26 @@ public:
     Layer& layer(size_t index) { return *m_layers.at(index); }
     const Layer& layer(size_t index) const { return *m_layers.at(index); }
 
+    // 動画(絵)の枚数。レイヤー0のフレーム数を代表値とする(レイヤー間はコマ数同期前提)
+    size_t drawingCount() const { return m_layers.empty() ? 0 : m_layers.front()->frameCount(); }
+
+    // --- 露出表(タイムシートの列) ---
+    // コマt(カット尺内の位置)に表示する動画番号。-1はセルなし(空欄)
+
+    int exposure(size_t frame) const { return frame < m_exposure.size() ? m_exposure[frame] : -1; }
+    void setExposure(size_t frame, int drawing);
+    // 尺の変更に合わせて露出表の長さを揃える(伸長分は-1で埋める)
+    void resizeExposure(size_t frameCount) { m_exposure.resize(frameCount, -1); }
+    const std::vector<int>& exposures() const { return m_exposure; }
+
+    // 一括コマ打ち: 動画0,1,2...をstepコマずつ順番に割り当てる(frameCountまで)。
+    // 動画が尽きたら残りは最後の動画を維持する(標準的な止め)
+    void applyStepPattern(int step, size_t frameCount);
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Layer>> m_layers;
+    std::vector<int> m_exposure;
     bool m_visible = true;
 };
 

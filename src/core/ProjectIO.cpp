@@ -2,6 +2,7 @@
 
 #include <zlib.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -82,9 +83,12 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                                         {"role", layerRoleToString(layer.role())},
                                         {"frames", std::move(jFrames)}});
                 }
-                jCels.push_back({{"name", cel.name()}, {"visible", cel.visible()}, {"layers", std::move(jLayers)}});
+                jCels.push_back({{"name", cel.name()},
+                                 {"visible", cel.visible()},
+                                 {"exposure", cel.exposures()},
+                                 {"layers", std::move(jLayers)}});
             }
-            jCuts.push_back({{"name", cut.name()}, {"cels", std::move(jCels)}});
+            jCuts.push_back({{"name", cut.name()}, {"frameCount", cut.frameCount()}, {"cels", std::move(jCels)}});
         }
         jScenes.push_back({{"name", scene.name()}, {"cuts", std::move(jCuts)}});
     }
@@ -223,7 +227,23 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                         Layer& layer = cel.addLayer(jLayer.at("name").get<std::string>());
                         if (!loadLayerFrames(layer, jLayer)) return nullptr;
                     }
+                    // 露出表(欠落時は動画を1コマ打ちで並べた線形割付にする)
+                    if (jCel.contains("exposure")) {
+                        const auto exposure = jCel.at("exposure").get<std::vector<int>>();
+                        for (size_t t = 0; t < exposure.size(); ++t) cel.setExposure(t, exposure[t]);
+                    } else {
+                        for (size_t t = 0; t < cel.drawingCount(); ++t) cel.setExposure(t, static_cast<int>(t));
+                    }
                 }
+                // 尺(欠落時は各セルの露出表/動画数から推定)
+                size_t frameCount = jCut.value("frameCount", static_cast<size_t>(0));
+                if (frameCount == 0) {
+                    for (size_t ceIdx = 0; ceIdx < cut.celCount(); ++ceIdx) {
+                        frameCount =
+                            std::max({frameCount, cut.cel(ceIdx).exposures().size(), cut.cel(ceIdx).drawingCount()});
+                    }
+                }
+                cut.setFrameCount(std::max<size_t>(1, frameCount));
             }
         }
 

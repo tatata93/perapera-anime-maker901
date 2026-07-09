@@ -2,7 +2,7 @@
 
 #include <QListWidget>
 
-FramePanel::FramePanel(QWidget* parent) : QDockWidget(tr("フレーム"), parent) {
+FramePanel::FramePanel(QWidget* parent) : QDockWidget(tr("動画"), parent) {
     setObjectName(QStringLiteral("FramePanel"));  // レイアウト保存用の識別子
 
     m_list = new QListWidget(this);
@@ -18,7 +18,7 @@ void FramePanel::setFrames(int count, int currentIndex) {
     if (m_list->count() != count) {
         m_list->clear();
         for (int i = 0; i < count; ++i) {
-            m_list->addItem(tr("フレーム %1").arg(i + 1));
+            m_list->addItem(tr("動画 %1").arg(i + 1));
         }
     }
     m_list->setCurrentRow(currentIndex);
