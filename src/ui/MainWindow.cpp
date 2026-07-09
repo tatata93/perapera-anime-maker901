@@ -2,8 +2,10 @@
 
 #include <QActionGroup>
 #include <QColorDialog>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QImage>
 #include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -81,6 +83,7 @@ void MainWindow::setCurrentFrame(size_t index) {
     m_canvas->setBitmap(&layer.frame(m_currentFrame).bitmap());
     updateOnionSkin();
     updateFrameLabel();
+    updateUnderlay();
 }
 
 void MainWindow::addFrameAfterCurrent() {
@@ -145,6 +148,50 @@ void MainWindow::updateFrameLabel() {
     }
 }
 
+void MainWindow::openUnderlay() {
+    const QString path = QFileDialog::getOpenFileName(this, tr("下敷き画像/連番を開く"), QString(),
+                                                        tr("画像ファイル (*.png *.jpg *.jpeg *.bmp)"));
+    if (!path.isEmpty()) setUnderlaySequenceFromFile(path);
+}
+
+void MainWindow::setUnderlaySequenceFromFile(const QString& path) {
+    // 選択ファイルと同じフォルダ内の同拡張子ファイルを名前順に集めて連番として扱う。
+    // 該当ファイルが1枚だけなら静止画扱い(全フレームで同じ画像を表示)になる
+    const QFileInfo info(path);
+    const QDir dir = info.dir();
+    const QStringList filters = {QStringLiteral("*.%1").arg(info.suffix())};
+    const QStringList names = dir.entryList(filters, QDir::Files, QDir::Name);
+
+    m_underlaySequence.clear();
+    for (const QString& name : names) {
+        m_underlaySequence.append(dir.filePath(name));
+    }
+    m_underlayLoadedIndex = -1;  // フォルダが変わったので必ず再ロードさせる
+    updateUnderlay();
+}
+
+void MainWindow::clearUnderlaySequence() {
+    m_underlaySequence.clear();
+    m_underlayLoadedIndex = -1;
+    m_canvas->clearUnderlay();
+}
+
+void MainWindow::updateUnderlay() {
+    if (m_underlaySequence.isEmpty()) return;
+
+    const int lastIndex = static_cast<int>(m_underlaySequence.size()) - 1;
+    const int index = std::min(static_cast<int>(m_currentFrame), lastIndex);
+    if (index == m_underlayLoadedIndex) return;  // 直前と同じファイルなら再ロードしない
+
+    m_underlayLoadedIndex = index;
+    const QImage image(m_underlaySequence.at(index));
+    if (!image.isNull()) m_canvas->setUnderlayImage(image);
+}
+
+void MainWindow::debugSetUnderlayFile(const QString& path) {
+    setUnderlaySequenceFromFile(path);
+}
+
 void MainWindow::choosePenColor() {
     const QColor chosen = QColorDialog::getColor(m_penColor, this, tr("ペンの色を選択"));
     if (!chosen.isValid()) return;  // キャンセル時は何もしない
@@ -204,6 +251,29 @@ void MainWindow::setupMenus() {
     QAction* resetViewAction = viewMenu->addAction(tr("ビューをリセット(&R)"));
     resetViewAction->setShortcut(QKeySequence(tr("Ctrl+0")));
     connect(resetViewAction, &QAction::triggered, this, [this] { m_canvas->resetView(); });
+
+    // 下敷きメニュー: 3DCGレンダリングや写真をキャンバスに薄く透かして表示する参照機能。
+    // セッション限定であり、.ppamプロジェクトファイルには保存されない
+    QMenu* underlayMenu = menuBar()->addMenu(tr("下敷き(&U)"));
+
+    QAction* openUnderlayAction = underlayMenu->addAction(tr("画像/連番を開く(&O)..."));
+    connect(openUnderlayAction, &QAction::triggered, this, &MainWindow::openUnderlay);
+
+    QAction* clearUnderlayAction = underlayMenu->addAction(tr("クリア(&C)"));
+    connect(clearUnderlayAction, &QAction::triggered, this, &MainWindow::clearUnderlaySequence);
+
+    QMenu* underlayOpacityMenu = underlayMenu->addMenu(tr("不透明度"));
+    auto* opacityGroup = new QActionGroup(this);
+    opacityGroup->setExclusive(true);
+    const int opacityPercents[] = {25, 50, 75};
+    for (int percent : opacityPercents) {
+        QAction* opacityAction = underlayOpacityMenu->addAction(tr("%1%").arg(percent));
+        opacityAction->setCheckable(true);
+        opacityAction->setChecked(percent == 50);  // 既定50%
+        opacityGroup->addAction(opacityAction);
+        connect(opacityAction, &QAction::triggered, this,
+                [this, percent] { m_canvas->setUnderlayOpacity(static_cast<float>(percent) / 100.0f); });
+    }
 }
 
 void MainWindow::undo() {

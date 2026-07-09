@@ -1,5 +1,6 @@
 #include "GLCanvas.h"
 
+#include <QImage>
 #include <QMouseEvent>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
@@ -22,17 +23,22 @@ void main() {
 }
 )";
 
-// uOnionStrength = 0 : テクスチャをそのまま表示(通常描画)
+// uUnderlayMix > 0   : 下敷き(参照画像)。白との混合を乗算ブレンドで重ねることで
+//                      下敷きの色はそのまま薄く透けて見える(ライトテーブル表現)。
 // uOnionStrength > 0 : 線(暗部)をuTint色に置き換えた「白地+色線」を出力する。
 //                      乗算ブレンドで重ねると白地は無視され色線だけが合成される。
+// どちらも0            : テクスチャをそのまま表示(通常描画)
 const char* kFragmentShader = R"(
 varying vec2 vUV;
 uniform sampler2D uTex;
 uniform vec3 uTint;
 uniform float uOnionStrength;
+uniform float uUnderlayMix;
 void main() {
     vec4 tex = texture2D(uTex, vUV);
-    if (uOnionStrength > 0.0) {
+    if (uUnderlayMix > 0.0) {
+        gl_FragColor = vec4(mix(vec3(1.0), tex.rgb, uUnderlayMix), 1.0);
+    } else if (uOnionStrength > 0.0) {
         float darkness = 1.0 - min(min(tex.r, tex.g), tex.b);
         float coverage = darkness * uOnionStrength;
         gl_FragColor = vec4(mix(vec3(1.0), uTint, coverage), 1.0);
@@ -55,6 +61,7 @@ GLCanvas::GLCanvas(QWidget* parent) : QOpenGLWidget(parent) {
 GLCanvas::~GLCanvas() {
     makeCurrent();
     m_textures.clear();
+    m_underlayTexture.reset();  // GLリソースの解放にはカレントなコンテキストが必要
     m_program.reset();
     if (m_vbo.isCreated()) m_vbo.destroy();
     doneCurrent();
@@ -75,6 +82,42 @@ void GLCanvas::clearTextureCache() {
     makeCurrent();
     m_textures.clear();
     doneCurrent();
+    update();
+}
+
+void GLCanvas::setUnderlayImage(const QImage& image) {
+    if (image.isNull()) {
+        clearUnderlay();
+        return;
+    }
+
+    // RGBA8888に統一してから、getOrCreateTextureと同じ手順で手動アップロードする。
+    // QOpenGLTexture(QImage)コンストラクタは内部で上下反転してしまい、
+    // 本プロジェクトのUV規約(行0=画像上端, v=0=上端)と食い違うため使用しない
+    const QImage converted = image.convertToFormat(QImage::Format_RGBA8888);
+
+    makeCurrent();
+    m_underlayTexture = std::make_unique<QOpenGLTexture>(QOpenGLTexture::Target2D);
+    m_underlayTexture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+    m_underlayTexture->setSize(converted.width(), converted.height());
+    m_underlayTexture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
+    m_underlayTexture->setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
+    m_underlayTexture->setWrapMode(QOpenGLTexture::ClampToEdge);
+    m_underlayTexture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, converted.constBits());
+    doneCurrent();
+    update();
+}
+
+void GLCanvas::clearUnderlay() {
+    if (!m_underlayTexture) return;
+    makeCurrent();
+    m_underlayTexture.reset();
+    doneCurrent();
+    update();
+}
+
+void GLCanvas::setUnderlayOpacity(float opacity01) {
+    m_underlayOpacity = std::clamp(opacity01, 0.0f, 1.0f);
     update();
 }
 
@@ -253,6 +296,7 @@ void GLCanvas::paintGL() {
 
     // 現在フレーム(通常描画)
     m_program->setUniformValue("uOnionStrength", 0.0f);
+    m_program->setUniformValue("uUnderlayMix", 0.0f);
     currentTex->bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     currentTex->release();
@@ -267,12 +311,29 @@ void GLCanvas::paintGL() {
             if (!tex) return;
             m_program->setUniformValue("uTint", tint);
             m_program->setUniformValue("uOnionStrength", kOnionStrength);
+            m_program->setUniformValue("uUnderlayMix", 0.0f);
             tex->bind();
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             tex->release();
         };
         if (m_prevOnion) drawOnion(m_prevOnion, kPrevTint);
         if (m_nextOnion) drawOnion(m_nextOnion, kNextTint);
+
+        glDisable(GL_BLEND);
+    }
+
+    // 下敷き(参照画像/連番シーケンス): 白との混合を乗算ブレンドで重ね、透かして見せる。
+    // 現在フレームと同じ四角形(キャンバス全面)に引き伸ばして表示するため、
+    // 下敷き画像とキャンバスのアスペクト比が異なる場合は変形される(仕様として許容)
+    if (m_underlayTexture) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ZERO, GL_SRC_COLOR);
+
+        m_program->setUniformValue("uOnionStrength", 0.0f);
+        m_program->setUniformValue("uUnderlayMix", m_underlayOpacity);
+        m_underlayTexture->bind();
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        m_underlayTexture->release();
 
         glDisable(GL_BLEND);
     }

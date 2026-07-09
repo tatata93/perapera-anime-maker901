@@ -2,6 +2,7 @@
 
 #include <QColor>
 #include <QMainWindow>
+#include <QStringList>
 #include <memory>
 
 #include "core/CommandStack.h"
@@ -35,6 +36,8 @@ public:
     // Undo/Redo確認用
     void debugUndo() { undo(); }
     void debugRedo() { redo(); }
+    // 下敷き確認用: ファイルダイアログを出さずに指定パスから下敷き連番を設定する
+    void debugSetUnderlayFile(const QString& path);
 
 private:
     void createNewDocument();
@@ -61,6 +64,12 @@ private:
     void updateOnionSkin();
     void updateFrameLabel();
 
+    // 下敷き(参照画像/連番シーケンス)。セッション限定でプロジェクトには保存しない
+    void openUnderlay();
+    void clearUnderlaySequence();
+    void setUnderlaySequenceFromFile(const QString& path);
+    void updateUnderlay();
+
     // ブラシ設定UI
     void choosePenColor();
     void updatePenColorButton();
@@ -86,4 +95,8 @@ private:
     QLabel* m_penRadiusValueLabel = nullptr;
     QToolButton* m_penColorButton = nullptr;
     QColor m_penColor = Qt::black;
+
+    // 下敷き(参照画像/連番シーケンス): 選択フォルダ内の同拡張子ファイル一覧(名前順)
+    QStringList m_underlaySequence;
+    int m_underlayLoadedIndex = -1;  // 直前にロードした連番のインデックス(再ロード抑止用)
 };

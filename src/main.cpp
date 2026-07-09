@@ -128,5 +128,21 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --underlay-test <参照画像パス> <出力PNG> でストロークを描いた上に
+    // 下敷き(参照画像)を重ねた状態のフレームバッファを保存して終了する
+    const int underlayIndex = args.indexOf("--underlay-test");
+    if (underlayIndex >= 0 && underlayIndex + 2 < args.size()) {
+        const QString underlayPath = args.at(underlayIndex + 1);
+        const QString outputPath = args.at(underlayIndex + 2);
+        QTimer::singleShot(500, &window, [&window, underlayPath, outputPath] {
+            window.canvas()->debugSimulateStroke();
+            window.debugSetUnderlayFile(underlayPath);
+            QTimer::singleShot(200, &window, [&window, outputPath] {
+                window.canvas()->grabFramebuffer().save(outputPath);
+                QApplication::quit();
+            });
+        });
+    }
+
     return app.exec();
 }

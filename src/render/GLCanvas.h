@@ -13,6 +13,7 @@
 #include "core/BrushEngine.h"
 #include "core/Command.h"
 
+class QImage;
 class QOpenGLShaderProgram;
 class QOpenGLTexture;
 
@@ -34,6 +35,12 @@ public:
     void setOnionSkin(const core::Bitmap* prev, const core::Bitmap* next);
     // フレーム構造の変更(追加/削除)後に呼び、古いテクスチャを破棄する
     void clearTextureCache();
+
+    // 下敷き(参照画像/連番シーケンス)。現在フレームに薄く透かして重ね表示する。
+    // セッション限定の参照であり、.ppamプロジェクトファイルには保存されない
+    void setUnderlayImage(const QImage& image);
+    void clearUnderlay();
+    void setUnderlayOpacity(float opacity01);
 
     void setTool(Tool tool);
     Tool tool() const { return m_tool; }
@@ -116,4 +123,8 @@ private:
     std::unordered_map<const core::Bitmap*, std::unique_ptr<QOpenGLTexture>> m_textures;
     QOpenGLBuffer m_vbo;
     std::vector<uint8_t> m_uploadScratch;  // 部分アップロード用の連続バッファ
+
+    // 下敷き(参照画像/連番シーケンス)用のテクスチャ。存在すれば現在フレームに薄く重ねる
+    std::unique_ptr<QOpenGLTexture> m_underlayTexture;
+    float m_underlayOpacity = 0.5f;
 };
