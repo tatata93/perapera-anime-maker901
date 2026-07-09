@@ -231,6 +231,25 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --xsheet-test <PNG1> <PNG2> でタイムシート(尺6コマ・2コマ打ち)を組み、
+    // コマ1(動画1)とコマ4(動画2)の表示差分(縦線の位置)を保存する
+    const int xsheetIndex = args.indexOf("--xsheet-test");
+    if (xsheetIndex >= 0 && xsheetIndex + 2 < args.size()) {
+        const QString out1 = args.at(xsheetIndex + 1);
+        const QString out2 = args.at(xsheetIndex + 2);
+        QTimer::singleShot(500, &window, [&window, out1, out2] {
+            window.debugSetupXsheetDemo();
+            QTimer::singleShot(200, &window, [&window, out1, out2] {
+                window.canvas()->grabFramebuffer().save(out1);  // コマ1=動画1
+                window.debugSetCurrentFrame(3);
+                QTimer::singleShot(200, &window, [&window, out2] {
+                    window.canvas()->grabFramebuffer().save(out2);  // コマ4=動画2
+                    QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                });
+            });
+        });
+    }
+
     // 動作確認用: --perf-test <出力TXT> でストローク描画+再描画を繰り返し、描画時間(ms)を出力する
     const int perfIndex = args.indexOf("--perf-test");
     if (perfIndex >= 0 && perfIndex + 1 < args.size()) {

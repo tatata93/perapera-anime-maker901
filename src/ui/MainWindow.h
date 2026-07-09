@@ -12,6 +12,7 @@ class FramePanel;
 class GLCanvas;
 class LayerPanel;
 class PalettePanel;
+class XsheetPanel;
 class QCloseEvent;
 class QLabel;
 class QSlider;
@@ -44,6 +45,10 @@ public:
     // レイヤー確認用: レイヤー2枚(下=赤縦線/上=青横線)のデモを作る
     void debugSetupLayerDemo();
     void debugSetLayerVisible(int layerIndex, bool visible);
+    // タイムシート確認用: オニオンデモの後、尺6コマ・2コマ打ち(動画1,1,2,2,3,3)を設定する
+    void debugSetupXsheetDemo();
+    // タイムシート確認用: setCurrentFrame()の公開ラッパー
+    void debugSetCurrentFrame(size_t frame) { setCurrentFrame(frame); }
     // 塗りつぶし確認用: 閉じた矩形枠を現在フレームに描く
     void debugSetupFillDemo();
     // 自動保存確認用: performAutosave()を即実行し、保存先パスを返す(失敗時は空文字)
@@ -100,6 +105,9 @@ private:
     void addCurrentColorToPalette();
     void removeSelectedPaletteColor();
 
+    // タイムシート(Xsheet)パネル操作
+    void updateXsheetPanel();
+
     // 下敷き(参照画像/連番シーケンス)。セッション限定でプロジェクトには保存しない
     void openUnderlay();
     void clearUnderlaySequence();
@@ -132,6 +140,7 @@ private:
     FramePanel* m_framePanel = nullptr;
     LayerPanel* m_layerPanel = nullptr;
     PalettePanel* m_palettePanel = nullptr;
+    XsheetPanel* m_xsheetPanel = nullptr;
     QString m_currentFilePath;
     bool m_dirty = false;  // 未保存の変更があるか
 

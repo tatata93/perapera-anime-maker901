@@ -28,6 +28,7 @@
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
 #include "ui/PalettePanel.h"
+#include "ui/XsheetPanel.h"
 
 namespace {
 constexpr int kCanvasWidth = 1920;
@@ -159,6 +160,7 @@ void MainWindow::setCurrentFrame(size_t index) {
     updateOnionSkin();
     updateFrameLabel();
     updateUnderlay();
+    updateXsheetPanel();  // 現在コマの行を追従させる
 }
 
 void MainWindow::addFrameAfterCurrent() {
@@ -189,6 +191,7 @@ void MainWindow::deleteCurrentFrame() {
     updateCanvasLayers();
     updateOnionSkin();
     updateFrameLabel();
+    updateXsheetPanel();
     m_dirty = true;
     updateWindowTitle();
 }
@@ -377,8 +380,62 @@ void MainWindow::setupPanels() {
     connect(m_palettePanel, &PalettePanel::addCurrentColorRequested, this, &MainWindow::addCurrentColorToPalette);
     connect(m_palettePanel, &PalettePanel::removeSelectedRequested, this, &MainWindow::removeSelectedPaletteColor);
 
+    m_xsheetPanel = new XsheetPanel(this);
+    addDockWidget(Qt::BottomDockWidgetArea, m_xsheetPanel);
+    connect(m_xsheetPanel, &XsheetPanel::cellClicked, this, [this](int celIndex, int frame) {
+        if (m_playing) return;
+        core::Cut& cut = activeCut();
+        if (cut.celCount() == 0 || celIndex < 0 || frame < 0) return;
+        m_activeCel = static_cast<size_t>(std::min(celIndex, static_cast<int>(cut.celCount()) - 1));
+        setCurrentFrame(static_cast<size_t>(frame));
+    });
+    connect(m_xsheetPanel, &XsheetPanel::exposureEdited, this, [this](int celIndex, int frame, int drawing) {
+        if (m_playing) return;
+        core::Cut& cut = activeCut();
+        if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount()) return;
+        if (frame < 0 || static_cast<size_t>(frame) >= cut.frameCount()) return;
+        core::Cel& cel = cut.cel(static_cast<size_t>(celIndex));
+        int clampedDrawing = drawing;
+        if (clampedDrawing >= 0) {
+            // 動画番号として無効な大きい値はここでクランプする(セルに動画が1枚もなければ空欄扱い)
+            clampedDrawing = cel.drawingCount() == 0
+                                 ? -1
+                                 : std::min(clampedDrawing, static_cast<int>(cel.drawingCount()) - 1);
+        }
+        cel.setExposure(static_cast<size_t>(frame), clampedDrawing);
+        m_dirty = true;
+        updateCanvasLayers();
+        updateOnionSkin();
+        updateFrameLabel();
+        updateXsheetPanel();
+        updateWindowTitle();
+    });
+    connect(m_xsheetPanel, &XsheetPanel::frameCountChanged, this, [this](int frameCount) {
+        if (m_playing || frameCount < 1) return;
+        core::Cut& cut = activeCut();
+        cut.setFrameCount(static_cast<size_t>(frameCount));
+        if (m_currentFrame >= cut.frameCount()) m_currentFrame = cut.frameCount() - 1;
+        m_dirty = true;
+        updateCanvasLayers();
+        updateOnionSkin();
+        updateFrameLabel();
+        updateXsheetPanel();
+        updateWindowTitle();
+    });
+    connect(m_xsheetPanel, &XsheetPanel::stepPatternRequested, this, [this](int step) {
+        if (m_playing) return;
+        activeCel().applyStepPattern(step, activeCut().frameCount());
+        m_dirty = true;
+        updateCanvasLayers();
+        updateOnionSkin();
+        updateFrameLabel();
+        updateXsheetPanel();
+        updateWindowTitle();
+    });
+
     updateLayerPanel();
     updatePalettePanel();
+    updateXsheetPanel();
 }
 
 void MainWindow::updateLayerPanel() {
@@ -485,6 +542,28 @@ void MainWindow::removeSelectedPaletteColor() {
     updateWindowTitle();
 }
 
+// activeCut()の全セルから露出表を集めてタイムシートパネルに反映する
+void MainWindow::updateXsheetPanel() {
+    if (!m_xsheetPanel) return;
+    core::Cut& cut = activeCut();
+
+    QStringList celNames;
+    QList<QList<int>> exposures;
+    for (size_t ci = 0; ci < cut.celCount(); ++ci) {
+        const core::Cel& cel = cut.cel(ci);
+        celNames.append(QString::fromStdString(cel.name()));
+        QList<int> column;
+        column.reserve(static_cast<int>(cut.frameCount()));
+        for (size_t f = 0; f < cut.frameCount(); ++f) {
+            column.append(cel.exposure(f));
+        }
+        exposures.append(column);
+    }
+
+    m_xsheetPanel->setSheet(celNames, exposures, static_cast<int>(cut.frameCount()), static_cast<int>(m_currentFrame),
+                             static_cast<int>(m_activeCel));
+}
+
 void MainWindow::setupMenus() {
     QMenu* fileMenu = menuBar()->addMenu(tr("ファイル(&F)"));
 
@@ -520,6 +599,7 @@ void MainWindow::setupMenus() {
     viewMenu->addAction(m_framePanel->toggleViewAction());
     viewMenu->addAction(m_layerPanel->toggleViewAction());
     viewMenu->addAction(m_palettePanel->toggleViewAction());
+    viewMenu->addAction(m_xsheetPanel->toggleViewAction());
     viewMenu->addSeparator();
     QAction* resetViewAction = viewMenu->addAction(tr("ビューをリセット(&R)"));
     resetViewAction->setShortcut(QKeySequence(tr("Ctrl+0")));
@@ -587,6 +667,7 @@ void MainWindow::newDocument() {
     updateFrameLabel();
     updateLayerPanel();
     updatePalettePanel();
+    updateXsheetPanel();
     m_currentFilePath.clear();
     m_dirty = false;
     updateWindowTitle();
@@ -628,6 +709,7 @@ bool MainWindow::loadFromFile(const QString& path) {
     setCurrentFrame(0);
     updateLayerPanel();
     updatePalettePanel();
+    updateXsheetPanel();
     m_currentFilePath = path;
     m_dirty = false;
     updateWindowTitle();
@@ -844,6 +926,17 @@ void MainWindow::debugSetLayerVisible(int layerIndex, bool visible) {
     cel.layer(static_cast<size_t>(layerIndex)).setVisible(visible);
     updateCanvasLayers();
     updateLayerPanel();
+}
+
+void MainWindow::debugSetupXsheetDemo() {
+    // オニオンデモで動画3枚(縦線位置の異なる絵)を用意した上で、
+    // 尺6コマ・2コマ打ち(動画1,1,2,2,3,3)のタイムシートを組む
+    debugSetupOnionDemo();
+    activeCut().setFrameCount(6);
+    activeCel().applyStepPattern(2, 6);
+
+    // 露出(割付)だけの変更なのでテクスチャキャッシュの破棄は不要
+    setCurrentFrame(0);  // コマ1(動画1)を表示
 }
 
 QString MainWindow::autosavePath() const {
