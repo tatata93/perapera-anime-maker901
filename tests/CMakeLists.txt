@@ -4,6 +4,7 @@ add_executable(perapera_core_tests
     CoreModelTests.cpp
     CommandStackTests.cpp
     BrushEngineTests.cpp
+    ProjectIOTests.cpp
 )
 
 target_link_libraries(perapera_core_tests PRIVATE

@@ -40,6 +40,24 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --io-test <ppamパス> <出力PNG> でストローク描画→保存→新規→
+    // 読み込み→画面保存を行い、UI経由の保存/読み込みを一括検証する
+    const int ioIndex = args.indexOf("--io-test");
+    if (ioIndex >= 0 && ioIndex + 2 < args.size()) {
+        const QString ppamPath = args.at(ioIndex + 1);
+        const QString outputPath = args.at(ioIndex + 2);
+        QTimer::singleShot(500, &window, [&window, ppamPath, outputPath] {
+            window.canvas()->debugSimulateStroke();
+            const bool saved = window.debugSaveTo(ppamPath);
+            window.debugNewDocument();  // 一度白紙に戻す
+            const bool loaded = window.debugLoadFrom(ppamPath);
+            QTimer::singleShot(200, &window, [&window, outputPath, saved, loaded] {
+                window.canvas()->grabFramebuffer().save(outputPath);
+                QApplication::exit(saved && loaded ? 0 : 1);
+            });
+        });
+    }
+
     // 動作確認用: --play-test <PNG1> <PNG2> で再生中の画面を2回保存して終了する。
     // 2枚が異なればフレームが切り替わっている
     const int playIndex = args.indexOf("--play-test");

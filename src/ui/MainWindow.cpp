@@ -1,13 +1,19 @@
 #include "MainWindow.h"
 
 #include <QActionGroup>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QLabel>
+#include <QMenuBar>
+#include <QMessageBox>
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolBar>
 #include <algorithm>
+#include <filesystem>
 
 #include "core/BrushEngine.h"
+#include "core/ProjectIO.h"
 #include "render/GLCanvas.h"
 
 namespace {
@@ -32,8 +38,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_playTimer, &QTimer::timeout, this, &MainWindow::onPlaybackTick);
 
     createNewDocument();
+    setupMenus();
     setupToolBar();
     updateFrameLabel();
+    updateWindowTitle();
 }
 
 MainWindow::~MainWindow() = default;
@@ -118,6 +126,100 @@ void MainWindow::updateOnionSkin() {
 void MainWindow::updateFrameLabel() {
     if (!m_frameLabel) return;
     m_frameLabel->setText(QStringLiteral(" %1 / %2 ").arg(m_currentFrame + 1).arg(activeLayer().frameCount()));
+}
+
+void MainWindow::setupMenus() {
+    QMenu* fileMenu = menuBar()->addMenu(tr("ファイル(&F)"));
+
+    QAction* newAction = fileMenu->addAction(tr("新規(&N)"));
+    newAction->setShortcut(QKeySequence::New);
+    connect(newAction, &QAction::triggered, this, &MainWindow::newDocument);
+
+    QAction* openAction = fileMenu->addAction(tr("開く(&O)..."));
+    openAction->setShortcut(QKeySequence::Open);
+    connect(openAction, &QAction::triggered, this, &MainWindow::open);
+
+    fileMenu->addSeparator();
+
+    QAction* saveAction = fileMenu->addAction(tr("保存(&S)"));
+    saveAction->setShortcut(QKeySequence::Save);
+    connect(saveAction, &QAction::triggered, this, &MainWindow::save);
+
+    QAction* saveAsAction = fileMenu->addAction(tr("名前を付けて保存(&A)..."));
+    saveAsAction->setShortcut(QKeySequence::SaveAs);
+    connect(saveAsAction, &QAction::triggered, this, &MainWindow::saveAs);
+}
+
+void MainWindow::updateWindowTitle() {
+    const QString base = QStringLiteral("perapera-anime-maker901");
+    if (m_currentFilePath.isEmpty()) {
+        setWindowTitle(base);
+    } else {
+        setWindowTitle(QStringLiteral("%1 - %2").arg(base, QFileInfo(m_currentFilePath).fileName()));
+    }
+}
+
+void MainWindow::newDocument() {
+    if (m_playing) togglePlayback();
+    createNewDocument();
+    m_canvas->clearTextureCache();  // 旧プロジェクトのBitmapポインタ再利用に備えて破棄
+    updateFrameLabel();
+    m_currentFilePath.clear();
+    updateWindowTitle();
+}
+
+bool MainWindow::saveToFile(const QString& path) {
+    std::string error;
+    if (!core::ProjectIO::save(*m_project, std::filesystem::path(path.toStdWString()), &error)) {
+        QMessageBox::warning(this, tr("保存エラー"), QString::fromStdString(error));
+        return false;
+    }
+    m_currentFilePath = path;
+    updateWindowTitle();
+    return true;
+}
+
+bool MainWindow::loadFromFile(const QString& path) {
+    std::string error;
+    auto project = core::ProjectIO::load(std::filesystem::path(path.toStdWString()), &error);
+    if (!project) {
+        QMessageBox::warning(this, tr("読み込みエラー"), QString::fromStdString(error));
+        return false;
+    }
+    // MVPで扱える構造(1シーン・1カット・1レイヤー・1フレーム以上)を検証する
+    if (project->sceneCount() == 0 || project->scene(0).cutCount() == 0 || project->scene(0).cut(0).layerCount() == 0 ||
+        project->scene(0).cut(0).layer(0).frameCount() == 0) {
+        QMessageBox::warning(this, tr("読み込みエラー"), tr("プロジェクトにフレームがありません"));
+        return false;
+    }
+
+    if (m_playing) togglePlayback();
+    m_project = std::move(project);
+    m_canvas->clearTextureCache();
+    setCurrentFrame(0);
+    m_currentFilePath = path;
+    updateWindowTitle();
+    return true;
+}
+
+void MainWindow::save() {
+    if (m_currentFilePath.isEmpty()) {
+        saveAs();
+    } else {
+        saveToFile(m_currentFilePath);
+    }
+}
+
+void MainWindow::saveAs() {
+    const QString path =
+        QFileDialog::getSaveFileName(this, tr("プロジェクトを保存"), QString(), tr("ぺらぺらプロジェクト (*.ppam)"));
+    if (!path.isEmpty()) saveToFile(path);
+}
+
+void MainWindow::open() {
+    const QString path =
+        QFileDialog::getOpenFileName(this, tr("プロジェクトを開く"), QString(), tr("ぺらぺらプロジェクト (*.ppam)"));
+    if (!path.isEmpty()) loadFromFile(path);
 }
 
 void MainWindow::setupToolBar() {

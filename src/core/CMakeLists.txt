@@ -15,6 +15,12 @@ add_library(perapera_core STATIC
     Command.h
     CommandStack.cpp
     CommandStack.h
+    ProjectIO.cpp
+    ProjectIO.h
 )
 
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(ZLIB REQUIRED)
+
 target_include_directories(perapera_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(perapera_core PRIVATE nlohmann_json::nlohmann_json ZLIB::ZLIB)

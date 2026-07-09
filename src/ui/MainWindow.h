@@ -23,10 +23,23 @@ public:
     void debugSetupOnionDemo();
     // 再生確認用
     void debugTogglePlayback() { togglePlayback(); }
+    // ファイルI/O確認用(ダイアログを出さない)
+    bool debugSaveTo(const QString& path) { return saveToFile(path); }
+    bool debugLoadFrom(const QString& path) { return loadFromFile(path); }
+    void debugNewDocument() { newDocument(); }
 
 private:
     void createNewDocument();
     void setupToolBar();
+    void setupMenus();
+
+    void newDocument();
+    bool saveToFile(const QString& path);
+    bool loadFromFile(const QString& path);
+    void saveAs();
+    void save();
+    void open();
+    void updateWindowTitle();
 
     core::Layer& activeLayer();
     void setCurrentFrame(size_t index);
@@ -49,4 +62,5 @@ private:
     QSpinBox* m_fpsSpin = nullptr;
     QAction* m_playAction = nullptr;
     QAction* m_onionAction = nullptr;
+    QString m_currentFilePath;
 };
