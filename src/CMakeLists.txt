@@ -12,6 +12,8 @@ add_executable(perapera-anime-maker901
     ui/PalettePanel.h
     ui/XsheetPanel.cpp
     ui/XsheetPanel.h
+    ui/ExportDialog.cpp
+    ui/ExportDialog.h
     render/GLCanvas.cpp
     render/GLCanvas.h
 )

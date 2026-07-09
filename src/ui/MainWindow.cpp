@@ -13,20 +13,26 @@
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QProcess>
+#include <QProgressDialog>
 #include <QSlider>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <algorithm>
 #include <filesystem>
+#include <utility>
 
 #include "core/BrushEngine.h"
+#include "core/Compositor.h"
 #include "core/ProjectIO.h"
 #include "core/StrokeCommand.h"
 #include "render/GLCanvas.h"
+#include "ui/ExportDialog.h"
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
 #include "ui/PalettePanel.h"
@@ -852,6 +858,12 @@ void MainWindow::setupMenus() {
     saveAsAction->setShortcut(QKeySequence::SaveAs);
     connect(saveAsAction, &QAction::triggered, this, &MainWindow::saveAs);
 
+    fileMenu->addSeparator();
+
+    QAction* exportAction = fileMenu->addAction(tr("書き出し(&E)..."));
+    exportAction->setShortcut(QKeySequence(tr("Ctrl+E")));
+    connect(exportAction, &QAction::triggered, this, &MainWindow::openExportDialog);
+
     // 編集メニュー
     QMenu* editMenu = menuBar()->addMenu(tr("編集(&E)"));
     QAction* undoAction = editMenu->addAction(tr("元に戻す(&U)"));
@@ -1373,6 +1385,118 @@ int MainWindow::debugRoleRoundTrip(const QString& ppamPath) {
     if (loadedCel.layer(1).role() != core::LayerRole::ColorTrace) return 1;
     if (loadedCel.layer(2).role() != core::LayerRole::Correction) return 1;
     return 0;
+}
+
+void MainWindow::openExportDialog() {
+    if (m_playing) return;  // 再生中は書き出しできない
+
+    core::Cut& cut = activeCut();
+    QStringList celNames;
+    for (size_t ci = 0; ci < cut.celCount(); ++ci) {
+        celNames.append(QString::fromStdString(cut.cel(ci).name()));
+    }
+
+    ExportDialog dialog(celNames, static_cast<int>(cut.frameCount()), this);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const QString outputPath = dialog.outputPath();
+    if (outputPath.isEmpty()) {
+        QMessageBox::warning(this, tr("書き出しエラー"), tr("出力先を指定してください"));
+        return;
+    }
+
+    core::RenderOptions opts;
+    opts.includeColorTrace = dialog.includeColorTrace();
+    opts.includeCorrection = dialog.includeCorrection();
+    opts.onlyCel = dialog.onlyCel();
+
+    // ダイアログのコマ番号は1始まり、renderCutFrame等の内部は0始まりなので変換する
+    const int from = dialog.fromFrame() - 1;
+    const int to = dialog.toFrame() - 1;
+
+    const bool success = dialog.format() == ExportDialog::Format::Sequence
+                              ? exportSequence(outputPath, from, to, opts)
+                              : exportMovie(outputPath, from, to, dialog.fps(), opts);
+
+    if (success) {
+        statusBar()->showMessage(tr("書き出しました: %1").arg(outputPath), 5000);
+    }
+}
+
+bool MainWindow::exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts) {
+    QDir outDir(dir);
+    if (!outDir.exists() && !QDir().mkpath(dir)) return false;
+
+    const int total = to - from + 1;
+    if (total <= 0) return false;
+
+    core::Cut& cut = activeCut();
+
+    QProgressDialog progress(tr("書き出し中..."), tr("キャンセル"), 0, total, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    for (int i = 0; i < total; ++i) {
+        progress.setValue(i);
+        if (progress.wasCanceled()) return false;
+
+        const size_t frame = static_cast<size_t>(from + i);
+        const core::Bitmap bitmap = core::renderCutFrame(cut, frame, kCanvasWidth, kCanvasHeight, opts);
+        // コピーせずbitmapのデータへ直接QImageを被せてsave()する(bitmapの寿命内なので安全)
+        const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
+        const QString path = outDir.filePath(QStringLiteral("frame_%1.png").arg(i + 1, 4, 10, QChar('0')));
+        if (!image.save(path)) return false;
+    }
+    progress.setValue(total);
+    return true;
+}
+
+bool MainWindow::exportMovie(const QString& mp4Path, int from, int to, int fps, const core::RenderOptions& opts) {
+    // 連番PNGを一時フォルダに書き出してからffmpegでエンコードする
+    QTemporaryDir tempDir;
+    if (!tempDir.isValid()) return false;
+    if (!exportSequence(tempDir.path(), from, to, opts)) return false;
+
+    const QString framePattern = QDir(tempDir.path()).filePath(QStringLiteral("frame_%04d.png"));
+
+    // ffmpegを実行し、成功したか/失敗時のstderrを返す
+    const auto runFfmpeg = [&](const QStringList& codecArgs) -> std::pair<bool, QString> {
+        QStringList args;
+        args << QStringLiteral("-y") << QStringLiteral("-framerate") << QString::number(fps) << QStringLiteral("-i")
+             << framePattern;
+        args += codecArgs;
+        args << mp4Path;
+
+        QProcess process;
+        process.start(QStringLiteral("ffmpeg"), args);
+        if (!process.waitForFinished(120000)) {  // 無制限(-1)ではなく120秒でタイムアウトさせる
+            process.kill();
+            return {false, tr("ffmpegの実行がタイムアウトしました")};
+        }
+        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+            return {false, QString::fromLocal8Bit(process.readAllStandardError())};
+        }
+        return {true, QString()};
+    };
+
+    auto [ok, err] = runFfmpeg({QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-pix_fmt"),
+                                 QStringLiteral("yuv420p")});
+    if (!ok) {
+        // libx264が無いLGPLビルドの可能性があるため、mpeg4で再試行する
+        auto [ok2, err2] = runFfmpeg({QStringLiteral("-c:v"), QStringLiteral("mpeg4"), QStringLiteral("-q:v"), QStringLiteral("3")});
+        if (!ok2) {
+            QMessageBox::warning(this, tr("書き出しエラー"), tr("動画の書き出しに失敗しました:\n%1").arg(err2.left(500)));
+            return false;
+        }
+    }
+    return true;
+}
+
+int MainWindow::debugExportSequence(const QString& dir) {
+    debugSetupXsheetDemo();  // 尺6・2コマ打ちのデモを組む
+    core::Cut& cut = activeCut();
+    const core::RenderOptions opts;
+    return exportSequence(dir, 0, static_cast<int>(cut.frameCount()) - 1, opts) ? 0 : 1;
 }
 
 void MainWindow::checkAutosaveRecovery() {

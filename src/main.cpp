@@ -347,6 +347,17 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --export-test <出力フォルダ> でタイムシートデモ(尺6・2コマ打ち)を組んでから
+    // 全コマを連番PNGで書き出す。debugExportSequence()の戻り値(0=成功)でそのままexitする
+    const int exportIndex = args.indexOf("--export-test");
+    if (exportIndex >= 0 && exportIndex + 1 < args.size()) {
+        const QString outputDir = args.at(exportIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputDir] {
+            const int result = window.debugExportSequence(outputDir);
+            QApplication::exit(result);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+        });
+    }
+
     // 動作確認用: --perf-test <出力TXT> でストローク描画+再描画を繰り返し、描画時間(ms)を出力する
     const int perfIndex = args.indexOf("--perf-test");
     if (perfIndex >= 0 && perfIndex + 1 < args.size()) {

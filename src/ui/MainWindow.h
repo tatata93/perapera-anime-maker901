@@ -20,6 +20,10 @@ class QSpinBox;
 class QTimer;
 class QToolButton;
 
+namespace core {
+struct RenderOptions;
+}
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -72,6 +76,10 @@ public:
     // レイヤー種別確認用: レイヤーを2枚追加(計3枚)し種別を設定→保存→新規→読込を行い、
     // 往復が正しければ0、不一致なら1を返す
     int debugRoleRoundTrip(const QString& ppamPath);
+
+    // 書き出し確認用: タイムシートデモ(尺6・2コマ打ち)を組んでから全コマを連番PNGで書き出す。
+    // 成功時0、失敗時1を返す
+    int debugExportSequence(const QString& dir);
 
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
     // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる
@@ -150,6 +158,11 @@ private:
     // 自動保存・クラッシュリカバリ
     QString autosavePath() const;
     bool performAutosave();
+
+    // 書き出し
+    void openExportDialog();
+    bool exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts);
+    bool exportMovie(const QString& mp4Path, int from, int to, int fps, const core::RenderOptions& opts);
 
     std::unique_ptr<core::Project> m_project;
     core::CommandStack m_commands;
