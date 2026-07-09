@@ -40,6 +40,9 @@ LayerPanel::LayerPanel(QWidget* parent) : QDockWidget(tr("レイヤー"), parent
         const int row = m_list->row(item);
         emit visibilityChanged(rowToLayerIndex(row), item->checkState() == Qt::Checked);
     });
+    connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+        emit renameRequested(rowToLayerIndex(m_list->row(item)));
+    });
     connect(addButton, &QPushButton::clicked, this, &LayerPanel::addRequested);
     connect(removeButton, &QPushButton::clicked, this, &LayerPanel::removeRequested);
     connect(upButton, &QPushButton::clicked, this, &LayerPanel::moveUpRequested);

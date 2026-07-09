@@ -168,14 +168,16 @@ void MainWindow::setCurrentFrame(size_t index) {
 
 void MainWindow::addFrameAfterCurrent() {
     if (m_playing) return;
-    // 新しい動画を作り(セル内全レイヤーに同時追加)、次のコマに割り付ける。
-    // 次のコマが尺を超える場合は尺を伸ばす
+    // 新しい動画を作る(セル内全レイヤーに同時追加)。
+    // 現在コマが空欄(未割付)ならその場に割り付け、コマは移動しない。
+    // 既に割付済みなら次のコマに割り付け、次のコマが尺を超える場合は尺を伸ばす
     core::Cel& cel = activeCel();
     const int newDrawing = static_cast<int>(cel.drawingCount());
     for (size_t li = 0; li < cel.layerCount(); ++li) {
         cel.layer(li).addFrame().bitmap() = makeTransparentCel();
     }
-    const size_t target = m_currentFrame + 1;
+    const bool currentIsEmpty = cel.exposure(m_currentFrame) == -1;
+    const size_t target = currentIsEmpty ? m_currentFrame : m_currentFrame + 1;
     core::Cut& cut = activeCut();
     if (target >= cut.frameCount()) cut.setFrameCount(target + 1);
     cel.setExposure(target, newDrawing);
@@ -361,6 +363,7 @@ void MainWindow::setupPanels() {
         updateOnionSkin();
         updateWindowTitle();
     });
+    connect(m_framePanel, &FramePanel::addRequested, this, &MainWindow::addFrameAfterCurrent);
     connect(m_framePanel, &FramePanel::deleteRequested, this, &MainWindow::deleteDrawing);
     connect(m_framePanel, &FramePanel::sortModeChanged, this, [this] { updateFrameLabel(); });
 
@@ -384,6 +387,22 @@ void MainWindow::setupPanels() {
     connect(m_layerPanel, &LayerPanel::removeRequested, this, &MainWindow::removeActiveLayer);
     connect(m_layerPanel, &LayerPanel::moveUpRequested, this, [this] { moveActiveLayer(+1); });
     connect(m_layerPanel, &LayerPanel::moveDownRequested, this, [this] { moveActiveLayer(-1); });
+    connect(m_layerPanel, &LayerPanel::renameRequested, this, [this](int index) {
+        // レイヤー名のダブルクリックによる変更(現在名を初期値にし、空欄ならキャンセル扱い)
+        core::Cel& cel = activeCel();
+        if (static_cast<size_t>(index) >= cel.layerCount()) return;
+        core::Layer& layer = cel.layer(static_cast<size_t>(index));
+
+        bool ok = false;
+        const QString newName = QInputDialog::getText(this, tr("レイヤー名を変更"), tr("レイヤー名:"),
+                                                        QLineEdit::Normal, QString::fromStdString(layer.name()), &ok);
+        if (!ok || newName.isEmpty()) return;  // キャンセルまたは空欄は変更しない
+        layer.setName(newName.toStdString());
+
+        m_dirty = true;
+        updateWindowTitle();
+        updateLayerPanel();
+    });
     connect(m_layerPanel, &LayerPanel::roleChangeRequested, this, [this](int index, int role) {
         core::Cel& cel = activeCel();
         if (static_cast<size_t>(index) >= cel.layerCount()) return;
@@ -918,13 +937,19 @@ void MainWindow::setupToolBar() {
     penAction->setChecked(true);
     penAction->setShortcut(QKeySequence(Qt::Key_P));
     group->addAction(penAction);
-    connect(penAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Pen); });
+    connect(penAction, &QAction::triggered, this, [this] {
+        m_canvas->setTool(GLCanvas::Tool::Pen);
+        m_penRadiusSlider->setValue(m_penRadiusValue);  // ペンの記憶値をスライダーに反映
+    });
 
     QAction* eraserAction = toolBar->addAction(tr("消しゴム"));
     eraserAction->setCheckable(true);
     eraserAction->setShortcut(QKeySequence(Qt::Key_E));
     group->addAction(eraserAction);
-    connect(eraserAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Eraser); });
+    connect(eraserAction, &QAction::triggered, this, [this] {
+        m_canvas->setTool(GLCanvas::Tool::Eraser);
+        m_penRadiusSlider->setValue(m_eraserRadiusValue);  // 消しゴムの記憶値をスライダーに反映
+    });
 
     QAction* fillAction = toolBar->addAction(tr("塗りつぶし"));
     fillAction->setCheckable(true);
@@ -944,7 +969,14 @@ void MainWindow::setupToolBar() {
     // Spaceキーでの再生操作にフォーカスを奪わないよう、クリック時のみフォーカスを持たせる
     m_penRadiusSlider->setFocusPolicy(Qt::ClickFocus);
     connect(m_penRadiusSlider, &QSlider::valueChanged, this, [this](int value) {
-        m_canvas->setPenRadius(static_cast<float>(value));
+        // 現在ツールに応じて太さを反映する。塗りつぶしツールはペン扱いのままでよい
+        if (m_canvas->tool() == GLCanvas::Tool::Eraser) {
+            m_canvas->setEraserRadius(static_cast<float>(value));
+            m_eraserRadiusValue = value;
+        } else {
+            m_canvas->setPenRadius(static_cast<float>(value));
+            m_penRadiusValue = value;
+        }
         m_penRadiusValueLabel->setText(QString::number(value));
     });
     toolBar->addWidget(m_penRadiusSlider);
@@ -962,23 +994,23 @@ void MainWindow::setupToolBar() {
     toolBar->addSeparator();
 
     // --- フレーム操作 ---
-    QAction* prevAction = toolBar->addAction(tr("前フレーム"));
+    QAction* prevAction = toolBar->addAction(tr("前のコマ"));
     prevAction->setShortcut(QKeySequence(Qt::Key_Comma));
     connect(prevAction, &QAction::triggered, this, [this] {
         if (!m_playing && m_currentFrame > 0) setCurrentFrame(m_currentFrame - 1);
     });
 
-    QAction* nextAction = toolBar->addAction(tr("次フレーム"));
+    QAction* nextAction = toolBar->addAction(tr("次のコマ"));
     nextAction->setShortcut(QKeySequence(Qt::Key_Period));
     connect(nextAction, &QAction::triggered, this, [this] {
         if (!m_playing) setCurrentFrame(m_currentFrame + 1);
     });
 
-    QAction* addAction = toolBar->addAction(tr("フレーム追加"));
+    QAction* addAction = toolBar->addAction(tr("動画追加"));
     addAction->setShortcut(QKeySequence(Qt::Key_A));
     connect(addAction, &QAction::triggered, this, &MainWindow::addFrameAfterCurrent);
 
-    QAction* deleteAction = toolBar->addAction(tr("フレーム削除"));
+    QAction* deleteAction = toolBar->addAction(tr("割付クリア"));
     deleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
     connect(deleteAction, &QAction::triggered, this, &MainWindow::deleteCurrentFrame);
 

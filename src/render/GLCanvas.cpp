@@ -157,8 +157,8 @@ void GLCanvas::applySettingsFor(Tool tool) {
         settings.pressureAffectsRadius = true;
         settings.mode = core::BrushMode::Paint;
     } else if (tool == Tool::Eraser) {
-        // 消しゴム: セルを透明に戻す。ペンより太めで筆圧の影響は受けない
-        settings.radius = 24.0f;
+        // 消しゴム: セルを透明に戻す。筆圧の影響は受けない
+        settings.radius = m_eraserRadius;
         settings.pressureAffectsRadius = false;
         settings.mode = core::BrushMode::Erase;
     }
@@ -173,6 +173,11 @@ void GLCanvas::setPenRadius(float radius) {
 void GLCanvas::setPenColor(QColor color) {
     m_penColor = color;
     if (m_tool == Tool::Pen) applyToolSettings();
+}
+
+void GLCanvas::setEraserRadius(float radius) {
+    m_eraserRadius = radius;
+    if (m_tool == Tool::Eraser) applyToolSettings();
 }
 
 void GLCanvas::initializeGL() {

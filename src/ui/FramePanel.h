@@ -8,7 +8,7 @@ class QComboBox;
 class QPushButton;
 
 // 動画(絵)一覧のドッキングパネル。クリックで現在コマへの割付を切り替える。
-// 並び順(番号順/再生順)を上部のコンボボックスで切り替えられ、下部のボタンで選択中の動画を削除できる。
+// 並び順(番号順/再生順)を上部のコンボボックスで切り替えられ、下部のボタンで動画の追加/選択中の動画の削除ができる。
 class FramePanel : public QDockWidget {
     Q_OBJECT
 
@@ -24,12 +24,14 @@ public:
 
 signals:
     void frameSelected(int drawingIndex);    // 動画インデックス(0始まり)
+    void addRequested();                     // 動画追加要求
     void deleteRequested(int drawingIndex);  // 選択中の動画の削除要求(0始まり、未選択なら発火しない)
     void sortModeChanged();                  // 並び順切替。MainWindowが動画一覧を再構築して反映する
 
 private:
     QComboBox* m_sortCombo = nullptr;
     QListWidget* m_list = nullptr;
+    QPushButton* m_addButton = nullptr;
     QPushButton* m_deleteButton = nullptr;
     QList<int> m_displayOrder;  // 表示行 → 動画インデックスの対応表
     bool m_updating = false;

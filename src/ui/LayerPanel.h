@@ -27,6 +27,7 @@ signals:
     void removeRequested();
     void moveUpRequested();
     void moveDownRequested();
+    void renameRequested(int layerIndex);  // ダブルクリックによる名前変更要求。コア側インデックス
     // レイヤー種別変更要求。layerIndexはコア側インデックス、roleは0=Normal,1=ColorTrace,2=Correction
     void roleChangeRequested(int layerIndex, int role);
 

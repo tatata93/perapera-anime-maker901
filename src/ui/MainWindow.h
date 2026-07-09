@@ -167,6 +167,9 @@ private:
     QLabel* m_penRadiusValueLabel = nullptr;
     QToolButton* m_penColorButton = nullptr;
     QColor m_penColor = Qt::black;
+    // 太さスライダーはツールごとに値を記憶する(ペン/塗りつぶしはペンの値を共有、消しゴムは専用)
+    int m_penRadiusValue = 6;
+    int m_eraserRadiusValue = 24;
 
     // 下敷き(参照画像/連番シーケンス): 選択フォルダ内の同拡張子ファイル一覧(名前順)
     QStringList m_underlaySequence;

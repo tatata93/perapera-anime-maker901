@@ -65,6 +65,9 @@ public:
     // 現在ツールがペンの場合は即座に反映する
     void setPenRadius(float radius);
     void setPenColor(QColor color);
+    // 消しゴムツールの半径を設定する(ペンの設定には影響しない)。
+    // 現在ツールが消しゴムの場合は即座に反映する
+    void setEraserRadius(float radius);
 
     // ストローク完了時にUndo用コマンドを受け取るコールバック(MainWindowがCommandStackへ積む)
     using StrokeCommandSink = std::function<void(std::unique_ptr<core::Command>)>;
@@ -129,6 +132,8 @@ private:
     // ペンツールの半径・色(ツールバーのUIから変更される)
     float m_penRadius = 6.0f;
     QColor m_penColor = Qt::black;
+    // 消しゴムツールの半径(ツールバーのUIから変更される)
+    float m_eraserRadius = 24.0f;
 
     StrokeCommandSink m_strokeCommandSink;
     core::Bitmap m_strokeSnapshot;   // ストローク開始時点の全体コピー(Undo用)

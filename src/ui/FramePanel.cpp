@@ -21,6 +21,9 @@ FramePanel::FramePanel(QWidget* parent) : QDockWidget(tr("動画"), parent) {
     m_list = new QListWidget(container);
     layout->addWidget(m_list);
 
+    m_addButton = new QPushButton(tr("動画追加"), container);
+    layout->addWidget(m_addButton);
+
     m_deleteButton = new QPushButton(tr("動画削除"), container);
     layout->addWidget(m_deleteButton);
 
@@ -30,6 +33,7 @@ FramePanel::FramePanel(QWidget* parent) : QDockWidget(tr("動画"), parent) {
         if (m_updating || row < 0 || row >= m_displayOrder.size()) return;
         emit frameSelected(m_displayOrder.at(row));
     });
+    connect(m_addButton, &QPushButton::clicked, this, &FramePanel::addRequested);
     connect(m_deleteButton, &QPushButton::clicked, this, [this] {
         const int row = m_list->currentRow();
         if (row < 0 || row >= m_displayOrder.size()) return;  // 未選択なら発火しない
