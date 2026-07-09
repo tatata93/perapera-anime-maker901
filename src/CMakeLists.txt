@@ -4,6 +4,8 @@ add_executable(perapera-anime-maker901
     main.cpp
     ui/MainWindow.cpp
     ui/MainWindow.h
+    ui/FramePanel.cpp
+    ui/FramePanel.h
     render/GLCanvas.cpp
     render/GLCanvas.h
 )

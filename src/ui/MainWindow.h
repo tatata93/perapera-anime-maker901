@@ -5,6 +5,7 @@
 
 #include "core/Project.h"
 
+class FramePanel;
 class GLCanvas;
 class QLabel;
 class QSpinBox;
@@ -32,6 +33,7 @@ private:
     void createNewDocument();
     void setupToolBar();
     void setupMenus();
+    void setupPanels();
 
     void newDocument();
     bool saveToFile(const QString& path);
@@ -62,5 +64,6 @@ private:
     QSpinBox* m_fpsSpin = nullptr;
     QAction* m_playAction = nullptr;
     QAction* m_onionAction = nullptr;
+    FramePanel* m_framePanel = nullptr;
     QString m_currentFilePath;
 };

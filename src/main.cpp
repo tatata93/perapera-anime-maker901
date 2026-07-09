@@ -40,6 +40,19 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --ui-test <出力PNG> でウィンドウ全体(メニュー/ツールバー/パネル込み)を保存する
+    const int uiIndex = args.indexOf("--ui-test");
+    if (uiIndex >= 0 && uiIndex + 1 < args.size()) {
+        const QString outputPath = args.at(uiIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupOnionDemo();
+            QTimer::singleShot(200, &window, [&window, outputPath] {
+                window.grab().save(outputPath);
+                QApplication::quit();
+            });
+        });
+    }
+
     // 動作確認用: --io-test <ppamパス> <出力PNG> でストローク描画→保存→新規→
     // 読み込み→画面保存を行い、UI経由の保存/読み込みを一括検証する
     const int ioIndex = args.indexOf("--io-test");

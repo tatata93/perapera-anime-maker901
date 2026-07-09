@@ -15,6 +15,7 @@
 #include "core/BrushEngine.h"
 #include "core/ProjectIO.h"
 #include "render/GLCanvas.h"
+#include "ui/FramePanel.h"
 
 namespace {
 constexpr int kCanvasWidth = 1920;
@@ -37,7 +38,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_playTimer = new QTimer(this);
     connect(m_playTimer, &QTimer::timeout, this, &MainWindow::onPlaybackTick);
 
+    setDockNestingEnabled(true);
+
     createNewDocument();
+    setupPanels();
     setupMenus();
     setupToolBar();
     updateFrameLabel();
@@ -124,8 +128,21 @@ void MainWindow::updateOnionSkin() {
 }
 
 void MainWindow::updateFrameLabel() {
-    if (!m_frameLabel) return;
-    m_frameLabel->setText(QStringLiteral(" %1 / %2 ").arg(m_currentFrame + 1).arg(activeLayer().frameCount()));
+    const int count = static_cast<int>(activeLayer().frameCount());
+    if (m_frameLabel) {
+        m_frameLabel->setText(QStringLiteral(" %1 / %2 ").arg(m_currentFrame + 1).arg(count));
+    }
+    if (m_framePanel) {
+        m_framePanel->setFrames(count, static_cast<int>(m_currentFrame));
+    }
+}
+
+void MainWindow::setupPanels() {
+    m_framePanel = new FramePanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_framePanel);
+    connect(m_framePanel, &FramePanel::frameSelected, this, [this](int index) {
+        if (!m_playing) setCurrentFrame(static_cast<size_t>(index));
+    });
 }
 
 void MainWindow::setupMenus() {
@@ -148,6 +165,10 @@ void MainWindow::setupMenus() {
     QAction* saveAsAction = fileMenu->addAction(tr("名前を付けて保存(&A)..."));
     saveAsAction->setShortcut(QKeySequence::SaveAs);
     connect(saveAsAction, &QAction::triggered, this, &MainWindow::saveAs);
+
+    // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
+    QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
+    viewMenu->addAction(m_framePanel->toggleViewAction());
 }
 
 void MainWindow::updateWindowTitle() {
