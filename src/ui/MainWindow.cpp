@@ -23,6 +23,7 @@
 
 #include "core/BrushEngine.h"
 #include "core/ProjectIO.h"
+#include "core/StrokeCommand.h"
 #include "render/GLCanvas.h"
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
@@ -74,6 +75,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setupToolBar();
     updateFrameLabel();
     updateWindowTitle();
+
+    // 描画時間の常時表示(60fps目標=16.6ms以内の監視用)
+    auto* perfLabel = new QLabel(this);
+    statusBar()->addPermanentWidget(perfLabel);
+    auto* perfTimer = new QTimer(this);
+    connect(perfTimer, &QTimer::timeout, this, [this, perfLabel] {
+        const double ms = m_canvas->paintMillis();
+        if (ms > 0.0) perfLabel->setText(QStringLiteral("描画 %1 ms ").arg(ms, 0, 'f', 1));
+    });
+    perfTimer->start(500);
 }
 
 MainWindow::~MainWindow() = default;
@@ -500,14 +511,23 @@ void MainWindow::setupMenus() {
 
 void MainWindow::undo() {
     if (m_playing || !m_commands.canUndo()) return;
-    m_commands.undo();
-    m_canvas->clearTextureCache();  // 変更されたBitmapのテクスチャを再アップロードさせる
+    core::Command* command = m_commands.undo();
+    // 変更矩形が分かるコマンドは部分転送のみで済ませる(全テクスチャ破棄はカクつきの原因)
+    if (auto* stroke = dynamic_cast<core::StrokeCommand*>(command)) {
+        m_canvas->notifyBitmapRegionChanged(stroke->bitmap(), stroke->region());
+    } else if (command) {
+        m_canvas->clearTextureCache();
+    }
 }
 
 void MainWindow::redo() {
     if (m_playing || !m_commands.canRedo()) return;
-    m_commands.redo();
-    m_canvas->clearTextureCache();
+    core::Command* command = m_commands.redo();
+    if (auto* stroke = dynamic_cast<core::StrokeCommand*>(command)) {
+        m_canvas->notifyBitmapRegionChanged(stroke->bitmap(), stroke->region());
+    } else if (command) {
+        m_canvas->clearTextureCache();
+    }
 }
 
 void MainWindow::updateWindowTitle() {

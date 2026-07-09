@@ -38,6 +38,11 @@ public:
     void setOnionSkin(const core::Bitmap* prev, const core::Bitmap* next);
     // フレーム構造の変更(追加/削除)後に呼び、古いテクスチャを破棄する
     void clearTextureCache();
+    // Undo/Redo等で外部からBitmapの一部が書き換えられた際に部分再アップロードを予約する
+    void notifyBitmapRegionChanged(core::Bitmap* bitmap, const core::DirtyRect& rect);
+
+    // 直近の描画時間(ms、指数移動平均)。60fps目標の常時計測用
+    double paintMillis() const { return m_paintMsEma; }
 
     // 下敷き(参照画像/連番シーケンス)。現在フレームに薄く透かして重ね表示する。
     // セッション限定の参照であり、.ppamプロジェクトファイルには保存されない
@@ -99,7 +104,10 @@ private:
 
     // コンテキストがカレントな状態で呼ぶこと
     QOpenGLTexture* getOrCreateTexture(const core::Bitmap* bitmap);
-    void uploadDirty(const core::DirtyRect& rect);
+    void flushPendingUpload();
+
+    // 部分アップロードを予約する(実際の転送はpaintGL冒頭で1回だけ行う=60fps対策)
+    void queueUpload(core::Bitmap* bitmap, const core::DirtyRect& rect);
 
     core::Bitmap* m_bitmap = nullptr;                 // 編集対象(アクティブレイヤーのセル)
     std::vector<const core::Bitmap*> m_layerStack;    // 表示レイヤー(下→上)
@@ -130,6 +138,12 @@ private:
     std::unordered_map<const core::Bitmap*, std::unique_ptr<QOpenGLTexture>> m_textures;
     QOpenGLBuffer m_vbo;
     std::vector<uint8_t> m_uploadScratch;  // 部分アップロード用の連続バッファ
+
+    // アップロード待ちの領域(paintGLで1回だけ転送する)
+    core::Bitmap* m_pendingUploadBitmap = nullptr;
+    core::DirtyRect m_pendingUploadRect{};
+
+    double m_paintMsEma = 0.0;  // paintGL所要時間の指数移動平均(ms)
 
     // 下敷き(参照画像/連番シーケンス)用のテクスチャ。存在すれば現在フレームに薄く重ねる
     std::unique_ptr<QOpenGLTexture> m_underlayTexture;

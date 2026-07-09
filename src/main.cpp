@@ -231,5 +231,22 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --perf-test <出力TXT> でストローク描画+再描画を繰り返し、描画時間(ms)を出力する
+    const int perfIndex = args.indexOf("--perf-test");
+    if (perfIndex >= 0 && perfIndex + 1 < args.size()) {
+        const QString outputPath = args.at(perfIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            for (int i = 0; i < 30; ++i) {
+                window.canvas()->debugSimulateStroke();
+                window.canvas()->grabFramebuffer();  // paintGLを強制実行(FBO+読み戻し込みの上限値)
+            }
+            QFile file(outputPath);
+            if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                file.write(QStringLiteral("paint_ms_ema=%1\n").arg(window.canvas()->paintMillis(), 0, 'f', 3).toUtf8());
+            }
+            QApplication::exit(0);
+        });
+    }
+
     return app.exec();
 }

@@ -19,6 +19,7 @@ public:
     void undo() override { writeRegion(m_before); }
 
     const DirtyRect& region() const { return m_region; }
+    Bitmap* bitmap() const { return m_bitmap; }
 
     // 矩形領域の画素を連続バッファへ切り出す
     static std::vector<uint8_t> copyRegion(const Bitmap& bitmap, const DirtyRect& region);

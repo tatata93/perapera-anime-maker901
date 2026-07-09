@@ -7,6 +7,7 @@
 #include <QTabletEvent>
 #include <QVector3D>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include "core/FillTool.h"
@@ -96,6 +97,13 @@ void GLCanvas::clearTextureCache() {
     makeCurrent();
     m_textures.clear();
     doneCurrent();
+    m_pendingUploadBitmap = nullptr;  // 破棄されたBitmapへの転送予約も無効化
+    m_pendingUploadRect = core::DirtyRect{};
+    update();
+}
+
+void GLCanvas::notifyBitmapRegionChanged(core::Bitmap* bitmap, const core::DirtyRect& rect) {
+    queueUpload(bitmap, rect);
     update();
 }
 
@@ -211,31 +219,49 @@ QOpenGLTexture* GLCanvas::getOrCreateTexture(const core::Bitmap* bitmap) {
     return raw;
 }
 
-void GLCanvas::uploadDirty(const core::DirtyRect& rect) {
-    if (!m_bitmap || rect.isEmpty()) return;
-
-    makeCurrent();
-    auto it = m_textures.find(m_bitmap);
-    if (it == m_textures.end()) {
-        getOrCreateTexture(m_bitmap);  // 全体アップロードでdirty領域も反映される
+void GLCanvas::queueUpload(core::Bitmap* bitmap, const core::DirtyRect& rect) {
+    if (!bitmap || rect.isEmpty()) return;
+    if (m_pendingUploadBitmap && m_pendingUploadBitmap != bitmap) {
+        // 別Bitmapの予約が残っている場合は先に転送してから入れ替える(稀なケース)
+        makeCurrent();
+        flushPendingUpload();
         doneCurrent();
-        update();
+    }
+    m_pendingUploadBitmap = bitmap;
+    m_pendingUploadRect.unite(rect);
+}
+
+// コンテキストがカレントな状態で呼ぶこと。
+// 入力イベントごとではなく描画フレームごとに1回だけ転送する(60fps対策)
+void GLCanvas::flushPendingUpload() {
+    if (!m_pendingUploadBitmap || m_pendingUploadRect.isEmpty()) {
+        m_pendingUploadBitmap = nullptr;
+        m_pendingUploadRect = core::DirtyRect{};
         return;
     }
 
-    // 部分領域を連続バッファへ詰め替えてからアップロードする
-    const int w = rect.width();
-    const int h = rect.height();
-    m_uploadScratch.resize(static_cast<size_t>(w) * h * 4);
-    const int stride = m_bitmap->width() * 4;
-    const uint8_t* src = m_bitmap->data() + static_cast<size_t>(rect.y0) * stride + static_cast<size_t>(rect.x0) * 4;
-    for (int row = 0; row < h; ++row) {
-        std::copy(src + static_cast<size_t>(row) * stride, src + static_cast<size_t>(row) * stride + static_cast<size_t>(w) * 4,
-                  m_uploadScratch.begin() + static_cast<size_t>(row) * w * 4);
+    auto it = m_textures.find(m_pendingUploadBitmap);
+    if (it != m_textures.end()) {
+        // 部分領域を連続バッファへ詰め替えてからアップロードする
+        const core::DirtyRect rect = m_pendingUploadRect;
+        const core::Bitmap* bitmap = m_pendingUploadBitmap;
+        const int w = rect.width();
+        const int h = rect.height();
+        m_uploadScratch.resize(static_cast<size_t>(w) * h * 4);
+        const int stride = bitmap->width() * 4;
+        const uint8_t* src = bitmap->data() + static_cast<size_t>(rect.y0) * stride + static_cast<size_t>(rect.x0) * 4;
+        for (int row = 0; row < h; ++row) {
+            std::copy(src + static_cast<size_t>(row) * stride,
+                      src + static_cast<size_t>(row) * stride + static_cast<size_t>(w) * 4,
+                      m_uploadScratch.begin() + static_cast<size_t>(row) * w * 4);
+        }
+        it->second->setData(rect.x0, rect.y0, 0, w, h, 1, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8,
+                            m_uploadScratch.data());
     }
-    it->second->setData(rect.x0, rect.y0, 0, w, h, 1, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, m_uploadScratch.data());
-    doneCurrent();
-    update();
+    // キャッシュ未作成ならgetOrCreateTextureが全転送するため何もしなくてよい
+
+    m_pendingUploadBitmap = nullptr;
+    m_pendingUploadRect = core::DirtyRect{};
 }
 
 QTransform GLCanvas::viewTransform() const {
@@ -269,10 +295,23 @@ void GLCanvas::resetView() {
 }
 
 void GLCanvas::paintGL() {
+    const auto paintStart = std::chrono::steady_clock::now();
+
+    flushPendingUpload();  // 溜めた部分転送をフレームごとに1回だけ実行(60fps対策)
+
     glDisable(GL_BLEND);  // Qt側がブレンド有効のまま呼ぶことがあるため明示的に無効化
     glClear(GL_COLOR_BUFFER_BIT);
 
-    if (!m_bitmap || m_bitmap->isEmpty() || !m_program) return;
+    // 描画時間の指数移動平均を更新して抜ける(60fps目標の常時計測)
+    const auto recordTime = [this, paintStart] {
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - paintStart).count();
+        m_paintMsEma = m_paintMsEma <= 0.0 ? ms : m_paintMsEma * 0.9 + ms * 0.1;
+    };
+
+    if (!m_bitmap || m_bitmap->isEmpty() || !m_program) {
+        recordTime();
+        return;
+    }
 
     // 画像の四隅をビュー変換(ズーム/回転/パン込み)でウィジェット座標→NDCへ落とす
     const QTransform t = viewTransform();
@@ -366,6 +405,8 @@ void GLCanvas::paintGL() {
 
     m_vbo.release();
     m_program->release();
+
+    recordTime();
 }
 
 void GLCanvas::performFill(QPointF widgetPos) {
@@ -384,7 +425,8 @@ void GLCanvas::performFill(QPointF widgetPos) {
         m_strokeCommandSink(
             std::make_unique<core::StrokeCommand>(m_bitmap, dirty, std::move(beforeRegion), std::move(afterRegion)));
     }
-    uploadDirty(dirty);
+    queueUpload(m_bitmap, dirty);
+    update();
 }
 
 void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
@@ -398,7 +440,8 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
     if (m_strokeCommandSink) m_strokeSnapshot = *m_bitmap;  // Undo用に開始時点を保存
     const auto dirty = m_brush.beginStroke(*m_bitmap, static_cast<float>(img.x()), static_cast<float>(img.y()), pressure);
     m_strokeDirty = dirty;
-    uploadDirty(dirty);
+    queueUpload(m_bitmap, dirty);
+    update();
 }
 
 void GLCanvas::pointerMove(QPointF widgetPos, float pressure) {
@@ -406,7 +449,8 @@ void GLCanvas::pointerMove(QPointF widgetPos, float pressure) {
     const QPointF img = widgetToImage(widgetPos);
     const auto dirty = m_brush.continueStroke(*m_bitmap, static_cast<float>(img.x()), static_cast<float>(img.y()), pressure);
     m_strokeDirty.unite(dirty);
-    uploadDirty(dirty);
+    queueUpload(m_bitmap, dirty);
+    update();
 }
 
 void GLCanvas::pointerEnd() {
