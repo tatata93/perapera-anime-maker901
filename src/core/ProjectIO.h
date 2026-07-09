@@ -13,7 +13,7 @@ namespace core {
 class ProjectIO {
 public:
     static constexpr uint32_t kContainerVersion = 1;
-    // v2: Cut→Cel→Layer階層(セル導入)。v1(Cut直下にlayers)も読み込み時に互換対応する
+    // v2: Cut→Cel→Layer階層。開発中は旧スキーマとの後方互換を維持しない(docs/FILE_FORMAT.md参照)
     static constexpr int kSchemaVersion = 2;
 
     // 失敗時はfalseを返し、errorOutに日本語のエラー内容を格納する

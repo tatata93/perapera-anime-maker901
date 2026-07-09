@@ -24,7 +24,7 @@ class GLCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 
 public:
-    enum class Tool { Pen, Eraser };
+    enum class Tool { Pen, Eraser, Fill };
 
     explicit GLCanvas(QWidget* parent = nullptr);
     ~GLCanvas() override;
@@ -64,6 +64,8 @@ public:
 
     // 端から端まで筆圧を変えながら1ストローク描く(動作確認用フック)
     void debugSimulateStroke();
+    // 指定ウィジェット座標を塗りつぶす(動作確認用フック)
+    void debugFillAt(QPointF widgetPos);
     // ビュー状態を直接設定する(動作確認用フック)
     void debugSetView(float zoom, qreal rotationDeg, QPointF panOffset) {
         m_zoom = zoom;
@@ -87,6 +89,7 @@ private:
     void pointerBegin(QPointF widgetPos, float pressure);
     void pointerMove(QPointF widgetPos, float pressure);
     void pointerEnd();
+    void performFill(QPointF widgetPos);
 
     // 画像座標→ウィジェット座標の変換(フィット×ズーム×回転×パン)
     QTransform viewTransform() const;

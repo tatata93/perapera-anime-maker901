@@ -43,6 +43,8 @@ public:
     // レイヤー確認用: レイヤー2枚(下=赤縦線/上=青横線)のデモを作る
     void debugSetupLayerDemo();
     void debugSetLayerVisible(int layerIndex, bool visible);
+    // 塗りつぶし確認用: 閉じた矩形枠を現在フレームに描く
+    void debugSetupFillDemo();
     // 自動保存確認用: performAutosave()を即実行し、保存先パスを返す(失敗時は空文字)
     QString debugTriggerAutosave();
 

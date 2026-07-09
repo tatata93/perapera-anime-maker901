@@ -544,6 +544,12 @@ void MainWindow::setupToolBar() {
     group->addAction(eraserAction);
     connect(eraserAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Eraser); });
 
+    QAction* fillAction = toolBar->addAction(tr("塗りつぶし"));
+    fillAction->setCheckable(true);
+    fillAction->setShortcut(QKeySequence(Qt::Key_F));
+    group->addAction(fillAction);
+    connect(fillAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Fill); });
+
     toolBar->addSeparator();
 
     // --- ブラシ設定(太さ・色) ---
@@ -675,6 +681,26 @@ void MainWindow::debugSetupLayerDemo() {
     m_canvas->clearTextureCache();
     updateCanvasLayers();
     updateLayerPanel();
+}
+
+void MainWindow::debugSetupFillDemo() {
+    // 閉じた矩形枠(黒)を現在フレームのアクティブレイヤーに描く
+    core::Bitmap& bitmap = activeLayer().frame(m_currentFrame).bitmap();
+    core::BrushEngine engine;
+    engine.settings().radius = 8.0f;
+    engine.settings().color = {0, 0, 0, 255};
+
+    const float x0 = kCanvasWidth * 0.30f, x1 = kCanvasWidth * 0.70f;
+    const float y0 = kCanvasHeight * 0.30f, y1 = kCanvasHeight * 0.70f;
+    engine.beginStroke(bitmap, x0, y0, 1.0f);
+    engine.continueStroke(bitmap, x1, y0, 1.0f);
+    engine.continueStroke(bitmap, x1, y1, 1.0f);
+    engine.continueStroke(bitmap, x0, y1, 1.0f);
+    engine.continueStroke(bitmap, x0, y0, 1.0f);
+    engine.endStroke();
+
+    m_canvas->clearTextureCache();
+    updateCanvasLayers();
 }
 
 void MainWindow::debugSetLayerVisible(int layerIndex, bool visible) {

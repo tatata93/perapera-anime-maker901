@@ -173,6 +173,23 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --fill-test <出力PNG> で閉じた矩形枠を描き、その内側を塗りつぶして保存する
+    const int fillIndex = args.indexOf("--fill-test");
+    if (fillIndex >= 0 && fillIndex + 1 < args.size()) {
+        const QString outputPath = args.at(fillIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupFillDemo();  // 閉じた矩形枠(黒)を描く
+            window.canvas()->setPenColor(QColor(255, 140, 0));
+            // フィット表示では画像中心=ウィジェット中心なので、中心をクリックすれば枠内が塗られる
+            const QPointF center(window.canvas()->width() * 0.5, window.canvas()->height() * 0.5);
+            window.canvas()->debugFillAt(center);
+            QTimer::singleShot(200, &window, [&window, outputPath] {
+                window.canvas()->grabFramebuffer().save(outputPath);
+                QApplication::exit(0);
+            });
+        });
+    }
+
     // 動作確認用: --layers-test <PNG1> <PNG2> でレイヤー2枚(赤縦線+青横線)を表示保存後、
     // 下レイヤーを非表示にして保存する(PNG2は青横線のみになるはず)
     const int layersIndex = args.indexOf("--layers-test");

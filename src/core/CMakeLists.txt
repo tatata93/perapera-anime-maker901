@@ -3,6 +3,8 @@ add_library(perapera_core STATIC
     Bitmap.h
     BrushEngine.cpp
     BrushEngine.h
+    FillTool.cpp
+    FillTool.h
     Frame.h
     Layer.cpp
     Layer.h

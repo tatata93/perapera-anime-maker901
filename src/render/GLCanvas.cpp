@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/FillTool.h"
 #include "core/StrokeCommand.h"
 
 namespace {
@@ -147,12 +148,13 @@ void GLCanvas::applySettingsFor(Tool tool) {
                            static_cast<uint8_t>(m_penColor.blue()), static_cast<uint8_t>(m_penColor.alpha())};
         settings.pressureAffectsRadius = true;
         settings.mode = core::BrushMode::Paint;
-    } else {
+    } else if (tool == Tool::Eraser) {
         // 消しゴム: セルを透明に戻す。ペンより太めで筆圧の影響は受けない
         settings.radius = 24.0f;
         settings.pressureAffectsRadius = false;
         settings.mode = core::BrushMode::Erase;
     }
+    // Fill: ブラシ設定は使わない(performFillがペン色を直接参照する)
 }
 
 void GLCanvas::setPenRadius(float radius) {
@@ -366,8 +368,31 @@ void GLCanvas::paintGL() {
     m_program->release();
 }
 
+void GLCanvas::performFill(QPointF widgetPos) {
+    const QPointF img = widgetToImage(widgetPos);
+    core::Bitmap before;
+    if (m_strokeCommandSink) before = *m_bitmap;  // Undo用
+
+    const core::Bitmap::Pixel color{static_cast<uint8_t>(m_penColor.red()), static_cast<uint8_t>(m_penColor.green()),
+                                    static_cast<uint8_t>(m_penColor.blue()), 255};
+    const auto dirty = core::floodFill(*m_bitmap, m_layerStack, static_cast<int>(img.x()), static_cast<int>(img.y()), color);
+    if (dirty.isEmpty()) return;
+
+    if (m_strokeCommandSink) {
+        auto beforeRegion = core::StrokeCommand::copyRegion(before, dirty);
+        auto afterRegion = core::StrokeCommand::copyRegion(*m_bitmap, dirty);
+        m_strokeCommandSink(
+            std::make_unique<core::StrokeCommand>(m_bitmap, dirty, std::move(beforeRegion), std::move(afterRegion)));
+    }
+    uploadDirty(dirty);
+}
+
 void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
     if (!m_bitmap || !m_inputEnabled) return;
+    if (m_tool == Tool::Fill) {
+        performFill(widgetPos);
+        return;
+    }
     const QPointF img = widgetToImage(widgetPos);
     m_strokeActive = true;
     if (m_strokeCommandSink) m_strokeSnapshot = *m_bitmap;  // Undo用に開始時点を保存
@@ -476,6 +501,11 @@ void GLCanvas::wheelEvent(QWheelEvent* event) {
     m_panOffset += cursor - moved;
     update();
     event->accept();
+}
+
+void GLCanvas::debugFillAt(QPointF widgetPos) {
+    if (!m_bitmap) return;
+    performFill(widgetPos);
 }
 
 void GLCanvas::debugSimulateStroke() {

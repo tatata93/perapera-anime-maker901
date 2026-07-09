@@ -184,20 +184,10 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
             Scene& scene = project->addScene(jScene.at("name").get<std::string>());
             for (const json& jCut : jScene.at("cuts")) {
                 Cut& cut = scene.addCut(jCut.at("name").get<std::string>());
-                if (jCut.contains("cels")) {
-                    // v2: Cut→Cel→Layer
-                    for (const json& jCel : jCut.at("cels")) {
-                        Cel& cel = cut.addCel(jCel.at("name").get<std::string>());
-                        cel.setVisible(jCel.value("visible", true));
-                        for (const json& jLayer : jCel.at("layers")) {
-                            Layer& layer = cel.addLayer(jLayer.at("name").get<std::string>());
-                            if (!loadLayerFrames(layer, jLayer)) return nullptr;
-                        }
-                    }
-                } else if (jCut.contains("layers")) {
-                    // v1互換: Cut直下のlayersを既定セル1つに包んで読み込む
-                    Cel& cel = cut.addCel("セル A");
-                    for (const json& jLayer : jCut.at("layers")) {
+                for (const json& jCel : jCut.at("cels")) {
+                    Cel& cel = cut.addCel(jCel.at("name").get<std::string>());
+                    cel.setVisible(jCel.value("visible", true));
+                    for (const json& jLayer : jCel.at("layers")) {
                         Layer& layer = cel.addLayer(jLayer.at("name").get<std::string>());
                         if (!loadLayerFrames(layer, jLayer)) return nullptr;
                     }
