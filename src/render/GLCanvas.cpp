@@ -4,6 +4,7 @@
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
 #include <QTabletEvent>
+#include <QVector3D>
 #include <algorithm>
 #include <cmath>
 
@@ -19,13 +20,29 @@ void main() {
 }
 )";
 
+// uOnionStrength = 0 : テクスチャをそのまま表示(通常描画)
+// uOnionStrength > 0 : 線(暗部)をuTint色に置き換えた「白地+色線」を出力する。
+//                      乗算ブレンドで重ねると白地は無視され色線だけが合成される。
 const char* kFragmentShader = R"(
 varying vec2 vUV;
 uniform sampler2D uTex;
+uniform vec3 uTint;
+uniform float uOnionStrength;
 void main() {
-    gl_FragColor = texture2D(uTex, vUV);
+    vec4 tex = texture2D(uTex, vUV);
+    if (uOnionStrength > 0.0) {
+        float darkness = 1.0 - min(min(tex.r, tex.g), tex.b);
+        float coverage = darkness * uOnionStrength;
+        gl_FragColor = vec4(mix(vec3(1.0), uTint, coverage), 1.0);
+    } else {
+        gl_FragColor = tex;
+    }
 }
 )";
+
+constexpr float kOnionStrength = 0.55f;
+const QVector3D kPrevTint(0.95f, 0.35f, 0.35f);  // 前フレーム: 赤系
+const QVector3D kNextTint(0.30f, 0.75f, 0.35f);  // 次フレーム: 緑系
 
 }  // namespace
 
@@ -35,7 +52,7 @@ GLCanvas::GLCanvas(QWidget* parent) : QOpenGLWidget(parent) {
 
 GLCanvas::~GLCanvas() {
     makeCurrent();
-    m_texture.reset();
+    m_textures.clear();
     m_program.reset();
     if (m_vbo.isCreated()) m_vbo.destroy();
     doneCurrent();
@@ -43,7 +60,19 @@ GLCanvas::~GLCanvas() {
 
 void GLCanvas::setBitmap(core::Bitmap* bitmap) {
     m_bitmap = bitmap;
-    m_textureNeedsRecreate = true;
+    update();
+}
+
+void GLCanvas::setOnionSkin(const core::Bitmap* prev, const core::Bitmap* next) {
+    m_prevOnion = prev;
+    m_nextOnion = next;
+    update();
+}
+
+void GLCanvas::clearTextureCache() {
+    makeCurrent();
+    m_textures.clear();
+    doneCurrent();
     update();
 }
 
@@ -78,7 +107,6 @@ void GLCanvas::initializeGL() {
     m_program->link();
 
     m_vbo.create();
-    m_textureNeedsRecreate = true;
 }
 
 void GLCanvas::resizeGL(int w, int h) {
@@ -86,26 +114,38 @@ void GLCanvas::resizeGL(int w, int h) {
     Q_UNUSED(h);
 }
 
-void GLCanvas::recreateTexture() {
-    m_texture.reset();
-    if (!m_bitmap || m_bitmap->isEmpty()) return;
+QOpenGLTexture* GLCanvas::getOrCreateTexture(const core::Bitmap* bitmap) {
+    if (!bitmap || bitmap->isEmpty()) return nullptr;
 
-    m_texture = std::make_unique<QOpenGLTexture>(QOpenGLTexture::Target2D);
-    m_texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
-    m_texture->setSize(m_bitmap->width(), m_bitmap->height());
-    m_texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
-    m_texture->setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Nearest);
-    m_texture->setWrapMode(QOpenGLTexture::ClampToEdge);
-    m_texture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, m_bitmap->data());
-    m_textureNeedsRecreate = false;
+    auto it = m_textures.find(bitmap);
+    if (it != m_textures.end()) {
+        // サイズ変更されていたら作り直す
+        if (it->second->width() == bitmap->width() && it->second->height() == bitmap->height()) {
+            return it->second.get();
+        }
+        m_textures.erase(it);
+    }
+
+    auto texture = std::make_unique<QOpenGLTexture>(QOpenGLTexture::Target2D);
+    texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+    texture->setSize(bitmap->width(), bitmap->height());
+    texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
+    texture->setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Nearest);
+    texture->setWrapMode(QOpenGLTexture::ClampToEdge);
+    texture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, bitmap->data());
+
+    QOpenGLTexture* raw = texture.get();
+    m_textures.emplace(bitmap, std::move(texture));
+    return raw;
 }
 
 void GLCanvas::uploadDirty(const core::DirtyRect& rect) {
     if (!m_bitmap || rect.isEmpty()) return;
 
     makeCurrent();
-    if (m_textureNeedsRecreate || !m_texture) {
-        recreateTexture();
+    auto it = m_textures.find(m_bitmap);
+    if (it == m_textures.end()) {
+        getOrCreateTexture(m_bitmap);  // 全体アップロードでdirty領域も反映される
         doneCurrent();
         update();
         return;
@@ -121,7 +161,7 @@ void GLCanvas::uploadDirty(const core::DirtyRect& rect) {
         std::copy(src + static_cast<size_t>(row) * stride, src + static_cast<size_t>(row) * stride + static_cast<size_t>(w) * 4,
                   m_uploadScratch.begin() + static_cast<size_t>(row) * w * 4);
     }
-    m_texture->setData(rect.x0, rect.y0, 0, w, h, 1, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, m_uploadScratch.data());
+    it->second->setData(rect.x0, rect.y0, 0, w, h, 1, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, m_uploadScratch.data());
     doneCurrent();
     update();
 }
@@ -147,10 +187,12 @@ QPointF GLCanvas::widgetToImage(QPointF widgetPos) const {
 }
 
 void GLCanvas::paintGL() {
+    glDisable(GL_BLEND);  // Qt側がブレンド有効のまま呼ぶことがあるため明示的に無効化
     glClear(GL_COLOR_BUFFER_BIT);
 
-    if (m_textureNeedsRecreate) recreateTexture();
-    if (!m_texture || !m_program) return;
+    if (!m_bitmap || !m_program) return;
+    QOpenGLTexture* currentTex = getOrCreateTexture(m_bitmap);
+    if (!currentTex) return;
 
     // 画像の表示矩形をNDCへ変換した頂点(pos.xy + uv)を毎フレーム組み立てる
     const QRectF rect = imageRectInWidget();
@@ -182,18 +224,40 @@ void GLCanvas::paintGL() {
     m_program->setAttributeBuffer(1, GL_FLOAT, 2 * sizeof(float), 2, 4 * sizeof(float));
 
     glActiveTexture(GL_TEXTURE0);
-    m_texture->bind();
     m_program->setUniformValue("uTex", 0);
 
+    // 現在フレーム(通常描画)
+    m_program->setUniformValue("uOnionStrength", 0.0f);
+    currentTex->bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    currentTex->release();
 
-    m_texture->release();
+    // オニオンスキン(乗算ブレンドで白地を無視して色線のみ重ねる)
+    if (m_prevOnion || m_nextOnion) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ZERO, GL_SRC_COLOR);
+
+        const auto drawOnion = [this](const core::Bitmap* bitmap, const QVector3D& tint) {
+            QOpenGLTexture* tex = getOrCreateTexture(bitmap);
+            if (!tex) return;
+            m_program->setUniformValue("uTint", tint);
+            m_program->setUniformValue("uOnionStrength", kOnionStrength);
+            tex->bind();
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            tex->release();
+        };
+        if (m_prevOnion) drawOnion(m_prevOnion, kPrevTint);
+        if (m_nextOnion) drawOnion(m_nextOnion, kNextTint);
+
+        glDisable(GL_BLEND);
+    }
+
     m_vbo.release();
     m_program->release();
 }
 
 void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
-    if (!m_bitmap) return;
+    if (!m_bitmap || !m_inputEnabled) return;
     const QPointF img = widgetToImage(widgetPos);
     m_strokeActive = true;
     const auto dirty = m_brush.beginStroke(*m_bitmap, static_cast<float>(img.x()), static_cast<float>(img.y()), pressure);

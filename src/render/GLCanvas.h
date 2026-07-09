@@ -4,6 +4,7 @@
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include "core/BrushEngine.h"
@@ -13,6 +14,7 @@ class QOpenGLTexture;
 
 // 作画キャンバス。core::Bitmapをテクスチャとして表示し、
 // ペン(QTabletEvent / Windows Inkバックエンド)・マウスによる描画入力を受け付ける。
+// オニオンスキン(前後フレームの色付き重ね表示)にも対応する。
 class GLCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 
@@ -24,8 +26,14 @@ public:
 
     // 表示・編集対象のビットマップを設定する(所有権は持たない)
     void setBitmap(core::Bitmap* bitmap);
+    // オニオンスキン対象(前/次フレーム)。nullptrで非表示
+    void setOnionSkin(const core::Bitmap* prev, const core::Bitmap* next);
+    // フレーム構造の変更(追加/削除)後に呼び、古いテクスチャを破棄する
+    void clearTextureCache();
+
     void setTool(Tool tool);
     Tool tool() const { return m_tool; }
+    void setInputEnabled(bool enabled) { m_inputEnabled = enabled; }
 
     // 端から端まで筆圧を変えながら1ストローク描く(動作確認用フック)
     void debugSimulateStroke();
@@ -49,17 +57,22 @@ private:
     QPointF widgetToImage(QPointF widgetPos) const;
     void applyToolSettings() { applySettingsFor(m_tool); }
     void applySettingsFor(Tool tool);
-    void recreateTexture();
+
+    // コンテキストがカレントな状態で呼ぶこと
+    QOpenGLTexture* getOrCreateTexture(const core::Bitmap* bitmap);
     void uploadDirty(const core::DirtyRect& rect);
 
     core::Bitmap* m_bitmap = nullptr;
+    const core::Bitmap* m_prevOnion = nullptr;
+    const core::Bitmap* m_nextOnion = nullptr;
+
     core::BrushEngine m_brush;
     Tool m_tool = Tool::Pen;
     bool m_strokeActive = false;
+    bool m_inputEnabled = true;
 
     std::unique_ptr<QOpenGLShaderProgram> m_program;
-    std::unique_ptr<QOpenGLTexture> m_texture;
+    std::unordered_map<const core::Bitmap*, std::unique_ptr<QOpenGLTexture>> m_textures;
     QOpenGLBuffer m_vbo;
-    bool m_textureNeedsRecreate = true;
     std::vector<uint8_t> m_uploadScratch;  // 部分アップロード用の連続バッファ
 };

@@ -39,6 +39,18 @@ TEST_CASE("Project owns Scene -> Cut -> Layer -> Frame hierarchy", "[core]") {
         REQUIRE(layer.frameCount() == 1);
     }
 
+    SECTION("inserting a frame at an index places it there") {
+        layer.frame(0).bitmap() = core::Bitmap(2, 2);  // 既存フレームに目印
+        layer.addFrame();                              // [marked, blank]
+        core::Frame& inserted = layer.insertFrame(1);  // [marked, inserted, blank]
+        inserted.bitmap() = core::Bitmap(8, 8);
+
+        REQUIRE(layer.frameCount() == 3);
+        REQUIRE(layer.frame(0).bitmap().width() == 2);
+        REQUIRE(layer.frame(1).bitmap().width() == 8);
+        REQUIRE(layer.frame(2).bitmap().isEmpty());
+    }
+
     (void)cut;
 }
 

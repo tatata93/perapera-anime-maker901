@@ -17,6 +17,7 @@ public:
     void setName(std::string name) { m_name = std::move(name); }
 
     Frame& addFrame();
+    Frame& insertFrame(size_t index);  // index位置に挿入(0..frameCount())
     void removeFrame(size_t index);
 
     size_t frameCount() const { return m_frames.size(); }
