@@ -250,6 +250,25 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --cels-test <PNG1> <PNG2> でセル2枚(A=赤縦線/B=青横線)を重ねた状態を保存後、
+    // セルAを非表示にして保存する(PNG2は青横線のみになるはず)
+    const int celsIndex = args.indexOf("--cels-test");
+    if (celsIndex >= 0 && celsIndex + 2 < args.size()) {
+        const QString out1 = args.at(celsIndex + 1);
+        const QString out2 = args.at(celsIndex + 2);
+        QTimer::singleShot(500, &window, [&window, out1, out2] {
+            window.debugSetupCelDemo();
+            QTimer::singleShot(200, &window, [&window, out1, out2] {
+                window.canvas()->grabFramebuffer().save(out1);  // セルA(赤縦線)+セルB(青横線)を重ねて表示
+                window.debugSetCelVisible(0, false);             // セルAを非表示
+                QTimer::singleShot(200, &window, [&window, out2] {
+                    window.canvas()->grabFramebuffer().save(out2);  // セルB(青横線)のみ
+                    QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                });
+            });
+        });
+    }
+
     // 動作確認用: --perf-test <出力TXT> でストローク描画+再描画を繰り返し、描画時間(ms)を出力する
     const int perfIndex = args.indexOf("--perf-test");
     if (perfIndex >= 0 && perfIndex + 1 < args.size()) {

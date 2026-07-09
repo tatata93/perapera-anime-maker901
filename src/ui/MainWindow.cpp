@@ -8,7 +8,9 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QImage>
+#include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSlider>
@@ -386,8 +388,11 @@ void MainWindow::setupPanels() {
         if (m_playing) return;
         core::Cut& cut = activeCut();
         if (cut.celCount() == 0 || celIndex < 0 || frame < 0) return;
-        m_activeCel = static_cast<size_t>(std::min(celIndex, static_cast<int>(cut.celCount()) - 1));
+        const size_t newActiveCel = static_cast<size_t>(std::min(celIndex, static_cast<int>(cut.celCount()) - 1));
+        const bool celChanged = newActiveCel != m_activeCel;
+        m_activeCel = newActiveCel;
         setCurrentFrame(static_cast<size_t>(frame));
+        if (celChanged) updateLayerPanel();  // アクティブセルが変わったのでレイヤーパネルも追従させる
     });
     connect(m_xsheetPanel, &XsheetPanel::exposureEdited, this, [this](int celIndex, int frame, int drawing) {
         if (m_playing) return;
@@ -432,6 +437,11 @@ void MainWindow::setupPanels() {
         updateXsheetPanel();
         updateWindowTitle();
     });
+    connect(m_xsheetPanel, &XsheetPanel::celAddRequested, this, &MainWindow::addCel);
+    connect(m_xsheetPanel, &XsheetPanel::celRemoveRequested, this, &MainWindow::removeActiveCel);
+    connect(m_xsheetPanel, &XsheetPanel::celRenameRequested, this, &MainWindow::renameActiveCel);
+    connect(m_xsheetPanel, &XsheetPanel::celMoveRequested, this, &MainWindow::moveActiveCel);
+    connect(m_xsheetPanel, &XsheetPanel::celVisibilityToggleRequested, this, &MainWindow::toggleCelVisibility);
 
     updateLayerPanel();
     updatePalettePanel();
@@ -548,10 +558,12 @@ void MainWindow::updateXsheetPanel() {
     core::Cut& cut = activeCut();
 
     QStringList celNames;
+    QList<bool> celVisible;
     QList<QList<int>> exposures;
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
         const core::Cel& cel = cut.cel(ci);
         celNames.append(QString::fromStdString(cel.name()));
+        celVisible.append(cel.visible());
         QList<int> column;
         column.reserve(static_cast<int>(cut.frameCount()));
         for (size_t f = 0; f < cut.frameCount(); ++f) {
@@ -560,8 +572,103 @@ void MainWindow::updateXsheetPanel() {
         exposures.append(column);
     }
 
-    m_xsheetPanel->setSheet(celNames, exposures, static_cast<int>(cut.frameCount()), static_cast<int>(m_currentFrame),
-                             static_cast<int>(m_activeCel));
+    m_xsheetPanel->setSheet(celNames, celVisible, exposures, static_cast<int>(cut.frameCount()),
+                             static_cast<int>(m_currentFrame), static_cast<int>(m_activeCel));
+}
+
+// 新しいセルを1枚追加する。名前は自動連番(1文字目のセルは新規文書時に"A"が既にあるので、
+// 2枚目以降を"B","C",...と割り当て、26枚を超えたら"セル27"のような形式にする)
+void MainWindow::addCel() {
+    if (m_playing) return;
+    core::Cut& cut = activeCut();
+    const int index = static_cast<int>(cut.celCount());
+    const QString name = index < 26 ? QString(QChar('A' + index)) : tr("セル%1").arg(index + 1);
+
+    core::Cel& cel = cut.addCel(name.toStdString());
+    core::Layer& layer = cel.addLayer(tr("レイヤー 1").toStdString());
+    layer.addFrame().bitmap() = makeTransparentCel();
+    cel.setExposure(m_currentFrame, 0);  // 現在コマに動画1を割り付け、すぐ描ける状態にする
+    m_activeCel = static_cast<size_t>(index);
+
+    // 新規セル・レイヤー・動画は既存のBitmapに影響しないためUndo履歴/テクスチャキャッシュの破棄は不要
+    m_dirty = true;
+    updateCanvasLayers();
+    updateXsheetPanel();
+    updateLayerPanel();
+    updateFrameLabel();
+    updateWindowTitle();
+}
+
+void MainWindow::removeActiveCel() {
+    if (m_playing) return;
+    core::Cut& cut = activeCut();
+    if (cut.celCount() <= 1) return;  // 最後の1枚は消さない
+
+    cut.removeCel(m_activeCel);
+    m_activeCel = std::min(m_activeCel, cut.celCount() - 1);
+
+    m_commands.clear();             // 構造変更のためUndo履歴を破棄
+    m_canvas->clearTextureCache();  // セルのBitmapが破棄されたため
+    m_dirty = true;
+    updateCanvasLayers();
+    updateXsheetPanel();
+    updateLayerPanel();
+    updateFrameLabel();
+    updateWindowTitle();
+}
+
+void MainWindow::renameActiveCel() {
+    if (m_playing) return;
+    core::Cel& cel = activeCel();
+
+    bool ok = false;
+    const QString newName = QInputDialog::getText(this, tr("セル名を変更"), tr("セル名:"), QLineEdit::Normal,
+                                                    QString::fromStdString(cel.name()), &ok);
+    if (!ok || newName.isEmpty()) return;  // キャンセルまたは空欄は変更しない
+    cel.setName(newName.toStdString());
+
+    m_dirty = true;
+    updateCanvasLayers();
+    updateXsheetPanel();
+    updateLayerPanel();
+    updateFrameLabel();
+    updateWindowTitle();
+}
+
+// アクティブセルの重なり順を移動する(delta=-1:下/奥へ、+1:上/手前へ)
+void MainWindow::moveActiveCel(int delta) {
+    if (m_playing) return;
+    core::Cut& cut = activeCut();
+    const int from = static_cast<int>(m_activeCel);
+    const int to = from + delta;
+    if (to < 0 || static_cast<size_t>(to) >= cut.celCount()) return;
+
+    cut.moveCel(static_cast<size_t>(from), static_cast<size_t>(to));
+    m_activeCel = static_cast<size_t>(to);
+
+    // 重なり順が変わるだけでBitmapは無傷なためテクスチャキャッシュの破棄は不要
+    m_dirty = true;
+    updateCanvasLayers();
+    updateXsheetPanel();
+    updateLayerPanel();
+    updateFrameLabel();
+    updateWindowTitle();
+}
+
+void MainWindow::toggleCelVisibility(int celIndex) {
+    if (m_playing) return;
+    core::Cut& cut = activeCut();
+    if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount()) return;
+
+    core::Cel& cel = cut.cel(static_cast<size_t>(celIndex));
+    cel.setVisible(!cel.visible());
+
+    m_dirty = true;
+    updateCanvasLayers();
+    updateXsheetPanel();
+    updateLayerPanel();
+    updateFrameLabel();
+    updateWindowTitle();
 }
 
 void MainWindow::setupMenus() {
@@ -937,6 +1044,43 @@ void MainWindow::debugSetupXsheetDemo() {
 
     // 露出(割付)だけの変更なのでテクスチャキャッシュの破棄は不要
     setCurrentFrame(0);  // コマ1(動画1)を表示
+}
+
+void MainWindow::debugSetupCelDemo() {
+    // セル管理確認用: セルBを追加し、セルAに赤縦線・セルBに青横線を描く(共にコマ1に動画1を割付)
+    addCel();  // セルB追加(動画1+exposure(0)=0はaddCel()内で設定済み。アクティブになる)
+    core::Cut& cut = activeCut();
+
+    core::BrushEngine engine;
+    engine.settings().radius = 12.0f;
+
+    core::Cel& celA = cut.cel(0);
+    core::Bitmap& bitmapA = celA.layer(0).frame(0).bitmap();
+    engine.settings().color = {200, 40, 40, 255};
+    engine.beginStroke(bitmapA, kCanvasWidth * 0.4f, kCanvasHeight * 0.25f, 0.9f);
+    engine.continueStroke(bitmapA, kCanvasWidth * 0.4f, kCanvasHeight * 0.75f, 0.9f);
+    engine.endStroke();
+
+    core::Cel& celB = cut.cel(1);
+    core::Bitmap& bitmapB = celB.layer(0).frame(0).bitmap();
+    engine.settings().color = {40, 40, 200, 255};
+    engine.beginStroke(bitmapB, kCanvasWidth * 0.25f, kCanvasHeight * 0.5f, 0.9f);
+    engine.continueStroke(bitmapB, kCanvasWidth * 0.75f, kCanvasHeight * 0.5f, 0.9f);
+    engine.endStroke();
+
+    celA.setExposure(0, 0);
+    celB.setExposure(0, 0);
+
+    m_canvas->clearTextureCache();
+    setCurrentFrame(0);
+}
+
+void MainWindow::debugSetCelVisible(int celIndex, bool visible) {
+    core::Cut& cut = activeCut();
+    if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount()) return;
+    cut.cel(static_cast<size_t>(celIndex)).setVisible(visible);
+    updateCanvasLayers();
+    updateXsheetPanel();
 }
 
 QString MainWindow::autosavePath() const {

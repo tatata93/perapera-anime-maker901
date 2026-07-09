@@ -2,6 +2,7 @@
 
 #include <QDockWidget>
 #include <QList>
+#include <QPoint>
 #include <QStringList>
 
 class QTableWidget;
@@ -17,19 +18,27 @@ public:
     explicit XsheetPanel(QWidget* parent = nullptr);
 
     // シート内容を反映する(シグナルは発火しない)。
-    // exposures[celIndex][frame] = 動画番号(0始まり、-1=空欄)。currentFrame/activeCelの行列を選択表示する
-    void setSheet(const QStringList& celNames, const QList<QList<int>>& exposures, int frameCount, int currentFrame,
-                  int activeCel);
+    // exposures[celIndex][frame] = 動画番号(0始まり、-1=空欄)。currentFrame/activeCelの行列を選択表示する。
+    // celVisible[celIndex]がfalseのセルは列ヘッダ名の後ろに「 (非表示)」を付け、
+    // activeCelの列ヘッダは太字にする
+    void setSheet(const QStringList& celNames, const QList<bool>& celVisible, const QList<QList<int>>& exposures,
+                  int frameCount, int currentFrame, int activeCel);
 
 signals:
     void exposureEdited(int celIndex, int frame, int drawing);  // drawingは0始まり(空欄/0以下の入力は-1)
     void cellClicked(int celIndex, int frame);
     void frameCountChanged(int frameCount);
     void stepPatternRequested(int step);  // step=1/2/3(コマ打ち)
+    void celAddRequested();
+    void celRemoveRequested();
+    void celRenameRequested();
+    void celMoveRequested(int delta);  // -1=前へ(下/奥へ)、+1=後ろへ(上/手前へ)
+    void celVisibilityToggleRequested(int celIndex);
 
 private:
     void onItemChanged(QTableWidgetItem* item);
     void onCellClicked(int row, int column);
+    void showHeaderContextMenu(const QPoint& pos);
 
     QTableWidget* m_table = nullptr;
     QSpinBox* m_frameCountSpin = nullptr;

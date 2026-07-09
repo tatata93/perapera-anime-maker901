@@ -49,6 +49,9 @@ public:
     void debugSetupXsheetDemo();
     // タイムシート確認用: setCurrentFrame()の公開ラッパー
     void debugSetCurrentFrame(size_t frame) { setCurrentFrame(frame); }
+    // セル管理確認用: セルBを追加し、セルAに赤縦線・セルBに青横線を描く(共にコマ1に動画1を割付)
+    void debugSetupCelDemo();
+    void debugSetCelVisible(int celIndex, bool visible);
     // 塗りつぶし確認用: 閉じた矩形枠を現在フレームに描く
     void debugSetupFillDemo();
     // 自動保存確認用: performAutosave()を即実行し、保存先パスを返す(失敗時は空文字)
@@ -107,6 +110,13 @@ private:
 
     // タイムシート(Xsheet)パネル操作
     void updateXsheetPanel();
+
+    // セル(Xsheetの列)管理操作
+    void addCel();
+    void removeActiveCel();
+    void renameActiveCel();
+    void moveActiveCel(int delta);
+    void toggleCelVisibility(int celIndex);
 
     // 下敷き(参照画像/連番シーケンス)。セッション限定でプロジェクトには保存しない
     void openUnderlay();
