@@ -50,6 +50,9 @@ public:
     QString debugTriggerAutosave();
     // カラーパレット確認用: パレットに3色追加→保存→新規→読込を行い、往復が正しければ0、不一致なら1を返す
     int debugPaletteRoundTrip(const QString& ppamPath);
+    // レイヤー種別確認用: レイヤーを2枚追加(計3枚)し種別を設定→保存→新規→読込を行い、
+    // 往復が正しければ0、不一致なら1を返す
+    int debugRoleRoundTrip(const QString& ppamPath);
 
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
     // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる

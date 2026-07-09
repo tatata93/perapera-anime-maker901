@@ -220,5 +220,16 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --role-test <ppamパス> でレイヤー種別(色トレス線/作監修正)の設定→保存→新規→読込の
+    // 往復を検証し、結果に応じた終了コードで終了する(0=成功, 1=不一致)
+    const int roleIndex = args.indexOf("--role-test");
+    if (roleIndex >= 0 && roleIndex + 1 < args.size()) {
+        const QString ppamPath = args.at(roleIndex + 1);
+        QTimer::singleShot(500, &window, [&window, ppamPath] {
+            const int result = window.debugRoleRoundTrip(ppamPath);
+            QApplication::exit(result);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+        });
+    }
+
     return app.exec();
 }

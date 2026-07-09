@@ -301,6 +301,20 @@ void MainWindow::setupPanels() {
     connect(m_layerPanel, &LayerPanel::removeRequested, this, &MainWindow::removeActiveLayer);
     connect(m_layerPanel, &LayerPanel::moveUpRequested, this, [this] { moveActiveLayer(+1); });
     connect(m_layerPanel, &LayerPanel::moveDownRequested, this, [this] { moveActiveLayer(-1); });
+    connect(m_layerPanel, &LayerPanel::roleChangeRequested, this, [this](int index, int role) {
+        core::Cel& cel = activeCel();
+        if (static_cast<size_t>(index) >= cel.layerCount()) return;
+        core::LayerRole newRole = core::LayerRole::Normal;
+        if (role == 1) {
+            newRole = core::LayerRole::ColorTrace;
+        } else if (role == 2) {
+            newRole = core::LayerRole::Correction;
+        }
+        cel.layer(static_cast<size_t>(index)).setRole(newRole);
+        m_dirty = true;
+        updateWindowTitle();
+        updateLayerPanel();
+    });
 
     m_palettePanel = new PalettePanel(this);
     addDockWidget(Qt::RightDockWidgetArea, m_palettePanel);
@@ -322,8 +336,22 @@ void MainWindow::updateLayerPanel() {
     QStringList names;
     QList<bool> visible;
     for (size_t li = 0; li < cel.layerCount(); ++li) {
-        names.append(QString::fromStdString(cel.layer(li).name()));
-        visible.append(cel.layer(li).visible());
+        const core::Layer& layer = cel.layer(li);
+        QString displayName = QString::fromStdString(layer.name());
+        // 種別に応じて表示名にサフィックスを付ける(最終画には含めない種別が分かるように)
+        switch (layer.role()) {
+            case core::LayerRole::ColorTrace:
+                displayName += tr(" [色トレス]");
+                break;
+            case core::LayerRole::Correction:
+                displayName += tr(" [修正]");
+                break;
+            case core::LayerRole::Normal:
+            default:
+                break;
+        }
+        names.append(displayName);
+        visible.append(layer.visible());
     }
     m_layerPanel->setLayers(names, visible, static_cast<int>(m_activeLayer));
 }
@@ -796,6 +824,29 @@ int MainWindow::debugPaletteRoundTrip(const QString& ppamPath) {
             return 1;
         }
     }
+    return 0;
+}
+
+int MainWindow::debugRoleRoundTrip(const QString& ppamPath) {
+    // レイヤーを2枚追加(計3枚)し、layer(1)をColorTrace、layer(2)をCorrectionに設定して
+    // 保存→新規→読込を行い、種別が保持されているか検証する
+    addLayerToActiveCel();  // レイヤー2枚目
+    addLayerToActiveCel();  // レイヤー3枚目
+
+    core::Cel& cel = activeCel();
+    if (cel.layerCount() != 3) return 1;
+    cel.layer(1).setRole(core::LayerRole::ColorTrace);
+    cel.layer(2).setRole(core::LayerRole::Correction);
+
+    if (!saveToFile(ppamPath)) return 1;
+    newDocument();  // 白紙に戻す
+    if (!loadFromFile(ppamPath)) return 1;
+
+    core::Cel& loadedCel = activeCel();
+    if (loadedCel.layerCount() != 3) return 1;
+    if (loadedCel.layer(0).role() != core::LayerRole::Normal) return 1;
+    if (loadedCel.layer(1).role() != core::LayerRole::ColorTrace) return 1;
+    if (loadedCel.layer(2).role() != core::LayerRole::Correction) return 1;
     return 0;
 }
 

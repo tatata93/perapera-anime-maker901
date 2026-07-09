@@ -2,6 +2,7 @@
 
 #include <QDockWidget>
 #include <QList>
+#include <QPoint>
 #include <QStringList>
 
 class QListWidget;
@@ -26,11 +27,14 @@ signals:
     void removeRequested();
     void moveUpRequested();
     void moveDownRequested();
+    // レイヤー種別変更要求。layerIndexはコア側インデックス、roleは0=Normal,1=ColorTrace,2=Correction
+    void roleChangeRequested(int layerIndex, int role);
 
 private:
     // リスト行(0=最上位)とコア側インデックス(0=最下位)を相互変換する
     int rowToLayerIndex(int row) const;
     int layerIndexToRow(int layerIndex) const;
+    void showContextMenu(const QPoint& pos);
 
     QListWidget* m_list = nullptr;
     bool m_updating = false;

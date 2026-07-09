@@ -20,6 +20,25 @@ void setError(std::string* errorOut, std::string message) {
     if (errorOut) *errorOut = std::move(message);
 }
 
+// LayerRole <-> 文字列の変換。不明値は呼び出し側でNormalとして扱う
+std::string layerRoleToString(LayerRole role) {
+    switch (role) {
+        case LayerRole::ColorTrace:
+            return "colorTrace";
+        case LayerRole::Correction:
+            return "correction";
+        case LayerRole::Normal:
+        default:
+            return "normal";
+    }
+}
+
+LayerRole layerRoleFromString(const std::string& value) {
+    if (value == "colorTrace") return LayerRole::ColorTrace;
+    if (value == "correction") return LayerRole::Correction;
+    return LayerRole::Normal;  // 不明値・欠落はNormal扱い
+}
+
 }  // namespace
 
 bool ProjectIO::save(const Project& project, const std::filesystem::path& path, std::string* errorOut) {
@@ -58,8 +77,10 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                         }
                         jFrames.push_back(std::move(jFrame));
                     }
-                    jLayers.push_back(
-                        {{"name", layer.name()}, {"visible", layer.visible()}, {"frames", std::move(jFrames)}});
+                    jLayers.push_back({{"name", layer.name()},
+                                        {"visible", layer.visible()},
+                                        {"role", layerRoleToString(layer.role())},
+                                        {"frames", std::move(jFrames)}});
                 }
                 jCels.push_back({{"name", cel.name()}, {"visible", cel.visible()}, {"layers", std::move(jLayers)}});
             }
@@ -163,6 +184,7 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
         // レイヤー1つ分(frames配列)を読み込む共通処理
         const auto loadLayerFrames = [&](Layer& layer, const json& jLayer) -> bool {
             layer.setVisible(jLayer.value("visible", true));
+            layer.setRole(layerRoleFromString(jLayer.value("role", std::string("normal"))));
             for (const json& jFrame : jLayer.at("frames")) {
                 Frame& frame = layer.addFrame();
                 const int w = jFrame.at("width").get<int>();

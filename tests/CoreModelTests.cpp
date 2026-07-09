@@ -67,6 +67,17 @@ TEST_CASE("Layer and Cel visibility default to true and can be toggled", "[core]
     REQUIRE_FALSE(cel.visible());
 }
 
+TEST_CASE("Layer role defaults to Normal and can be changed", "[core]") {
+    core::Layer layer("Layer 1");
+    REQUIRE(layer.role() == core::LayerRole::Normal);
+
+    layer.setRole(core::LayerRole::ColorTrace);
+    REQUIRE(layer.role() == core::LayerRole::ColorTrace);
+
+    layer.setRole(core::LayerRole::Correction);
+    REQUIRE(layer.role() == core::LayerRole::Correction);
+}
+
 TEST_CASE("Cel::moveLayer reorders layers", "[core]") {
     core::Cel cel("Cel A");
     cel.addLayer("Layer 1");

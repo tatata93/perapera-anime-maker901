@@ -1,7 +1,9 @@
 #include "LayerPanel.h"
 
+#include <QAction>
 #include <QHBoxLayout>
 #include <QListWidget>
+#include <QMenu>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -14,6 +16,7 @@ LayerPanel::LayerPanel(QWidget* parent) : QDockWidget(tr("レイヤー"), parent
     layout->setContentsMargins(0, 0, 0, 0);
 
     m_list = new QListWidget(container);
+    m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_list);
 
     auto* buttonLayout = new QHBoxLayout();
@@ -41,6 +44,27 @@ LayerPanel::LayerPanel(QWidget* parent) : QDockWidget(tr("レイヤー"), parent
     connect(removeButton, &QPushButton::clicked, this, &LayerPanel::removeRequested);
     connect(upButton, &QPushButton::clicked, this, &LayerPanel::moveUpRequested);
     connect(downButton, &QPushButton::clicked, this, &LayerPanel::moveDownRequested);
+    connect(m_list, &QListWidget::customContextMenuRequested, this, &LayerPanel::showContextMenu);
+}
+
+void LayerPanel::showContextMenu(const QPoint& pos) {
+    QListWidgetItem* item = m_list->itemAt(pos);
+    if (!item) return;
+    const int layerIndex = rowToLayerIndex(m_list->row(item));
+
+    QMenu menu(this);
+    QAction* normalAction = menu.addAction(tr("通常"));
+    QAction* colorTraceAction = menu.addAction(tr("色トレス線"));
+    QAction* correctionAction = menu.addAction(tr("作監修正"));
+
+    QAction* chosen = menu.exec(m_list->viewport()->mapToGlobal(pos));
+    if (chosen == normalAction) {
+        emit roleChangeRequested(layerIndex, 0);
+    } else if (chosen == colorTraceAction) {
+        emit roleChangeRequested(layerIndex, 1);
+    } else if (chosen == correctionAction) {
+        emit roleChangeRequested(layerIndex, 2);
+    }
 }
 
 int LayerPanel::rowToLayerIndex(int row) const {

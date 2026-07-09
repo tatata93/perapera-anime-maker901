@@ -19,6 +19,12 @@ core::Project makeSampleProject() {
     core::Layer& layer = cel.addLayer("Layer 1");
     layer.setVisible(false);
 
+    core::Layer& colorTraceLayer = cel.addLayer("Layer 2");
+    colorTraceLayer.setRole(core::LayerRole::ColorTrace);
+
+    core::Layer& correctionLayer = cel.addLayer("Layer 3");
+    correctionLayer.setRole(core::LayerRole::Correction);
+
     core::Frame& f0 = layer.addFrame();
     f0.bitmap() = core::Bitmap(16, 8);
     f0.bitmap().fill({255, 255, 255, 255});
@@ -60,10 +66,18 @@ TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
     REQUIRE(cel.name() == "Cel A");
     REQUIRE_FALSE(cel.visible());
 
+    REQUIRE(cel.layerCount() == 3);
     const core::Layer& layer = cel.layer(0);
     REQUIRE(layer.name() == "Layer 1");
     REQUIRE_FALSE(layer.visible());
+    REQUIRE(layer.role() == core::LayerRole::Normal);
     REQUIRE(layer.frameCount() == 3);
+
+    REQUIRE(cel.layer(1).name() == "Layer 2");
+    REQUIRE(cel.layer(1).role() == core::LayerRole::ColorTrace);
+
+    REQUIRE(cel.layer(2).name() == "Layer 3");
+    REQUIRE(cel.layer(2).role() == core::LayerRole::Correction);
 
     const core::Bitmap& b0 = layer.frame(0).bitmap();
     REQUIRE(b0.width() == 16);
