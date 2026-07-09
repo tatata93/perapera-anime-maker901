@@ -53,15 +53,29 @@ DirtyRect BrushEngine::stamp(Bitmap& bitmap, float cx, float cy, float pressure)
             const float coverage = std::clamp(radius - dist + 0.5f, 0.0f, 1.0f);
             if (coverage <= 0.0f) continue;
 
-            const float alpha = baseAlpha * coverage;
             Bitmap::Pixel dst = bitmap.pixel(x, y);
-            const auto blend = [alpha](uint8_t src, uint8_t d) {
-                return static_cast<uint8_t>(std::lround(src * alpha + d * (1.0f - alpha)));
-            };
-            dst.r = blend(color.r, dst.r);
-            dst.g = blend(color.g, dst.g);
-            dst.b = blend(color.b, dst.b);
-            dst.a = std::max(dst.a, static_cast<uint8_t>(std::lround(alpha * 255.0f)));
+
+            if (m_settings.mode == BrushMode::Erase) {
+                // 透明に戻す: アルファをカバレッジ分削る(色は保持し、合成時はアルファで消える)
+                dst.a = static_cast<uint8_t>(std::lround(dst.a * (1.0f - coverage)));
+                bitmap.setPixel(x, y, dst);
+                continue;
+            }
+
+            // straight-alphaのsrc-over合成。透明なdstに描いても色が黒ずまないよう、
+            // dstの寄与はdst.aで重み付けし、結果をoutAで正規化する
+            const float srcA = baseAlpha * coverage;
+            const float dstA = dst.a / 255.0f;
+            const float outA = srcA + dstA * (1.0f - srcA);
+            if (outA > 0.0f) {
+                const auto blend = [srcA, dstA, outA](uint8_t src, uint8_t d) {
+                    return static_cast<uint8_t>(std::lround((src * srcA + d * dstA * (1.0f - srcA)) / outA));
+                };
+                dst.r = blend(color.r, dst.r);
+                dst.g = blend(color.g, dst.g);
+                dst.b = blend(color.b, dst.b);
+            }
+            dst.a = static_cast<uint8_t>(std::lround(outA * 255.0f));
             bitmap.setPixel(x, y, dst);
         }
     }

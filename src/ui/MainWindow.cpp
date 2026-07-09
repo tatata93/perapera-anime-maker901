@@ -35,9 +35,10 @@ constexpr int kDefaultFps = 12;
 const QString kAutosaveFileName = QStringLiteral("autosave.ppam");
 constexpr int kAutosaveIntervalMs = 180 * 1000;
 
-core::Bitmap makePaperBitmap() {
+// 透明なセル(作画用紙)。紙の白はGLCanvasが背景として描画する
+core::Bitmap makeTransparentCel() {
     core::Bitmap bitmap(kCanvasWidth, kCanvasHeight);
-    bitmap.fill({255, 255, 255, 255});
+    bitmap.fill({0, 0, 0, 0});
     return bitmap;
 }
 }  // namespace
@@ -75,9 +76,32 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
 MainWindow::~MainWindow() = default;
 
+core::Cut& MainWindow::activeCut() {
+    // MVPでは1シーン・1カット固定
+    return m_project->scene(0).cut(0);
+}
+
 core::Layer& MainWindow::activeLayer() {
-    // MVPでは1シーン・1カット・1レイヤー固定
-    return m_project->scene(0).cut(0).layer(0);
+    core::Cut& cut = activeCut();
+    m_activeLayer = std::min(m_activeLayer, cut.layerCount() - 1);
+    return cut.layer(m_activeLayer);
+}
+
+// カット内の全レイヤーから現在フレームのセルを集め、下→上の描画順でキャンバスに渡す
+void MainWindow::updateCanvasLayers() {
+    core::Cut& cut = activeCut();
+    std::vector<const core::Bitmap*> stack;
+    for (size_t li = 0; li < cut.layerCount(); ++li) {
+        core::Layer& layer = cut.layer(li);
+        if (m_currentFrame < layer.frameCount()) {
+            stack.push_back(&layer.frame(m_currentFrame).bitmap());
+        }
+    }
+
+    core::Layer& active = activeLayer();
+    core::Bitmap* editTarget =
+        m_currentFrame < active.frameCount() ? &active.frame(m_currentFrame).bitmap() : nullptr;
+    m_canvas->setLayerStack(std::move(stack), editTarget);
 }
 
 void MainWindow::createNewDocument() {
@@ -86,10 +110,11 @@ void MainWindow::createNewDocument() {
     core::Cut& cut = scene.addCut("Cut 1");
     core::Layer& layer = cut.addLayer("Layer 1");
     core::Frame& frame = layer.addFrame();
-    frame.bitmap() = makePaperBitmap();
+    frame.bitmap() = makeTransparentCel();
 
     m_currentFrame = 0;
-    m_canvas->setBitmap(&frame.bitmap());
+    m_activeLayer = 0;
+    updateCanvasLayers();
     updateOnionSkin();
 }
 
@@ -97,7 +122,7 @@ void MainWindow::setCurrentFrame(size_t index) {
     core::Layer& layer = activeLayer();
     if (layer.frameCount() == 0) return;
     m_currentFrame = std::min(index, layer.frameCount() - 1);
-    m_canvas->setBitmap(&layer.frame(m_currentFrame).bitmap());
+    updateCanvasLayers();
     updateOnionSkin();
     updateFrameLabel();
     updateUnderlay();
@@ -107,7 +132,7 @@ void MainWindow::addFrameAfterCurrent() {
     if (m_playing) return;
     core::Layer& layer = activeLayer();
     core::Frame& frame = layer.insertFrame(m_currentFrame + 1);
-    frame.bitmap() = makePaperBitmap();
+    frame.bitmap() = makeTransparentCel();
     m_commands.clear();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 挿入でフレーム構造が変わったため
     setCurrentFrame(m_currentFrame + 1);
@@ -495,7 +520,7 @@ void MainWindow::debugSetupOnionDemo() {
     core::Layer& layer = activeLayer();
     while (layer.frameCount() < 3) {
         core::Frame& frame = layer.addFrame();
-        frame.bitmap() = makePaperBitmap();
+        frame.bitmap() = makeTransparentCel();
     }
 
     core::BrushEngine engine;

@@ -16,11 +16,17 @@ struct DirtyRect {
     void clampTo(int width, int height);
 };
 
+enum class BrushMode {
+    Paint,  // 色を塗る(src-over合成)
+    Erase,  // 透明に戻す(アルファを削る)
+};
+
 struct BrushSettings {
     float radius = 6.0f;                // 基本半径(px)
-    Bitmap::Pixel color{0, 0, 0, 255};  // 描画色
+    Bitmap::Pixel color{0, 0, 0, 255};  // 描画色(Eraseモードでは未使用)
     float spacingRatio = 0.35f;         // 半径に対するスタンプ間隔の比率
     bool pressureAffectsRadius = true;  // 筆圧で半径を変化させるか
+    BrushMode mode = BrushMode::Paint;
 };
 
 // スタンプ方式のブラシ。ストローク座標列を受け取り、Bitmapへアンチエイリアス付きの

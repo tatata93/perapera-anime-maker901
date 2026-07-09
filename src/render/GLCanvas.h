@@ -29,7 +29,10 @@ public:
     explicit GLCanvas(QWidget* parent = nullptr);
     ~GLCanvas() override;
 
-    // 表示・編集対象のビットマップを設定する(所有権は持たない)
+    // レイヤースタック(下→上の描画順)と編集対象を設定する(所有権は持たない)。
+    // 紙(白)はキャンバス側が背景として描画し、各セルは透明ビットマップとして重なる
+    void setLayerStack(std::vector<const core::Bitmap*> stack, core::Bitmap* active);
+    // 単一レイヤーの簡易版(スタック={bitmap}として扱う)
     void setBitmap(core::Bitmap* bitmap);
     // オニオンスキン対象(前/次フレーム)。nullptrで非表示
     void setOnionSkin(const core::Bitmap* prev, const core::Bitmap* next);
@@ -95,7 +98,8 @@ private:
     QOpenGLTexture* getOrCreateTexture(const core::Bitmap* bitmap);
     void uploadDirty(const core::DirtyRect& rect);
 
-    core::Bitmap* m_bitmap = nullptr;
+    core::Bitmap* m_bitmap = nullptr;                 // 編集対象(アクティブレイヤーのセル)
+    std::vector<const core::Bitmap*> m_layerStack;    // 表示レイヤー(下→上)
     const core::Bitmap* m_prevOnion = nullptr;
     const core::Bitmap* m_nextOnion = nullptr;
 

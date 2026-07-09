@@ -83,8 +83,25 @@ TEST_CASE("Pressure affects stamp radius", "[core][brush]") {
     REQUIRE(low.pixel(32 + 8, 32).r == 255);
 }
 
-TEST_CASE("Eraser-colored brush restores white", "[core][brush]") {
-    auto bitmap = makeWhiteBitmap(64, 64);
+TEST_CASE("Painting on a transparent cel keeps the brush color", "[core][brush]") {
+    core::Bitmap bitmap(64, 64);
+    bitmap.fill({0, 0, 0, 0});  // 透明セル
+
+    core::BrushEngine engine;
+    engine.settings().radius = 8.0f;
+    engine.settings().color = {200, 50, 50, 255};  // 赤系
+    engine.beginStroke(bitmap, 32.0f, 32.0f, 1.0f);
+    engine.endStroke();
+
+    // straight-alphaのsrc-over: 透明部に描いても色が黒ずまない
+    const auto px = bitmap.pixel(32, 32);
+    REQUIRE(static_cast<int>(px.r) >= 195);
+    REQUIRE(px.a > 250);
+}
+
+TEST_CASE("Erase mode restores transparency", "[core][brush]") {
+    core::Bitmap bitmap(64, 64);
+    bitmap.fill({0, 0, 0, 0});
     core::BrushEngine engine;
 
     // まず黒で塗る
@@ -92,12 +109,12 @@ TEST_CASE("Eraser-colored brush restores white", "[core][brush]") {
     engine.settings().color = {0, 0, 0, 255};
     engine.beginStroke(bitmap, 32.0f, 32.0f, 1.0f);
     engine.endStroke();
-    REQUIRE(bitmap.pixel(32, 32).r < 30);
+    REQUIRE(bitmap.pixel(32, 32).a > 250);
 
-    // 白(消しゴム)で上書きすると戻る
-    engine.settings().color = {255, 255, 255, 255};
+    // Eraseモードで透明に戻る
+    engine.settings().mode = core::BrushMode::Erase;
     engine.settings().pressureAffectsRadius = false;
     engine.beginStroke(bitmap, 32.0f, 32.0f, 1.0f);
     engine.endStroke();
-    REQUIRE(bitmap.pixel(32, 32).r > 225);
+    REQUIRE(bitmap.pixel(32, 32).a < 10);
 }

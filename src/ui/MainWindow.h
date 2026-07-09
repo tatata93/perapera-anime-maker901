@@ -65,7 +65,9 @@ private:
     void undo();
     void redo();
 
+    core::Cut& activeCut();
     core::Layer& activeLayer();
+    void updateCanvasLayers();
     void setCurrentFrame(size_t index);
     void addFrameAfterCurrent();
     void deleteCurrentFrame();
@@ -93,6 +95,7 @@ private:
     GLCanvas* m_canvas = nullptr;
 
     size_t m_currentFrame = 0;
+    size_t m_activeLayer = 0;  // 編集対象のレイヤーインデックス
     bool m_onionEnabled = true;
     bool m_playing = false;
 

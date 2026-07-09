@@ -28,19 +28,27 @@ void main() {
 // uOnionStrength > 0 : 線(暗部)をuTint色に置き換えた「白地+色線」を出力する。
 //                      乗算ブレンドで重ねると白地は無視され色線だけが合成される。
 // どちらも0            : テクスチャをそのまま表示(通常描画)
+// uSolidWhite > 0    : 紙(白)。テクスチャを使わず白を出力する
 const char* kFragmentShader = R"(
 varying vec2 vUV;
 uniform sampler2D uTex;
 uniform vec3 uTint;
 uniform float uOnionStrength;
 uniform float uUnderlayMix;
+uniform float uSolidWhite;
 void main() {
+    if (uSolidWhite > 0.5) {
+        gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+        return;
+    }
     vec4 tex = texture2D(uTex, vUV);
     if (uUnderlayMix > 0.0) {
         gl_FragColor = vec4(mix(vec3(1.0), tex.rgb, uUnderlayMix), 1.0);
     } else if (uOnionStrength > 0.0) {
+        // 透明セル対応: 塗られている(alpha)×暗さ でカバレッジを決める。
+        // 旧形式の白不透明セル(alpha=1, 白=darkness 0)でも従来どおり白地は無視される
         float darkness = 1.0 - min(min(tex.r, tex.g), tex.b);
-        float coverage = darkness * uOnionStrength;
+        float coverage = tex.a * darkness * uOnionStrength;
         gl_FragColor = vec4(mix(vec3(1.0), uTint, coverage), 1.0);
     } else {
         gl_FragColor = tex;
@@ -67,9 +75,14 @@ GLCanvas::~GLCanvas() {
     doneCurrent();
 }
 
-void GLCanvas::setBitmap(core::Bitmap* bitmap) {
-    m_bitmap = bitmap;
+void GLCanvas::setLayerStack(std::vector<const core::Bitmap*> stack, core::Bitmap* active) {
+    m_layerStack = std::move(stack);
+    m_bitmap = active;
     update();
+}
+
+void GLCanvas::setBitmap(core::Bitmap* bitmap) {
+    setLayerStack(bitmap ? std::vector<const core::Bitmap*>{bitmap} : std::vector<const core::Bitmap*>{}, bitmap);
 }
 
 void GLCanvas::setOnionSkin(const core::Bitmap* prev, const core::Bitmap* next) {
@@ -133,11 +146,12 @@ void GLCanvas::applySettingsFor(Tool tool) {
         settings.color = {static_cast<uint8_t>(m_penColor.red()), static_cast<uint8_t>(m_penColor.green()),
                            static_cast<uint8_t>(m_penColor.blue()), static_cast<uint8_t>(m_penColor.alpha())};
         settings.pressureAffectsRadius = true;
+        settings.mode = core::BrushMode::Paint;
     } else {
-        // 消しゴム: 紙(白)に戻す。ペンより太めで筆圧の影響は受けない
+        // 消しゴム: セルを透明に戻す。ペンより太めで筆圧の影響は受けない
         settings.radius = 24.0f;
-        settings.color = {255, 255, 255, 255};
         settings.pressureAffectsRadius = false;
+        settings.mode = core::BrushMode::Erase;
     }
 }
 
@@ -256,9 +270,7 @@ void GLCanvas::paintGL() {
     glDisable(GL_BLEND);  // Qt側がブレンド有効のまま呼ぶことがあるため明示的に無効化
     glClear(GL_COLOR_BUFFER_BIT);
 
-    if (!m_bitmap || !m_program) return;
-    QOpenGLTexture* currentTex = getOrCreateTexture(m_bitmap);
-    if (!currentTex) return;
+    if (!m_bitmap || m_bitmap->isEmpty() || !m_program) return;
 
     // 画像の四隅をビュー変換(ズーム/回転/パン込み)でウィジェット座標→NDCへ落とす
     const QTransform t = viewTransform();
@@ -294,12 +306,24 @@ void GLCanvas::paintGL() {
     glActiveTexture(GL_TEXTURE0);
     m_program->setUniformValue("uTex", 0);
 
-    // 現在フレーム(通常描画)
+    // 1. 紙(白): キャンバス矩形を白で塗る
+    m_program->setUniformValue("uSolidWhite", 1.0f);
     m_program->setUniformValue("uOnionStrength", 0.0f);
     m_program->setUniformValue("uUnderlayMix", 0.0f);
-    currentTex->bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    currentTex->release();
+    m_program->setUniformValue("uSolidWhite", 0.0f);
+
+    // 2. レイヤースタックを下→上の順にアルファ合成(セルは透明ビットマップ)
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    for (const core::Bitmap* layer : m_layerStack) {
+        QOpenGLTexture* tex = getOrCreateTexture(layer);
+        if (!tex) continue;
+        tex->bind();
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        tex->release();
+    }
+    glDisable(GL_BLEND);
 
     // オニオンスキン(乗算ブレンドで白地を無視して色線のみ重ねる)
     if (m_prevOnion || m_nextOnion) {
