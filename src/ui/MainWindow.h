@@ -15,6 +15,7 @@ class GLCanvas;
 class LayerPanel;
 class PalettePanel;
 class PrevizWindow;
+class StoryboardWindow;
 class TapPanel;
 class XsheetPanel;
 class QCloseEvent;
@@ -92,6 +93,10 @@ public:
     // プリビズ下敷き確認用
     void debugSetPrevizUnderlay(bool enabled) { setPrevizUnderlay(enabled); }
     PrevizWindow* previzWindow() const { return m_previzWindow; }
+
+    // 絵コンテウィンドウ確認用
+    void debugOpenStoryboard() { openStoryboardWindow(); }
+    StoryboardWindow* storyboardWindow() const { return m_storyboardWindow; }
 
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
     // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる
@@ -192,6 +197,9 @@ private:
     void openPrevizWindow();
     void setPrevizUnderlay(bool enabled);
 
+    // 絵コンテ
+    void openStoryboardWindow();
+
     // 書き出し
     void openExportDialog();
     bool exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts);
@@ -222,6 +230,7 @@ private:
     CelPanel* m_celPanel = nullptr;
     TapPanel* m_tapPanel = nullptr;
     PrevizWindow* m_previzWindow = nullptr;  // 別ウィンドウ(遅延生成)
+    StoryboardWindow* m_storyboardWindow = nullptr;  // 絵コンテウィンドウ(別ウィンドウ、遅延生成)
     QString m_currentFilePath;
     bool m_dirty = false;  // 未保存の変更があるか
 

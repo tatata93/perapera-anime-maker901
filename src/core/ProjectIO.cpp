@@ -155,7 +155,11 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                                  {"positionKeys", std::move(jPositionKeys)},
                                  {"layers", std::move(jLayers)}});
             }
-            json jCut = {{"name", cut.name()}, {"frameCount", cut.frameCount()}, {"cels", std::move(jCels)}};
+            json jCut = {{"name", cut.name()},
+                         {"frameCount", cut.frameCount()},
+                         {"action", cut.action()},
+                         {"dialogue", cut.dialogue()},
+                         {"cels", std::move(jCels)}};
             if (!cut.previz().isEmpty()) jCut["previz"] = previzToJson(cut.previz());
             jCuts.push_back(std::move(jCut));
         }
@@ -311,6 +315,10 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                         for (size_t t = 0; t < cel.drawingCount(); ++t) cel.setExposure(t, static_cast<int>(t));
                     }
                 }
+                // 絵コンテメモ(欠落時は空文字)
+                cut.setAction(jCut.value("action", std::string()));
+                cut.setDialogue(jCut.value("dialogue", std::string()));
+
                 // プリビズシーン(任意)
                 if (jCut.contains("previz")) previzFromJson(jCut.at("previz"), cut.previz());
 

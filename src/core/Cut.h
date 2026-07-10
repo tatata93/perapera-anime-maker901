@@ -18,6 +18,12 @@ public:
     const std::string& name() const { return m_name; }
     void setName(std::string name) { m_name = std::move(name); }
 
+    // 絵コンテメモ: 内容(アクション)・セリフ。既定は空文字
+    const std::string& action() const { return m_action; }
+    void setAction(std::string action) { m_action = std::move(action); }
+    const std::string& dialogue() const { return m_dialogue; }
+    void setDialogue(std::string dialogue) { m_dialogue = std::move(dialogue); }
+
     // カットの尺(総コマ数)。タイムシートの行数に相当する
     size_t frameCount() const { return m_frameCount; }
     void setFrameCount(size_t count);
@@ -40,6 +46,8 @@ private:
     std::vector<std::unique_ptr<Cel>> m_cels;
     PrevizScene m_previz;
     size_t m_frameCount = 1;  // 尺(最低1コマ)
+    std::string m_action;     // 絵コンテ: 内容(アクション)
+    std::string m_dialogue;   // 絵コンテ: セリフ
 };
 
 }  // namespace core

@@ -14,6 +14,8 @@ core::Project makeSampleProject() {
     core::Project project("Sample");
     core::Scene& scene = project.addScene("Scene 1");
     core::Cut& cut = scene.addCut("Cut A");
+    cut.setAction("走って逃げる");     // 絵コンテメモの往復も確認する
+    cut.setDialogue("待って!");
     core::Cel& cel = cut.addCel("Cel A");
     cel.setVisible(false);  // 属性の往復も確認する
     core::Layer& layer = cel.addLayer("Layer 1");
@@ -60,6 +62,11 @@ TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
     REQUIRE(loaded->scene(0).name() == "Scene 1");
     REQUIRE(loaded->scene(1).cutCount() == 1);
     REQUIRE(loaded->scene(1).cut(0).name() == "Cut B");
+    REQUIRE(loaded->scene(1).cut(0).action().empty());   // 未設定は空文字のまま
+    REQUIRE(loaded->scene(1).cut(0).dialogue().empty());
+
+    REQUIRE(loaded->scene(0).cut(0).action() == "走って逃げる");
+    REQUIRE(loaded->scene(0).cut(0).dialogue() == "待って!");
 
     REQUIRE(loaded->scene(0).cut(0).celCount() == 1);
     const core::Cel& cel = loaded->scene(0).cut(0).cel(0);

@@ -40,6 +40,7 @@
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
 #include "ui/PalettePanel.h"
+#include "ui/StoryboardWindow.h"
 #include "ui/TapPanel.h"
 #include "ui/XsheetPanel.h"
 
@@ -1098,6 +1099,12 @@ void MainWindow::setupMenus() {
     previzUnderlayAction->setShortcut(QKeySequence(Qt::Key_F6));
     connect(previzUnderlayAction, &QAction::toggled, this, [this](bool checked) { setPrevizUnderlay(checked); });
 
+    // 絵コンテメニュー(別ウィンドウ)
+    QMenu* storyboardMenu = menuBar()->addMenu(tr("絵コンテ(&S)"));
+    QAction* storyboardAction = storyboardMenu->addAction(tr("絵コンテウィンドウ(&W)"));
+    storyboardAction->setShortcut(QKeySequence(Qt::Key_F7));
+    connect(storyboardAction, &QAction::triggered, this, &MainWindow::openStoryboardWindow);
+
     // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
     viewMenu->addAction(m_framePanel->toggleViewAction());
@@ -1185,6 +1192,10 @@ void MainWindow::newDocument() {
     createNewDocument();
     m_canvas->clearTextureCache();  // 旧プロジェクトのBitmapポインタ再利用に備えて破棄
     if (m_previzWindow) m_previzWindow->setScene(&activeCut().previz());  // 旧シーンへのポインタを差し替え
+    if (m_storyboardWindow) {
+        m_storyboardWindow->setProject(m_project.get());  // プロジェクト差し替え
+        m_storyboardWindow->refresh();
+    }
     updateFrameLabel();
     updateLayerPanel();
     updatePalettePanel();
@@ -1229,6 +1240,10 @@ bool MainWindow::loadFromFile(const QString& path) {
     m_activeLayer = 0;
     m_canvas->clearTextureCache();
     if (m_previzWindow) m_previzWindow->setScene(&activeCut().previz());  // 旧シーンへのポインタを差し替え
+    if (m_storyboardWindow) {
+        m_storyboardWindow->setProject(m_project.get());  // プロジェクト差し替え
+        m_storyboardWindow->refresh();
+    }
     setCurrentFrame(0);
     updateLayerPanel();
     updateCutBar();
@@ -1664,6 +1679,23 @@ void MainWindow::openPrevizWindow() {
     m_previzWindow->show();
     m_previzWindow->raise();
     m_previzWindow->activateWindow();
+}
+
+void MainWindow::openStoryboardWindow() {
+    if (!m_storyboardWindow) {
+        m_storyboardWindow = new StoryboardWindow(this);  // QMainWindowなので独立ウィンドウになる
+        connect(m_storyboardWindow, &StoryboardWindow::edited, this, [this] {
+            m_dirty = true;
+            updateWindowTitle();
+        });
+        connect(m_storyboardWindow, &StoryboardWindow::cutRenamed, this, &MainWindow::updateCutBar);
+        connect(m_storyboardWindow, &StoryboardWindow::cutActivated, this, &MainWindow::setActiveCut);
+    }
+    m_storyboardWindow->setProject(m_project.get());
+    m_storyboardWindow->refresh();
+    m_storyboardWindow->show();
+    m_storyboardWindow->raise();
+    m_storyboardWindow->activateWindow();
 }
 
 void MainWindow::openExportDialog() {
