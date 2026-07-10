@@ -24,10 +24,24 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         refreshCameraUi();
         emit sceneEdited();
     });
+    connect(m_viewport, &PrevizViewport::modelEdited, this, [this] {
+        refreshTransformUi();
+        emit sceneEdited();
+    });
 
     // カメラ設定ツールバー(物理カメラ: 焦点距離→画角)
     QToolBar* toolBar = addToolBar(tr("カメラ"));
     toolBar->setMovable(false);
+
+    // 視点トグル(MMD/Blender方式): 既定は作業視点、チェックでカメラ視点を覗く
+    QAction* cameraViewAction = toolBar->addAction(tr("カメラ視点"));
+    cameraViewAction->setCheckable(true);
+    connect(cameraViewAction, &QAction::toggled, this, [this](bool checked) {
+        m_viewport->setViewMode(checked ? PrevizViewport::ViewMode::Camera : PrevizViewport::ViewMode::Work);
+        statusBar()->showMessage(checked ? tr("カメラ視点: 右ドラッグ=見回し / 中=移動 / ホイール=前後(カメラを編集)")
+                                         : tr("作業視点: 右ドラッグ=軌道 / 中=パン / ホイール=距離 / 左ドラッグ=選択モデル移動(Shift=上下)"));
+    });
+    toolBar->addSeparator();
     toolBar->addWidget(new QLabel(tr(" 焦点距離: "), this));
     m_focalSpin = new QDoubleSpinBox(this);
     m_focalSpin->setRange(8.0, 300.0);
@@ -62,7 +76,10 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(addButton, &QPushButton::clicked, this, &PrevizWindow::addModel);
     connect(removeButton, &QPushButton::clicked, this, &PrevizWindow::removeSelectedModel);
-    connect(m_modelList, &QListWidget::currentRowChanged, this, [this](int) { refreshTransformUi(); });
+    connect(m_modelList, &QListWidget::currentRowChanged, this, [this](int row) {
+        m_viewport->setSelectedModel(row);  // 作業視点の左ドラッグ移動対象
+        refreshTransformUi();
+    });
 
     // 選択モデルの配置編集
     auto* transformLabel = new QLabel(tr("配置(選択モデル)"), container);
@@ -122,7 +139,8 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         emit sceneEdited();
     });
 
-    statusBar()->showMessage(tr("右ドラッグ=見回し / 中ドラッグ=移動 / ホイール=前後"));
+    statusBar()->showMessage(
+        tr("作業視点: 右ドラッグ=軌道 / 中=パン / ホイール=距離 / 左ドラッグ=選択モデル移動(Shift=上下)"));
 }
 
 core::PrevizModel* PrevizWindow::selectedModel() {

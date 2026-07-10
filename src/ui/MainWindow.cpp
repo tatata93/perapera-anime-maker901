@@ -393,7 +393,7 @@ void MainWindow::updateUnderlay() {
     // プリビズ下敷き: プリビズカメラの現在コマの絵をそのまま透かす(なぞり作画)
     if (m_previzUnderlay && m_previzWindow) {
         m_previzWindow->setFrame(m_currentFrame);
-        m_canvas->setUnderlayImage(m_previzWindow->viewport()->grabFramebuffer());
+        m_canvas->setUnderlayImage(m_previzWindow->viewport()->renderCameraViewImage());
         return;
     }
 
