@@ -11,6 +11,8 @@ class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QListWidget;
+class QSpinBox;
+class QTimer;
 class QToolButton;
 
 // プリビズウィンドウ(別ウィンドウ)。3Dモデルの配置とカメラ(焦点距離/画角)の設定を行い、
@@ -75,4 +77,11 @@ private:
     QToolButton* m_pitchDownButton = nullptr;
     size_t m_frameCount = 1;  // 尺(コマ数)。シートの行数に使う
     bool m_updating = false;
+
+    // プリビズ内再生(カメラ/モデルのモーション確認)。本体とは独立に回し、停止時にコマを同期する
+    void togglePlayback();
+    QTimer* m_playTimer = nullptr;
+    QAction* m_playAction = nullptr;
+    QSpinBox* m_playFpsSpin = nullptr;
+    bool m_playing = false;
 };

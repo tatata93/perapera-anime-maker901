@@ -10,7 +10,9 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -65,6 +67,30 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     toolBar->addWidget(m_focalSpin);
     m_fovLabel = new QLabel(this);
     toolBar->addWidget(m_fovLabel);
+
+    // プリビズ内再生(モーション確認)
+    toolBar->addSeparator();
+    m_playAction = toolBar->addAction(tr("再生"));
+    connect(m_playAction, &QAction::triggered, this, &PrevizWindow::togglePlayback);
+    toolBar->addWidget(new QLabel(tr(" FPS: "), this));
+    m_playFpsSpin = new QSpinBox(this);
+    m_playFpsSpin->setRange(1, 60);
+    m_playFpsSpin->setValue(24);
+    m_playFpsSpin->setFocusPolicy(Qt::ClickFocus);
+    connect(m_playFpsSpin, &QSpinBox::valueChanged, this, [this](int fps) {
+        if (m_playing) m_playTimer->start(1000 / std::max(1, fps));
+    });
+    toolBar->addWidget(m_playFpsSpin);
+
+    m_playTimer = new QTimer(this);
+    connect(m_playTimer, &QTimer::timeout, this, [this] {
+        const size_t count = std::max<size_t>(1, m_frameCount);
+        const size_t next = (m_viewport->frame() + 1) % count;
+        m_viewport->setFrame(next);
+        refreshCameraUi();
+        refreshTransformUi();
+        // シートの再構築は重いので再生中は行わない(停止時にまとめて更新)
+    });
 
     // モデル一覧ドック
     auto* dock = new QDockWidget(tr("モデル"), this);
@@ -309,6 +335,19 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
 
     statusBar()->showMessage(
         tr("作業視点: 右ドラッグ=軌道 / WASD+Q/E=移動 / 左ドラッグ=選択モデル移動(Shift=上下)"));
+}
+
+void PrevizWindow::togglePlayback() {
+    m_playing = !m_playing;
+    if (m_playing) {
+        m_playAction->setText(tr("停止"));
+        m_playTimer->start(1000 / std::max(1, m_playFpsSpin->value()));
+    } else {
+        m_playTimer->stop();
+        m_playAction->setText(tr("再生"));
+        rebuildSheet();
+        emit frameChangeRequested(static_cast<int>(m_viewport->frame()));  // 停止位置を本体へ同期
+    }
 }
 
 core::PrevizModel* PrevizWindow::selectedModel() {
