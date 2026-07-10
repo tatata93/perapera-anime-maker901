@@ -16,6 +16,8 @@ class GLCanvas;
 class LayerPanel;
 class PalettePanel;
 class PrevizWindow;
+class ReferencePanel;
+class SettingBoardWindow;
 class StoryboardWindow;
 class TapPanel;
 class XsheetPanel;
@@ -104,6 +106,14 @@ public:
     // 絵コンテデモ確認用: パネル2枚(共にカット番号"1"、尺36/12)を追加し、
     // パネル1のdrawingに赤い斜め線を描く
     void debugSetupStoryboardDemo();
+
+    // 設定ボードウィンドウ確認用
+    void debugOpenSettingBoard() { openSettingBoardWindow(); }
+    SettingBoardWindow* settingBoardWindow() const { return m_settingBoardWindow; }
+    // 設定ボードデモ確認用: ボード2枚追加(「キャラ: 主人公」「美術: 教室」)し、
+    // 1枚目に赤い線を描いて参照ドックで1枚目を選択する
+    void debugSetupSettingBoardDemo();
+    ReferencePanel* referencePanel() const { return m_referencePanel; }
 
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
     // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる
@@ -212,6 +222,11 @@ private:
     // 絵コンテ
     void openStoryboardWindow();
 
+    // 設定ボード
+    void openSettingBoardWindow();
+    // 参照ドック(ReferencePanel)の内容をプロジェクトの設定ボードから再構築する
+    void updateReferencePanel();
+
     // 書き出し
     void openExportDialog();
     bool exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts);
@@ -244,6 +259,9 @@ private:
     CameraPanel* m_cameraPanel = nullptr;
     PrevizWindow* m_previzWindow = nullptr;  // 別ウィンドウ(遅延生成)
     StoryboardWindow* m_storyboardWindow = nullptr;  // 絵コンテウィンドウ(別ウィンドウ、遅延生成)
+    SettingBoardWindow* m_settingBoardWindow = nullptr;  // 設定ボードウィンドウ(別ウィンドウ、遅延生成)
+    ReferencePanel* m_referencePanel = nullptr;  // 設定ボード参照ドック
+    int m_referenceBoardIndex = -1;  // 参照ドックで選択中の設定ボードインデックス(未選択-1)
     QString m_currentFilePath;
     bool m_dirty = false;  // 未保存の変更があるか
 

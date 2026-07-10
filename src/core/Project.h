@@ -9,6 +9,13 @@
 
 namespace core {
 
+// 設定ボード1枚(キャラ設定・美術設定などの資料)。手描きと画像貼り付けを1枚のビットマップに合成する。
+// カット/シーンとは独立して存在し、作画中にいつでも参照できる資料集(プロジェクト直下で管理)
+struct SettingBoard {
+    std::string name;  // 例「キャラ: 主人公」「美術: 教室」
+    Bitmap image;       // ボードの中身(1920x1080、透明下地)
+};
+
 // アニメーション制作プロジェクト全体。シーンを順序付きで保持する。
 class Project {
 public:
@@ -28,10 +35,15 @@ public:
     std::vector<Bitmap::Pixel>& palette() { return m_palette; }
     const std::vector<Bitmap::Pixel>& palette() const { return m_palette; }
 
+    // 設定ボード(キャラ・美術などの資料集)。既定は空
+    std::vector<SettingBoard>& settingBoards() { return m_settingBoards; }
+    const std::vector<SettingBoard>& settingBoards() const { return m_settingBoards; }
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Scene>> m_scenes;
     std::vector<Bitmap::Pixel> m_palette;
+    std::vector<SettingBoard> m_settingBoards;
 };
 
 }  // namespace core

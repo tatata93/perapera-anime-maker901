@@ -42,6 +42,8 @@
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
 #include "ui/PalettePanel.h"
+#include "ui/ReferencePanel.h"
+#include "ui/SettingBoardWindow.h"
 #include "ui/StoryboardWindow.h"
 #include "ui/TapPanel.h"
 #include "ui/XsheetPanel.h"
@@ -752,9 +754,17 @@ void MainWindow::setupPanels() {
     });
     connect(m_cameraPanel, &CameraPanel::showFrameToggled, this, [this](bool) { updateCameraOverlay(); });
 
+    m_referencePanel = new ReferencePanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_referencePanel);
+    connect(m_referencePanel, &ReferencePanel::boardSelected, this, [this](int index) {
+        m_referenceBoardIndex = index;
+        updateReferencePanel();
+    });
+
     updateLayerPanel();
     updatePalettePanel();
     updateXsheetPanel();  // 末尾でupdateCelPanel()も呼ばれる
+    updateReferencePanel();
 }
 
 void MainWindow::updateLayerPanel() {
@@ -1175,6 +1185,12 @@ void MainWindow::setupMenus() {
     storyboardAction->setShortcut(QKeySequence(Qt::Key_F7));
     connect(storyboardAction, &QAction::triggered, this, &MainWindow::openStoryboardWindow);
 
+    // 設定ボードメニュー(別ウィンドウ)
+    QMenu* settingBoardMenu = menuBar()->addMenu(tr("設定ボード(&B)"));
+    QAction* settingBoardAction = settingBoardMenu->addAction(tr("設定ボードウィンドウ(&W)"));
+    settingBoardAction->setShortcut(QKeySequence(Qt::Key_F8));
+    connect(settingBoardAction, &QAction::triggered, this, &MainWindow::openSettingBoardWindow);
+
     // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
     viewMenu->addAction(m_framePanel->toggleViewAction());
@@ -1183,6 +1199,7 @@ void MainWindow::setupMenus() {
     viewMenu->addAction(m_xsheetPanel->toggleViewAction());
     viewMenu->addAction(m_celPanel->toggleViewAction());
     viewMenu->addAction(m_tapPanel->toggleViewAction());
+    viewMenu->addAction(m_referencePanel->toggleViewAction());
     viewMenu->addSeparator();
     // 仕上げ表示: 色トレス線・作監修正レイヤーを隠して最終画を確認する(書き出しと同じ見え方)
     QAction* cleanViewAction = viewMenu->addAction(tr("仕上げ表示(トレス線/修正を隠す)(&C)"));
@@ -1273,6 +1290,12 @@ void MainWindow::newDocument() {
         m_storyboardWindow->setProject(m_project.get());  // プロジェクト差し替え
         m_storyboardWindow->refresh();
     }
+    if (m_settingBoardWindow) {
+        m_settingBoardWindow->setProject(m_project.get());  // プロジェクト差し替え
+        m_settingBoardWindow->refresh();
+    }
+    m_referenceBoardIndex = -1;
+    updateReferencePanel();
     updateFrameLabel();
     updateLayerPanel();
     updatePalettePanel();
@@ -1321,6 +1344,12 @@ bool MainWindow::loadFromFile(const QString& path) {
         m_storyboardWindow->setProject(m_project.get());  // プロジェクト差し替え
         m_storyboardWindow->refresh();
     }
+    if (m_settingBoardWindow) {
+        m_settingBoardWindow->setProject(m_project.get());  // プロジェクト差し替え
+        m_settingBoardWindow->refresh();
+    }
+    m_referenceBoardIndex = -1;
+    updateReferencePanel();
     setCurrentFrame(0);
     updateLayerPanel();
     updateCutBar();
@@ -1853,6 +1882,79 @@ void MainWindow::debugSetupStoryboardDemo() {
 
     panels.push_back(std::move(panel1));
     panels.push_back(std::move(panel2));
+}
+
+void MainWindow::openSettingBoardWindow() {
+    if (!m_settingBoardWindow) {
+        m_settingBoardWindow = new SettingBoardWindow(this);  // QMainWindowなので独立ウィンドウになる
+        connect(m_settingBoardWindow, &SettingBoardWindow::edited, this, [this] {
+            m_dirty = true;
+            updateWindowTitle();
+            updateReferencePanel();  // 編集内容を参照ドックへ即反映
+        });
+    }
+    m_settingBoardWindow->setProject(m_project.get());
+    m_settingBoardWindow->refresh();
+    m_settingBoardWindow->show();
+    m_settingBoardWindow->raise();
+    m_settingBoardWindow->activateWindow();
+}
+
+void MainWindow::updateReferencePanel() {
+    if (!m_referencePanel) return;
+
+    QStringList names;
+    if (m_project) {
+        for (const auto& board : m_project->settingBoards()) {
+            names.append(QString::fromStdString(board.name));
+        }
+    }
+    if (m_referenceBoardIndex < 0 || m_referenceBoardIndex >= names.size()) {
+        m_referenceBoardIndex = names.isEmpty() ? -1 : 0;
+    }
+    m_referencePanel->setBoards(names, m_referenceBoardIndex);
+
+    QImage image;
+    if (m_project && m_referenceBoardIndex >= 0 &&
+        static_cast<size_t>(m_referenceBoardIndex) < m_project->settingBoards().size()) {
+        const core::Bitmap& board = m_project->settingBoards()[static_cast<size_t>(m_referenceBoardIndex)].image;
+        if (!board.isEmpty()) {
+            // 参照パネルは表示専用のコピーを持つため、Bitmapの寿命/再配置に依存しないよう即コピーする
+            image = QImage(board.data(), board.width(), board.height(), QImage::Format_RGBA8888).copy();
+        }
+    }
+    m_referencePanel->setImage(image);
+}
+
+void MainWindow::debugSetupSettingBoardDemo() {
+    // 設定ボード確認用: ボード2枚追加(「キャラ: 主人公」「美術: 教室」)し、
+    // 1枚目に赤い線を描いて参照ドックで1枚目を選択する
+    if (!m_project) return;
+    auto& boards = m_project->settingBoards();
+    boards.clear();
+
+    core::SettingBoard board1;
+    board1.name = "キャラ: 主人公";
+    board1.image = core::Bitmap(kCanvasWidth, kCanvasHeight);  // 設定ボードウィンドウと同じ寸法(1920x1080)
+    board1.image.fill({0, 0, 0, 0});
+
+    core::BrushEngine engine;
+    engine.settings().radius = 10.0f;
+    engine.settings().color = {220, 30, 30, 255};
+    engine.beginStroke(board1.image, kCanvasWidth * 0.2f, kCanvasHeight * 0.2f, 1.0f);
+    engine.continueStroke(board1.image, kCanvasWidth * 0.8f, kCanvasHeight * 0.8f, 1.0f);
+    engine.endStroke();
+
+    core::SettingBoard board2;
+    board2.name = "美術: 教室";
+    board2.image = core::Bitmap(kCanvasWidth, kCanvasHeight);
+    board2.image.fill({0, 0, 0, 0});
+
+    boards.push_back(std::move(board1));
+    boards.push_back(std::move(board2));
+
+    m_referenceBoardIndex = 0;
+    updateReferencePanel();
 }
 
 void MainWindow::openExportDialog() {

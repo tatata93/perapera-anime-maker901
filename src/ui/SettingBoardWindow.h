@@ -1,0 +1,70 @@
+#pragma once
+
+#include <QColor>
+#include <QMainWindow>
+
+class QListWidget;
+class QPushButton;
+class QSlider;
+class QLabel;
+class GLCanvas;
+
+namespace core {
+class Project;
+}
+
+// 設定ボードウィンドウ(別ウィンドウ)。キャラクター設定・美術設定などの資料を
+// 「描く/画像を貼る」ボードとして扱う。複数枚を名前付きで管理し、カット/シーンとは
+// 独立してプロジェクト直下に保存される。作画中はメインウィンドウの参照ドック
+// (ReferencePanel)でいつでも内容を見られる
+class SettingBoardWindow : public QMainWindow {
+    Q_OBJECT
+
+public:
+    explicit SettingBoardWindow(QWidget* parent = nullptr);
+
+    // プロジェクトの差し替え(新規/読込後)。所有権は持たない
+    void setProject(core::Project* project);
+    // ボード一覧を再構築する(m_updatingガードで選択変更シグナルの暴発を防ぐ)。
+    // vector再配置に備え、描画エリアも選択ボードへ再設定する
+    void refresh();
+
+signals:
+    void edited();  // ボードの追加/削除/名前変更/手描き/画像貼付が行われた
+
+private:
+    void addBoard();
+    void removeBoard();
+    void renameBoard();
+    void onSelectionChanged();
+    void onStrokeFinished();
+    // 「画像を貼る」ボタン: 画像ファイルを選び、選択中ボードへアスペクト維持で最大フィット
+    // 縮小・中央配置してsrc-over合成する
+    void pasteImage();
+    // 選択中ボードのimage(ボード全体のビットマップ)へ描画エリアを再設定する(vectorの
+    // 再配置でポインタが無効になるため、ボード追加/削除/並べ替えの後は必ず呼ぶこと)
+    void bindCanvasToSelectedBoard();
+    // 太さスライダーの値を選択中ツール(ペン/消しゴム)の半径へ反映する
+    void onRadiusSliderChanged(int value);
+    // 色選択ダイアログを開き、選択色をキャンバスのペン色へ反映する
+    void chooseColor();
+    // 現在の太さ/色設定をキャンバスへ適用する
+    void applyToolSettingsToCanvas();
+    int selectedBoardIndex() const;
+
+    core::Project* m_project = nullptr;
+    QListWidget* m_list = nullptr;
+    GLCanvas* m_canvas = nullptr;  // 選択中ボード1枚(1920x1080)を表示・編集するキャンバス
+    QPushButton* m_penButton = nullptr;
+    QPushButton* m_eraserButton = nullptr;
+    QSlider* m_radiusSlider = nullptr;
+    QLabel* m_radiusValueLabel = nullptr;
+    QPushButton* m_colorButton = nullptr;
+    bool m_updating = false;
+    int m_selectedRow = -1;  // 現在選択中のボード行(ボードが1枚もなければ-1)
+
+    // ペン/消しゴムそれぞれの太さ・色設定(トグル切替時にスライダー表示を切り替えるため記憶する)
+    float m_penRadius = 6.0f;
+    float m_eraserRadius = 24.0f;
+    QColor m_penColor = Qt::black;
+};

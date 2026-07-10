@@ -8,6 +8,7 @@
 #include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/MainWindow.h"
+#include "ui/SettingBoardWindow.h"
 #include "ui/StoryboardWindow.h"
 
 int main(int argc, char* argv[]) {
@@ -550,6 +551,21 @@ int main(int argc, char* argv[]) {
                     }
                     QApplication::exit(0);  // exit()で直接終了(quit()はcloseEventのダイアログを経由するため)
                 });
+            });
+        });
+    }
+
+    // 動作確認用: --settingboard-test <出力PNG> で設定ボードデモ(ボード2枚、1枚目に赤い線)を
+    // 組んでから設定ボードウィンドウを開き、その全体(ボード一覧+描画エリア)を保存して終了する
+    const int settingBoardIndex = args.indexOf("--settingboard-test");
+    if (settingBoardIndex >= 0 && settingBoardIndex + 1 < args.size()) {
+        const QString outputPath = args.at(settingBoardIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupSettingBoardDemo();
+            window.debugOpenSettingBoard();
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                window.settingBoardWindow()->grab().save(outputPath);
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
         });
     }

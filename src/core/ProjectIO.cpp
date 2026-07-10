@@ -204,7 +204,31 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
             {{"name", scene.name()}, {"storyboard", std::move(jStoryboard)}, {"cuts", std::move(jCuts)}});
     }
 
+    // 設定ボード(キャラ・美術などの資料集)。絵はストーリーボードと同じblob方式で圧縮する
+    json jSettingBoards = json::array();
+    for (const SettingBoard& board : project.settingBoards()) {
+        json jBoard;
+        jBoard["name"] = board.name;
+        jBoard["width"] = board.image.width();
+        jBoard["height"] = board.image.height();
+        if (!board.image.isEmpty()) {
+            uLongf compSize = compressBound(static_cast<uLong>(board.image.byteSize()));
+            std::vector<unsigned char> compressed(compSize);
+            if (compress2(compressed.data(), &compSize, board.image.data(),
+                          static_cast<uLong>(board.image.byteSize()), Z_DEFAULT_COMPRESSION) != Z_OK) {
+                setError(errorOut, "ピクセルデータの圧縮に失敗しました");
+                return false;
+            }
+            jBoard["blobOffset"] = blobs.size();
+            jBoard["blobSize"] = static_cast<uint64_t>(compSize);
+            jBoard["rawSize"] = static_cast<uint64_t>(board.image.byteSize());
+            blobs.insert(blobs.end(), compressed.begin(), compressed.begin() + compSize);
+        }
+        jSettingBoards.push_back(std::move(jBoard));
+    }
+
     json jProject = {{"name", project.name()}, {"scenes", std::move(jScenes)}};
+    if (!jSettingBoards.empty()) jProject["settingBoards"] = std::move(jSettingBoards);
     if (!project.palette().empty()) {
         // パレット色は[r,g,b,a]の配列として保存する(空なら省略)
         json jPalette = json::array();
@@ -410,6 +434,34 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                     }
                 }
                 cut.setFrameCount(std::max<size_t>(1, frameCount));
+            }
+        }
+
+        // 設定ボード(任意、存在しなければ空のまま)
+        if (jProject.contains("settingBoards")) {
+            for (const json& jBoard : jProject.at("settingBoards")) {
+                SettingBoard board;
+                board.name = jBoard.value("name", std::string());
+                const int w = jBoard.value("width", 0);
+                const int h = jBoard.value("height", 0);
+                if (w > 0 && h > 0 && jBoard.contains("blobOffset")) {
+                    const uint64_t offset = jBoard.at("blobOffset").get<uint64_t>();
+                    const uint64_t blobSize = jBoard.at("blobSize").get<uint64_t>();
+                    const uint64_t rawSize = jBoard.at("rawSize").get<uint64_t>();
+                    Bitmap bitmap(w, h);
+                    if (rawSize != bitmap.byteSize() || offset + blobSize > blobTotal) {
+                        setError(errorOut, "ファイルが壊れています(ピクセルデータ不整合)");
+                        return nullptr;
+                    }
+                    uLongf destLen = static_cast<uLongf>(rawSize);
+                    if (uncompress(bitmap.data(), &destLen, blobBase + offset, static_cast<uLong>(blobSize)) != Z_OK ||
+                        destLen != rawSize) {
+                        setError(errorOut, "ファイルが壊れています(展開に失敗)");
+                        return nullptr;
+                    }
+                    board.image = std::move(bitmap);
+                }
+                project->settingBoards().push_back(std::move(board));
             }
         }
 

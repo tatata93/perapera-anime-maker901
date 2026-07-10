@@ -155,6 +155,42 @@ TEST_CASE("Storyboard panels round trip through ppam", "[core][io][storyboard]")
     std::filesystem::remove(path);
 }
 
+TEST_CASE("Setting boards round trip through ppam", "[core][io][settingboard]") {
+    core::Project project("P");
+    project.addScene("S").addCut("C").addCel("A").addLayer("L").addFrame();
+
+    core::SettingBoard board1;
+    board1.name = "キャラ: 主人公";
+    board1.image = core::Bitmap(16, 9);
+    board1.image.fill({0, 0, 0, 0});
+    board1.image.setPixel(5, 2, {10, 200, 40, 255});  // 目印ピクセル
+    project.settingBoards().push_back(std::move(board1));
+
+    core::SettingBoard board2;  // 空画像のボード
+    board2.name = "美術: 教室";
+    project.settingBoards().push_back(std::move(board2));
+
+    const auto path = std::filesystem::temp_directory_path() / "ppam_settingboard_test.ppam";
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const auto& boards = loaded->settingBoards();
+    REQUIRE(boards.size() == 2);
+    REQUIRE(boards[0].name == "キャラ: 主人公");
+    REQUIRE(boards[0].image.width() == 16);
+    REQUIRE(boards[0].image.height() == 9);
+    const auto marked = boards[0].image.pixel(5, 2);
+    REQUIRE(marked.r == 10);
+    REQUIRE(marked.g == 200);
+    REQUIRE(marked.b == 40);
+    REQUIRE(boards[1].name == "美術: 教室");
+    REQUIRE(boards[1].image.isEmpty());
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("ProjectIO load reports errors for invalid files", "[core][io]") {
     std::string error;
 
