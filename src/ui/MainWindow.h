@@ -8,6 +8,7 @@
 #include "core/CommandStack.h"
 #include "core/Project.h"
 
+class CelPanel;
 class FramePanel;
 class GLCanvas;
 class LayerPanel;
@@ -138,12 +139,18 @@ private:
     // タイムシート(Xsheet)パネル操作
     void updateXsheetPanel();
 
+    // セルパネル操作(セルの可視/非表示をワンクリックで切り替える一覧)
+    void updateCelPanel();
+
     // セル(Xsheetの列)管理操作
     void addCel();
     void removeActiveCel();
     void renameActiveCel();
     void moveActiveCel(int delta);
-    void toggleCelVisibility(int celIndex);
+    // セルの可視状態を指定値に設定する(XsheetパネルのトグルとCelPanelのチェックボックス両方から使う)
+    void setCelVisibility(int celIndex, bool visible);
+    // アクティブセルを切り替える(CelPanelでのセル選択・Xsheetのセルクリックで共通利用)
+    void setActiveCel(int celIndex);
 
     // 下敷き(参照画像/連番シーケンス)。セッション限定でプロジェクトには保存しない
     void openUnderlay();
@@ -184,6 +191,7 @@ private:
     LayerPanel* m_layerPanel = nullptr;
     PalettePanel* m_palettePanel = nullptr;
     XsheetPanel* m_xsheetPanel = nullptr;
+    CelPanel* m_celPanel = nullptr;
     QString m_currentFilePath;
     bool m_dirty = false;  // 未保存の変更があるか
 

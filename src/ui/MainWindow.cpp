@@ -32,6 +32,7 @@
 #include "core/ProjectIO.h"
 #include "core/StrokeCommand.h"
 #include "render/GLCanvas.h"
+#include "ui/CelPanel.h"
 #include "ui/ExportDialog.h"
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
@@ -546,11 +547,25 @@ void MainWindow::setupPanels() {
     connect(m_xsheetPanel, &XsheetPanel::celRemoveRequested, this, &MainWindow::removeActiveCel);
     connect(m_xsheetPanel, &XsheetPanel::celRenameRequested, this, &MainWindow::renameActiveCel);
     connect(m_xsheetPanel, &XsheetPanel::celMoveRequested, this, &MainWindow::moveActiveCel);
-    connect(m_xsheetPanel, &XsheetPanel::celVisibilityToggleRequested, this, &MainWindow::toggleCelVisibility);
+    connect(m_xsheetPanel, &XsheetPanel::celVisibilityToggleRequested, this, [this](int celIndex) {
+        core::Cut& cut = activeCut();
+        if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount()) return;
+        setCelVisibility(celIndex, !cut.cel(static_cast<size_t>(celIndex)).visible());
+    });
+
+    m_celPanel = new CelPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_celPanel);
+    connect(m_celPanel, &CelPanel::celSelected, this, [this](int index) {
+        if (m_playing) return;
+        setActiveCel(index);
+    });
+    connect(m_celPanel, &CelPanel::visibilityChanged, this, [this](int index, bool visible) {
+        setCelVisibility(index, visible);
+    });
 
     updateLayerPanel();
     updatePalettePanel();
-    updateXsheetPanel();
+    updateXsheetPanel();  // 末尾でupdateCelPanel()も呼ばれる
 }
 
 void MainWindow::updateLayerPanel() {
@@ -680,6 +695,24 @@ void MainWindow::updateXsheetPanel() {
 
     m_xsheetPanel->setSheet(celNames, celVisible, exposures, static_cast<int>(cut.frameCount()),
                              static_cast<int>(m_currentFrame), static_cast<int>(m_activeCel));
+
+    updateCelPanel();  // セルの構成・可視状態・アクティブセルはXsheetと同じ元データなのでここで一緒に更新する
+}
+
+// activeCut()の全セルからセル名・可視状態を集めてセルパネルに反映する
+void MainWindow::updateCelPanel() {
+    if (!m_celPanel) return;
+    core::Cut& cut = activeCut();
+
+    QStringList celNames;
+    QList<bool> celVisible;
+    for (size_t ci = 0; ci < cut.celCount(); ++ci) {
+        const core::Cel& cel = cut.cel(ci);
+        celNames.append(QString::fromStdString(cel.name()));
+        celVisible.append(cel.visible());
+    }
+
+    m_celPanel->setCels(celNames, celVisible, static_cast<int>(m_activeCel));
 }
 
 // 新しいセルを1枚追加する。名前は自動連番(1文字目のセルは新規文書時に"A"が既にあるので、
@@ -821,20 +854,33 @@ void MainWindow::duplicateDrawing(int idx) {
     updateWindowTitle();
 }
 
-void MainWindow::toggleCelVisibility(int celIndex) {
+void MainWindow::setCelVisibility(int celIndex, bool visible) {
     if (m_playing) return;
     core::Cut& cut = activeCut();
     if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount()) return;
 
-    core::Cel& cel = cut.cel(static_cast<size_t>(celIndex));
-    cel.setVisible(!cel.visible());
+    cut.cel(static_cast<size_t>(celIndex)).setVisible(visible);
 
     m_dirty = true;
     updateCanvasLayers();
-    updateXsheetPanel();
+    updateXsheetPanel();  // 末尾でupdateCelPanel()も呼ばれる
     updateLayerPanel();
     updateFrameLabel();
     updateWindowTitle();
+}
+
+// アクティブセルを切り替える(CelPanelでのセル選択で使用。Xsheetのセルクリックはコマ移動を伴うため
+// setCurrentFrame()経由で別途処理している)
+void MainWindow::setActiveCel(int celIndex) {
+    core::Cut& cut = activeCut();
+    if (cut.celCount() == 0 || celIndex < 0) return;
+    m_activeCel = static_cast<size_t>(std::min(celIndex, static_cast<int>(cut.celCount()) - 1));
+
+    updateCanvasLayers();
+    updateOnionSkin();
+    updateFrameLabel();
+    updateLayerPanel();
+    updateXsheetPanel();  // 末尾でupdateCelPanel()も呼ばれる
 }
 
 void MainWindow::setupMenus() {
@@ -879,6 +925,7 @@ void MainWindow::setupMenus() {
     viewMenu->addAction(m_layerPanel->toggleViewAction());
     viewMenu->addAction(m_palettePanel->toggleViewAction());
     viewMenu->addAction(m_xsheetPanel->toggleViewAction());
+    viewMenu->addAction(m_celPanel->toggleViewAction());
     viewMenu->addSeparator();
     // 仕上げ表示: 色トレス線・作監修正レイヤーを隠して最終画を確認する(書き出しと同じ見え方)
     QAction* cleanViewAction = viewMenu->addAction(tr("仕上げ表示(トレス線/修正を隠す)(&C)"));

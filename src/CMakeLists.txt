@@ -8,6 +8,8 @@ add_executable(perapera-anime-maker901
     ui/FramePanel.h
     ui/LayerPanel.cpp
     ui/LayerPanel.h
+    ui/CelPanel.cpp
+    ui/CelPanel.h
     ui/PalettePanel.cpp
     ui/PalettePanel.h
     ui/XsheetPanel.cpp
