@@ -74,12 +74,15 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     layout->addWidget(m_modelList);
     auto* addButton = new QPushButton(tr("モデル追加..."), container);
     layout->addWidget(addButton);
+    auto* addBoxButton = new QPushButton(tr("箱を追加"), container);
+    layout->addWidget(addBoxButton);
     auto* removeButton = new QPushButton(tr("モデル削除"), container);
     layout->addWidget(removeButton);
     dock->setWidget(container);
     addDockWidget(Qt::RightDockWidgetArea, dock);
 
     connect(addButton, &QPushButton::clicked, this, &PrevizWindow::addModel);
+    connect(addBoxButton, &QPushButton::clicked, this, [this] { addBoxModel(true); });
     connect(removeButton, &QPushButton::clicked, this, &PrevizWindow::removeSelectedModel);
     connect(m_modelList, &QListWidget::currentRowChanged, this, [this](int row) {
         m_viewport->setSelectedModel(row);  // 作業視点の左ドラッグ移動対象
@@ -337,9 +340,30 @@ void PrevizWindow::applyTransformFromUi() {
     emit sceneEdited();
 }
 
+void PrevizWindow::addBoxModel(bool select) {
+    if (!m_scene) return;
+    core::PrevizModel box;
+    int number = 1;
+    for (const auto& model : m_scene->models) {
+        if (model.filePath == ":box") ++number;
+    }
+    box.name = tr("箱 %1").arg(number).toStdString();
+    box.filePath = ":box";  // 組み込みプリミティブ
+    m_scene->models.push_back(std::move(box));
+    refreshModelList();
+    if (select) m_modelList->setCurrentRow(static_cast<int>(m_scene->models.size()) - 1);
+    rebuildSheet();
+    m_viewport->update();
+    emit sceneEdited();
+}
+
 void PrevizWindow::setScene(core::PrevizScene* scene) {
     m_scene = scene;
     m_viewport->setScene(scene);
+    // 空のシーンには最初から操作できる箱を1つ置く(目安キューブの実体化)
+    if (m_scene && m_scene->models.empty()) {
+        addBoxModel(false);
+    }
     refreshModelList();
     refreshCameraUi();
     rebuildSheet();

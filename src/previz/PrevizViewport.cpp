@@ -190,9 +190,13 @@ PrevizViewport::GpuMesh* PrevizViewport::getOrLoadMesh(const std::string& filePa
     GpuMesh mesh;
     previz::MeshData data;
     std::string error;
-    if (!previz::loadGltfMesh(filePath, data, &error)) {
+    if (filePath == ":box") {
+        // 組み込みプリミティブ: 1m角の箱(レイアウトのブロッキング用)
+        data = previz::makeBoxMeshData();
+    } else if (!previz::loadGltfMesh(filePath, data, &error)) {
         mesh.loadFailed = true;  // 失敗を記録して毎フレーム再試行しない
-    } else {
+    }
+    if (!mesh.loadFailed) {
         for (const auto& src : data.primitives) {
             GpuPrimitive prim;
             prim.vbo = std::make_unique<QOpenGLBuffer>(QOpenGLBuffer::VertexBuffer);

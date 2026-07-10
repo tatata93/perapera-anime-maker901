@@ -20,4 +20,7 @@ struct MeshData {
 // テクスチャ・スキニング・アニメーションはMVPでは未対応(将来対応)
 bool loadGltfMesh(const std::string& path, MeshData& out, std::string* errorOut = nullptr);
 
+// 組み込みプリミティブ: 1m角の箱(床の上、原点)。レイアウトのブロッキング用
+MeshData makeBoxMeshData();
+
 }  // namespace previz

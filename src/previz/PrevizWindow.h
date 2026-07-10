@@ -34,6 +34,7 @@ signals:
 
 private:
     void addModel();
+    void addBoxModel(bool select);  // 組み込みの箱(:box)を追加。目安キューブの実体化
     void removeSelectedModel();
     void refreshModelList();
     void refreshCameraUi();
