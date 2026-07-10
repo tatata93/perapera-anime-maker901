@@ -40,6 +40,67 @@ LayerRole layerRoleFromString(const std::string& value) {
     return LayerRole::Normal;  // 不明値・欠落はNormal扱い
 }
 
+// --- プリビズのJSON変換 ---
+
+json vec3ToJson(const Vec3& v) { return {v.x, v.y, v.z}; }
+Vec3 vec3FromJson(const json& j) { return {j.at(0).get<float>(), j.at(1).get<float>(), j.at(2).get<float>()}; }
+
+json transformToJson(const PrevizTransform& t) {
+    return {{"position", vec3ToJson(t.position)}, {"rotation", vec3ToJson(t.rotationDeg)}, {"scale", vec3ToJson(t.scale)}};
+}
+PrevizTransform transformFromJson(const json& j) {
+    return {vec3FromJson(j.at("position")), vec3FromJson(j.at("rotation")), vec3FromJson(j.at("scale"))};
+}
+
+json cameraStateToJson(const PrevizCameraState& s) {
+    return {{"position", vec3ToJson(s.position)}, {"rotation", vec3ToJson(s.rotationDeg)}, {"focal", s.focalLengthMm}};
+}
+PrevizCameraState cameraStateFromJson(const json& j) {
+    return {vec3FromJson(j.at("position")), vec3FromJson(j.at("rotation")), j.at("focal").get<float>()};
+}
+
+json previzToJson(const PrevizScene& scene) {
+    json jModels = json::array();
+    for (const PrevizModel& model : scene.models) {
+        json jKeys = json::array();
+        for (const auto& [frame, transform] : model.transformKeys) {
+            jKeys.push_back({{"frame", frame}, {"transform", transformToJson(transform)}});
+        }
+        jModels.push_back({{"name", model.name},
+                           {"filePath", model.filePath},
+                           {"transform", transformToJson(model.transform)},
+                           {"keys", std::move(jKeys)}});
+    }
+    json jCameraKeys = json::array();
+    for (const auto& [frame, state] : scene.camera.keys) {
+        jCameraKeys.push_back({{"frame", frame}, {"state", cameraStateToJson(state)}});
+    }
+    return {{"models", std::move(jModels)},
+            {"camera",
+             {{"state", cameraStateToJson(scene.camera.state)},
+              {"sensorWidth", scene.camera.sensorWidthMm},
+              {"keys", std::move(jCameraKeys)}}}};
+}
+
+void previzFromJson(const json& j, PrevizScene& scene) {
+    for (const json& jModel : j.at("models")) {
+        PrevizModel model;
+        model.name = jModel.at("name").get<std::string>();
+        model.filePath = jModel.at("filePath").get<std::string>();
+        model.transform = transformFromJson(jModel.at("transform"));
+        for (const json& jKey : jModel.at("keys")) {
+            model.transformKeys[jKey.at("frame").get<size_t>()] = transformFromJson(jKey.at("transform"));
+        }
+        scene.models.push_back(std::move(model));
+    }
+    const json& jCamera = j.at("camera");
+    scene.camera.state = cameraStateFromJson(jCamera.at("state"));
+    scene.camera.sensorWidthMm = jCamera.at("sensorWidth").get<float>();
+    for (const json& jKey : jCamera.at("keys")) {
+        scene.camera.keys[jKey.at("frame").get<size_t>()] = cameraStateFromJson(jKey.at("state"));
+    }
+}
+
 }  // namespace
 
 bool ProjectIO::save(const Project& project, const std::filesystem::path& path, std::string* errorOut) {
@@ -94,7 +155,9 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                                  {"positionKeys", std::move(jPositionKeys)},
                                  {"layers", std::move(jLayers)}});
             }
-            jCuts.push_back({{"name", cut.name()}, {"frameCount", cut.frameCount()}, {"cels", std::move(jCels)}});
+            json jCut = {{"name", cut.name()}, {"frameCount", cut.frameCount()}, {"cels", std::move(jCels)}};
+            if (!cut.previz().isEmpty()) jCut["previz"] = previzToJson(cut.previz());
+            jCuts.push_back(std::move(jCut));
         }
         jScenes.push_back({{"name", scene.name()}, {"cuts", std::move(jCuts)}});
     }
@@ -248,6 +311,9 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                         for (size_t t = 0; t < cel.drawingCount(); ++t) cel.setExposure(t, static_cast<int>(t));
                     }
                 }
+                // プリビズシーン(任意)
+                if (jCut.contains("previz")) previzFromJson(jCut.at("previz"), cut.previz());
+
                 // 尺(欠落時は各セルの露出表/動画数から推定)
                 size_t frameCount = jCut.value("frameCount", static_cast<size_t>(0));
                 if (frameCount == 0) {

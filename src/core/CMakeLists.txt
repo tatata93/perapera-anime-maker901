@@ -10,6 +10,7 @@ add_library(perapera_core STATIC
     Layer.h
     Cel.cpp
     Cel.h
+    Previz.h
     Cut.cpp
     Cut.h
     Scene.cpp

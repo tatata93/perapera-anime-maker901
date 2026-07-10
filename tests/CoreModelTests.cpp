@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
+#include <filesystem>
 
 #include "core/Compositor.h"
 #include "core/Project.h"
+#include "core/ProjectIO.h"
 
 TEST_CASE("Project owns Scene -> Cut -> Cel -> Layer -> Frame hierarchy", "[core]") {
     core::Project project("Test Project");
@@ -226,6 +228,64 @@ TEST_CASE("Cut::moveCel reorders cels", "[core]") {
     REQUIRE(cut.cel(0).name() == "Cel B");
     REQUIRE(cut.cel(1).name() == "Cel C");
     REQUIRE(cut.cel(2).name() == "Cel A");
+}
+
+TEST_CASE("Previz model and camera keys interpolate", "[core][previz]") {
+    core::PrevizModel model;
+    model.transformKeys[0] = {{0, 0, 0}, {0, 0, 0}, {1, 1, 1}};
+    model.transformKeys[10] = {{10, 0, -20}, {0, 90, 0}, {1, 1, 1}};
+
+    const auto mid = model.transformAt(5);
+    REQUIRE(mid.position.x == 5.0f);
+    REQUIRE(mid.position.z == -10.0f);
+    REQUIRE(mid.rotationDeg.y == 45.0f);
+
+    core::PrevizCamera camera;
+    camera.state.focalLengthMm = 50.0f;
+    // 50mm/フルサイズ36mm → 水平画角約39.6度
+    REQUIRE(camera.horizontalFovDeg(0) > 39.0f);
+    REQUIRE(camera.horizontalFovDeg(0) < 40.5f);
+
+    // 望遠(100mm)にすると画角が狭まる=パース圧縮
+    camera.keys[0] = {{0, 0, 5}, {}, 50.0f};
+    camera.keys[10] = {{0, 0, 5}, {}, 100.0f};
+    REQUIRE(camera.horizontalFovDeg(10) < 21.0f);
+    REQUIRE(camera.stateAt(5).focalLengthMm == 75.0f);  // 焦点距離も補間される
+}
+
+TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
+    core::Project project("P");
+    core::Cut& cut = project.addScene("S").addCut("C");
+    cut.addCel("A").addLayer("L").addFrame();  // 最小構成
+
+    core::PrevizModel model;
+    model.name = "キャラA";
+    model.filePath = "C:/models/chara.glb";
+    model.transform.position = {1, 2, 3};
+    model.transformKeys[0] = {{0, 0, 0}, {0, 0, 0}, {1, 1, 1}};
+    model.transformKeys[8] = {{5, 0, 0}, {0, 180, 0}, {2, 2, 2}};
+    cut.previz().models.push_back(model);
+    cut.previz().camera.state.focalLengthMm = 85.0f;
+    cut.previz().camera.sensorWidthMm = 36.0f;
+    cut.previz().camera.keys[3] = {{0, 1, 4}, {10, 0, 0}, 85.0f};
+
+    const auto path = std::filesystem::temp_directory_path() / "ppam_previz_test.ppam";
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const core::PrevizScene& previz = loaded->scene(0).cut(0).previz();
+    REQUIRE(previz.models.size() == 1);
+    REQUIRE(previz.models[0].name == "キャラA");
+    REQUIRE(previz.models[0].filePath == "C:/models/chara.glb");
+    REQUIRE(previz.models[0].transformKeys.size() == 2);
+    REQUIRE(previz.models[0].transformAt(4).position.x == 2.5f);
+    REQUIRE(previz.camera.state.focalLengthMm == 85.0f);
+    REQUIRE(previz.camera.keys.size() == 1);
+    REQUIRE(previz.camera.keys.at(3).rotationDeg.x == 10.0f);
+
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("Project supports multiple scenes and cuts", "[core]") {

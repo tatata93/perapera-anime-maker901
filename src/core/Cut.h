@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Cel.h"
+#include "Previz.h"
 
 namespace core {
 
@@ -30,9 +31,14 @@ public:
     Cel& cel(size_t index) { return *m_cels.at(index); }
     const Cel& cel(size_t index) const { return *m_cels.at(index); }
 
+    // プリビズシーン(3Dモデル配置+カメラ)。カット単位で持つ
+    PrevizScene& previz() { return m_previz; }
+    const PrevizScene& previz() const { return m_previz; }
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Cel>> m_cels;
+    PrevizScene m_previz;
     size_t m_frameCount = 1;  // 尺(最低1コマ)
 };
 
