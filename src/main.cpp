@@ -435,6 +435,20 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --previz-ui-test <出力PNG> でプリビズウィンドウ全体
+    // (プリビズシート+十字リモコンの操作ドックを含む)を保存して終了する
+    const int previzUiIndex = args.indexOf("--previz-ui-test");
+    if (previzUiIndex >= 0 && previzUiIndex + 1 < args.size()) {
+        const QString outputPath = args.at(previzUiIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugOpenPreviz();
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                window.previzWindow()->grab().save(outputPath);
+                QApplication::exit(0);
+            });
+        });
+    }
+
     // 動作確認用: --previz-underlay-test <出力PNG> でプリビズの絵(グリッド+キューブ)を
     // 作画キャンバスの下敷きとして透かした状態を保存する(なぞり作画の検証)
     const int pvuIndex = args.indexOf("--previz-underlay-test");

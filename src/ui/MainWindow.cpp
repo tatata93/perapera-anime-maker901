@@ -192,7 +192,7 @@ void MainWindow::setCurrentFrame(size_t index) {
     updateFrameLabel();
     updateUnderlay();
     updateXsheetPanel();  // 現在コマの行を追従させる
-    if (m_previzWindow) m_previzWindow->setFrame(m_currentFrame);  // プリビズもコマ連動
+    if (m_previzWindow) m_previzWindow->setTimeline(m_currentFrame, cut.frameCount());  // プリビズもコマ連動
 }
 
 void MainWindow::addFrameAfterCurrent() {
@@ -1556,9 +1556,11 @@ void MainWindow::openPrevizWindow() {
             updateWindowTitle();
             if (m_previzUnderlay) updateUnderlay();  // カメラ/配置の変更を下敷きへ即反映
         });
+        connect(m_previzWindow, &PrevizWindow::frameChangeRequested, this,
+                [this](int frame) { setCurrentFrame(static_cast<size_t>(frame)); });  // シートのセルクリックでコマ移動
     }
     m_previzWindow->setScene(&activeCut().previz());
-    m_previzWindow->setFrame(m_currentFrame);
+    m_previzWindow->setTimeline(m_currentFrame, activeCut().frameCount());
     m_previzWindow->show();
     m_previzWindow->raise();
     m_previzWindow->activateWindow();
