@@ -288,6 +288,66 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     std::filesystem::remove(path);
 }
 
+TEST_CASE("Cut camera frame keys interpolate", "[core][camera]") {
+    core::Cut cut("Cut 1");
+
+    SECTION("no keys means nullopt") {
+        REQUIRE_FALSE(cut.cameraFrameAt(5).has_value());
+    }
+
+    SECTION("single key always returns that value") {
+        cut.setCameraKey(3, {{100.0f, 50.0f}, 0.8});
+        REQUIRE(cut.cameraFrameAt(0)->center.x == 100.0f);
+        REQUIRE(cut.cameraFrameAt(3)->center.y == 50.0f);
+        REQUIRE(cut.cameraFrameAt(999)->scale == 0.8);
+    }
+
+    SECTION("two keys interpolate linearly and clamp outside range") {
+        cut.setCameraKey(0, {{0.0f, 0.0f}, 1.0});
+        cut.setCameraKey(24, {{240.0f, 120.0f}, 0.5});
+
+        const auto mid = cut.cameraFrameAt(12);
+        REQUIRE(mid.has_value());
+        REQUIRE(mid->center.x == 120.0f);
+        REQUIRE(mid->center.y == 60.0f);
+        REQUIRE(mid->scale == 0.75);
+
+        REQUIRE(cut.cameraFrameAt(0)->center.x == 0.0f);        // 最初のキー上
+        REQUIRE(cut.cameraFrameAt(24)->center.x == 240.0f);     // 最後のキー上
+        REQUIRE(cut.cameraFrameAt(100)->center.x == 240.0f);    // 範囲外(後)はクランプ
+    }
+
+    SECTION("scale is clamped to a minimum of 0.05") {
+        cut.setCameraKey(0, {{0.0f, 0.0f}, 0.01});
+        REQUIRE(cut.cameraFrameAt(0)->scale == 0.05);
+    }
+}
+
+TEST_CASE("Cut camera keys round trip through ppam", "[core][camera][io]") {
+    core::Project project("P");
+    core::Cut& cut = project.addScene("S").addCut("C");
+    cut.addCel("A").addLayer("L").addFrame();  // 最小構成
+
+    cut.setCameraKey(0, {{100.0f, 200.0f}, 1.0});
+    cut.setCameraKey(24, {{50.0f, 60.0f}, 0.5});
+
+    const auto path = std::filesystem::temp_directory_path() / "ppam_camera_test.ppam";
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const core::Cut& loadedCut = loaded->scene(0).cut(0);
+    REQUIRE(loadedCut.cameraKeys().size() == 2);
+    REQUIRE(loadedCut.cameraFrameAt(0)->center.x == 100.0f);
+    REQUIRE(loadedCut.cameraFrameAt(0)->center.y == 200.0f);
+    REQUIRE(loadedCut.cameraFrameAt(24)->center.x == 50.0f);
+    REQUIRE(loadedCut.cameraFrameAt(24)->center.y == 60.0f);
+    REQUIRE(loadedCut.cameraFrameAt(24)->scale == 0.5);
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Project supports multiple scenes and cuts", "[core]") {
     core::Project project;
 

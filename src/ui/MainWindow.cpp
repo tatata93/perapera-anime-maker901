@@ -16,6 +16,7 @@
 #include <QMessageBox>
 #include <QProcess>
 #include <QProgressDialog>
+#include <QRectF>
 #include <QSlider>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -35,6 +36,7 @@
 #include "previz/PrevizViewport.h"
 #include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
+#include "ui/CameraPanel.h"
 #include "ui/CelPanel.h"
 #include "ui/ExportDialog.h"
 #include "ui/FramePanel.h"
@@ -719,6 +721,37 @@ void MainWindow::setupPanels() {
         updateTapPanel();
     });
 
+    m_cameraPanel = new CameraPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_cameraPanel);
+    connect(m_cameraPanel, &CameraPanel::valuesChanged, this, [this](double, double, double) {
+        updateCameraOverlay();  // データは変更せずプレビューのみ更新する
+    });
+    connect(m_cameraPanel, &CameraPanel::addKeyRequested, this, [this] {
+        if (m_playing) return;
+        core::CameraFrameState state;
+        state.center = {static_cast<float>(m_cameraPanel->centerX()), static_cast<float>(m_cameraPanel->centerY())};
+        state.scale = m_cameraPanel->scalePercent() / 100.0;
+        activeCut().setCameraKey(m_currentFrame, state);
+        m_dirty = true;
+        updateWindowTitle();
+        updateCameraPanel();
+    });
+    connect(m_cameraPanel, &CameraPanel::removeKeyRequested, this, [this] {
+        if (m_playing) return;
+        activeCut().removeCameraKey(m_currentFrame);
+        m_dirty = true;
+        updateWindowTitle();
+        updateCameraPanel();
+    });
+    connect(m_cameraPanel, &CameraPanel::clearAllKeysRequested, this, [this] {
+        if (m_playing) return;
+        activeCut().clearCameraKeys();
+        m_dirty = true;
+        updateWindowTitle();
+        updateCameraPanel();
+    });
+    connect(m_cameraPanel, &CameraPanel::showFrameToggled, this, [this](bool) { updateCameraOverlay(); });
+
     updateLayerPanel();
     updatePalettePanel();
     updateXsheetPanel();  // 末尾でupdateCelPanel()も呼ばれる
@@ -854,6 +887,7 @@ void MainWindow::updateXsheetPanel() {
 
     updateCelPanel();  // セルの構成・可視状態・アクティブセルはXsheetと同じ元データなのでここで一緒に更新する
     updateTapPanel();  // 位置キーの一覧・現在コマの選択もアクティブセルに追従させる
+    updateCameraPanel();  // カメラフレーム(カット単位)も現在コマ・現在カットに追従させる
 }
 
 // activeCut()の全セルからセル名・可視状態を集めてセルパネルに反映する
@@ -883,6 +917,42 @@ void MainWindow::updateTapPanel() {
     }
 
     m_tapPanel->setKeys(keys, static_cast<int>(m_currentFrame));
+}
+
+// アクティブカットのカメラフレーム(画面に写る範囲)を現在コマに合わせてカメラパネルへ反映する。
+// キー規則: キーが無ければ基本状態(キャンバス中心・100%)を表示、あれば現在コマの値
+// (補間含む)を表示する
+void MainWindow::updateCameraPanel() {
+    if (!m_cameraPanel) return;
+    core::Cut& cut = activeCut();
+    const auto camera = cut.cameraFrameAt(m_currentFrame);
+    if (camera) {
+        m_cameraPanel->setValues(camera->center.x, camera->center.y, camera->scale * 100.0);
+    } else {
+        m_cameraPanel->setValues(kCanvasWidth / 2.0, kCanvasHeight / 2.0, 100.0);
+    }
+
+    const bool hasKeyOnFrame = cut.cameraKeys().count(m_currentFrame) > 0;
+    const bool hasAnyKeys = !cut.cameraKeys().empty();
+    m_cameraPanel->setKeyState(hasKeyOnFrame, hasAnyKeys);
+
+    updateCameraOverlay();
+}
+
+// カメラパネルの現在の表示値(スピン)からキャンバスのオーバーレイ矩形を作り直す。
+// 「枠を表示」がOFFなら非表示にする。スピン編集中のプレビュー表示にも使う
+void MainWindow::updateCameraOverlay() {
+    if (!m_cameraPanel) return;
+    if (!m_cameraPanel->showFrameEnabled()) {
+        m_canvas->setCameraFrameOverlay(QRectF());
+        return;
+    }
+    const double scale = std::max(0.05, m_cameraPanel->scalePercent() / 100.0);
+    const double w = kCanvasWidth * scale;
+    const double h = kCanvasHeight * scale;
+    const double cx = m_cameraPanel->centerX();
+    const double cy = m_cameraPanel->centerY();
+    m_canvas->setCameraFrameOverlay(QRectF(cx - w / 2.0, cy - h / 2.0, w, h));
 }
 
 // 新しいセルを1枚追加する。名前は自動連番(1文字目のセルは新規文書時に"A"が既にあるので、
@@ -1131,6 +1201,13 @@ void MainWindow::setupMenus() {
     QAction* resetViewAction = viewMenu->addAction(tr("ビューをリセット(&R)"));
     resetViewAction->setShortcut(QKeySequence(tr("Ctrl+0")));
     connect(resetViewAction, &QAction::triggered, this, [this] { m_canvas->resetView(); });
+
+    // レイアウト用フレーム枠ガイド: 作画フレーム(100%)/TVセーフ(約90%)/タイトルセーフ(約80%)を
+    // キャンバスに重ね表示する。状態はセッション限定でppamには保存しない
+    QAction* frameGuideAction = viewMenu->addAction(tr("フレーム枠(&G)"));
+    frameGuideAction->setCheckable(true);
+    frameGuideAction->setShortcut(QKeySequence(tr("Ctrl+G")));
+    connect(frameGuideAction, &QAction::toggled, this, [this](bool checked) { m_canvas->setFrameGuides(checked); });
 
     // 下敷きメニュー: 3DCGレンダリングや写真をキャンバスに薄く透かして表示する参照機能。
     // セッション限定であり、.ppamプロジェクトファイルには保存されない
@@ -1478,6 +1555,21 @@ void MainWindow::debugSetupTapDemo() {
     cel.setPositionKey(0, {0.0f, 0.0f});
     cel.setPositionKey(2, {400.0f, 200.0f});
     setCurrentFrame(0);
+}
+
+void MainWindow::debugSetupCameraDemo() {
+    // ストローク1本を描き、カット尺を24コマにしてカメラキーを2つ打つ
+    // (コマ0=中心・100%、コマ23=左上寄り・50%)、コマ12(中間点)へ移動する
+    debugSetupFillDemo();  // 目印になる矩形枠を描く
+    core::Cut& cut = activeCut();
+    core::Cel& cel = activeCel();
+    cut.setFrameCount(24);
+    for (size_t t = 0; t < 24; ++t) cel.setExposure(t, 0);  // 止め(全コマで同じ絵を表示)
+    cut.setCameraKey(0, core::CameraFrameState{{kCanvasWidth / 2.0f, kCanvasHeight / 2.0f}, 1.0});
+    cut.setCameraKey(23, core::CameraFrameState{{kCanvasWidth * 0.3f, kCanvasHeight * 0.3f}, 0.5});
+    m_dirty = true;
+    updateWindowTitle();
+    setCurrentFrame(12);
 }
 
 void MainWindow::debugSetupFillDemo() {

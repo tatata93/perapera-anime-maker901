@@ -40,6 +40,36 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --frameguide-test <出力PNG> でストロークを描いた上でフレーム枠ガイドを
+    // 有効にし、フレームバッファを保存して終了する
+    const int frameGuideIndex = args.indexOf("--frameguide-test");
+    if (frameGuideIndex >= 0 && frameGuideIndex + 1 < args.size()) {
+        const QString outputPath = args.at(frameGuideIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.canvas()->debugSimulateStroke();
+            window.canvas()->setFrameGuides(true);
+            QTimer::singleShot(200, &window, [&window, outputPath] {
+                window.canvas()->grabFramebuffer().save(outputPath);
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
+    // 動作確認用: --camframe-test <出力PNG> でカメラフレームデモ(ストローク+コマ0/23に
+    // カメラキー)を組んでコマ12へ移動し、カメラパネルとオーバーレイ枠が見える状態で
+    // ウィンドウ全体(パネル込み)を保存して終了する
+    const int camFrameIndex = args.indexOf("--camframe-test");
+    if (camFrameIndex >= 0 && camFrameIndex + 1 < args.size()) {
+        const QString outputPath = args.at(camFrameIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupCameraDemo();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                window.grab().save(outputPath);
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
     // 動作確認用: --onion-test <出力PNG> で3フレーム分の線を描き、
     // オニオンスキン表示状態のフレームバッファを保存して終了する
     const int onionIndex = args.indexOf("--onion-test");

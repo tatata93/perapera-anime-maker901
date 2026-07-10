@@ -29,4 +29,29 @@ void Cut::moveCel(size_t from, size_t to) {
     m_cels.insert(m_cels.begin() + static_cast<ptrdiff_t>(to), std::move(moved));
 }
 
+std::optional<CameraFrameState> Cut::cameraFrameAt(size_t frame) const {
+    if (m_cameraKeys.empty()) return std::nullopt;
+
+    // frame以上の最初のキーを探す(Cel::positionAtと同じ規則)
+    const auto upper = m_cameraKeys.lower_bound(frame);
+    if (upper == m_cameraKeys.begin()) return upper->second;          // 最初のキーより前
+    if (upper == m_cameraKeys.end()) return std::prev(upper)->second;  // 最後のキーより後
+    if (upper->first == frame) return upper->second;                   // キー上
+
+    // 前後のキーで線形補間(等速)
+    const auto lower = std::prev(upper);
+    const float t = static_cast<float>(frame - lower->first) / static_cast<float>(upper->first - lower->first);
+    const CameraFrameState& a = lower->second;
+    const CameraFrameState& b = upper->second;
+    CameraFrameState result;
+    result.center = {a.center.x + (b.center.x - a.center.x) * t, a.center.y + (b.center.y - a.center.y) * t};
+    result.scale = a.scale + (b.scale - a.scale) * static_cast<double>(t);
+    return result;
+}
+
+void Cut::setCameraKey(size_t frame, CameraFrameState state) {
+    state.scale = std::max(0.05, state.scale);
+    m_cameraKeys[frame] = state;
+}
+
 }  // namespace core

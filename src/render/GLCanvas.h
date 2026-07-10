@@ -107,6 +107,20 @@ public:
         update();
     }
 
+    // レイアウト用フレーム枠ガイド。有効時、作画フレーム(100%)/TVセーフ(約90%)/タイトルセーフ(約80%)
+    // の3重の枠を全レイヤー・オニオン等の上に半透明で重ね表示する。セッション限定でppamには保存しない
+    void setFrameGuides(bool enabled) {
+        m_frameGuidesEnabled = enabled;
+        update();
+    }
+
+    // カメラフレーム(画面に写る範囲)枠のオーバーレイ表示。矩形はキャンバス座標(画像座標px)。
+    // 空のQRectFを渡すと非表示になる。セッション限定でppamには保存しない
+    void setCameraFrameOverlay(const QRectF& rectPx) {
+        m_cameraFrameOverlay = rectPx;
+        update();
+    }
+
     // 手ブレ補正の強さ(0=なし〜100=最大)。ペン/消しゴムのストロークを平滑化する
     void setStabilizer(int strength) { m_stabilizer = std::clamp(strength, 0, 100); }
 
@@ -203,6 +217,9 @@ private:
     bool m_panning = false;
     bool m_mirrorView = false;   // 左右反転表示(ミラーチェック)
     QPointF m_lastPanPos;
+
+    bool m_frameGuidesEnabled = false;  // レイアウト用フレーム枠ガイドの表示状態
+    QRectF m_cameraFrameOverlay;  // カメラフレーム枠オーバーレイ(キャンバス座標px、空=非表示)
 
     // 手ブレ補正
     int m_stabilizer = 20;        // 強さ(0-100)

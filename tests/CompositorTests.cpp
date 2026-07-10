@@ -108,6 +108,37 @@ TEST_CASE("renderCutFrame onlyCel exports a single cel", "[core][compositor]") {
     REQUIRE(out.pixel(5, 5).g == 0);
 }
 
+TEST_CASE("renderCutFrame crops and resamples the camera frame", "[core][compositor][camera]") {
+    core::Cut cut("Cut 1");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L");
+
+    // 右下クオドラント(x,y: 4..7)だけ赤、残りは透明(=紙の白が見える)にする
+    core::Bitmap bitmap(8, 8);
+    bitmap.fill({0, 0, 0, 0});
+    for (int y = 4; y < 8; ++y) {
+        for (int x = 4; x < 8; ++x) bitmap.setPixel(x, y, {255, 0, 0, 255});
+    }
+    layer.addFrame().bitmap() = std::move(bitmap);
+    cut.setFrameCount(1);
+    cel.setExposure(0, 0);
+
+    // キー無しは従来どおり(左上は白、右下は赤)。バイト単位で同一のはず
+    const auto noKey = core::renderCutFrame(cut, 0, 8, 8);
+    REQUIRE(noKey.pixel(1, 1).r == 255);
+    REQUIRE(noKey.pixel(1, 1).g == 255);  // 白
+    REQUIRE(noKey.pixel(6, 6).r == 255);
+    REQUIRE(noKey.pixel(6, 6).g == 0);  // 赤
+
+    // カメラフレーム: 右下クオドラント(中心(6,6)・scale=0.5)にズームインする
+    cut.setCameraKey(0, core::CameraFrameState{{6.0f, 6.0f}, 0.5});
+    const auto zoomed = core::renderCutFrame(cut, 0, 8, 8);
+    // 元は白だった位置(左上寄り)がズームインにより赤になる
+    REQUIRE(zoomed.pixel(1, 1).r == 255);
+    REQUIRE(zoomed.pixel(1, 1).g == 0);
+    REQUIRE(zoomed.pixel(4, 4).g == 0);
+}
+
 TEST_CASE("renderCutFrame blends semi-transparent pixels over paper", "[core][compositor]") {
     core::Cut cut("Cut 1");
     core::Cel& cel = cut.addCel("A");

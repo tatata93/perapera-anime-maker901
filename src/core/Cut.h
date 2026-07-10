@@ -1,6 +1,8 @@
 #pragma once
 
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -8,6 +10,13 @@
 #include "Previz.h"
 
 namespace core {
+
+// カメラフレーム(画面に写る範囲)。centerはキャンバスpx座標、scaleは倍率
+// (1.0=作画フレーム全体、0.5=半分の範囲を写す=2倍ズームイン)
+struct CameraFrameState {
+    Vec2 center;
+    double scale = 1.0;
+};
 
 // シーン内の1カット。セル(Aセル/Bセル等)を順序付き(下→上)で保持する。
 // 将来的にXsheet(タイムシート)情報もここに持たせる。
@@ -41,6 +50,17 @@ public:
     PrevizScene& previz() { return m_previz; }
     const PrevizScene& previz() const { return m_previz; }
 
+    // --- カメラフレーム(レイアウト工程で画面に写る範囲を指定する、PAN/T.U.の基盤) ---
+    // コマ→カメラフレーム。キーが無ければnullopt、1個以上あれば線形補間する
+    // (最初のキーより前・最後のキーより後はクランプ)
+
+    std::optional<CameraFrameState> cameraFrameAt(size_t frame) const;
+    // scaleは0.05以上にクランプして登録する
+    void setCameraKey(size_t frame, CameraFrameState state);
+    void removeCameraKey(size_t frame) { m_cameraKeys.erase(frame); }
+    void clearCameraKeys() { m_cameraKeys.clear(); }
+    const std::map<size_t, CameraFrameState>& cameraKeys() const { return m_cameraKeys; }
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Cel>> m_cels;
@@ -48,6 +68,7 @@ private:
     size_t m_frameCount = 1;  // 尺(最低1コマ)
     std::string m_action;     // 絵コンテ: 内容(アクション)
     std::string m_dialogue;   // 絵コンテ: セリフ
+    std::map<size_t, CameraFrameState> m_cameraKeys;
 };
 
 }  // namespace core

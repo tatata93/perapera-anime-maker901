@@ -161,6 +161,17 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                          {"dialogue", cut.dialogue()},
                          {"cels", std::move(jCels)}};
             if (!cut.previz().isEmpty()) jCut["previz"] = previzToJson(cut.previz());
+            // カメラフレーム(画面に写る範囲)のキー。キー無しなら省略する
+            if (!cut.cameraKeys().empty()) {
+                json jCameraKeys = json::array();
+                for (const auto& [keyFrame, camState] : cut.cameraKeys()) {
+                    jCameraKeys.push_back({{"frame", keyFrame},
+                                           {"cx", camState.center.x},
+                                           {"cy", camState.center.y},
+                                           {"scale", camState.scale}});
+                }
+                jCut["cameraKeys"] = std::move(jCameraKeys);
+            }
             jCuts.push_back(std::move(jCut));
         }
         // 絵コンテ(パネル列)。絵はフレームと同じblob方式で圧縮する
@@ -379,6 +390,16 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
 
                 // プリビズシーン(任意)
                 if (jCut.contains("previz")) previzFromJson(jCut.at("previz"), cut.previz());
+
+                // カメラフレーム(画面に写る範囲)のキー(任意、欠落時は空のまま)
+                if (jCut.contains("cameraKeys")) {
+                    for (const json& jKey : jCut.at("cameraKeys")) {
+                        CameraFrameState state;
+                        state.center = {jKey.at("cx").get<float>(), jKey.at("cy").get<float>()};
+                        state.scale = jKey.at("scale").get<double>();
+                        cut.setCameraKey(jKey.at("frame").get<size_t>(), state);
+                    }
+                }
 
                 // 尺(欠落時は各セルの露出表/動画数から推定)
                 size_t frameCount = jCut.value("frameCount", static_cast<size_t>(0));

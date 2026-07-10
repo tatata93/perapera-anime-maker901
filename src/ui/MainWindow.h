@@ -9,6 +9,7 @@
 #include "core/CommandStack.h"
 #include "core/Project.h"
 
+class CameraPanel;
 class CelPanel;
 class FramePanel;
 class GLCanvas;
@@ -88,6 +89,9 @@ public:
     int debugExportSequence(const QString& dir);
     // タップ移動確認用: 1枚の動画を尺3で止めにし、位置キー(コマ1=原点、コマ3=右下)を打つ
     void debugSetupTapDemo();
+    // カメラフレーム確認用: ストローク1本+コマ0(中心・100%)とコマ23(左上寄り・50%)に
+    // カメラキーを打ち、コマ12へ移動する
+    void debugSetupCameraDemo();
     // プリビズ確認用: プリビズウィンドウを開く
     void debugOpenPreviz() { openPrevizWindow(); }
     // プリビズ下敷き確認用
@@ -164,6 +168,11 @@ private:
     // タップパネル操作(アクティブセルの位置キー一覧)
     void updateTapPanel();
 
+    // カメラパネル操作(カットのカメラフレーム。画面に写る範囲の指定)
+    void updateCameraPanel();
+    // カメラパネルの現在の表示値からキャンバスのオーバーレイ矩形を更新する
+    void updateCameraOverlay();
+
     // カット管理操作(カットバー)
     void setupCutBar();
     void updateCutBar();
@@ -232,6 +241,7 @@ private:
     XsheetPanel* m_xsheetPanel = nullptr;
     CelPanel* m_celPanel = nullptr;
     TapPanel* m_tapPanel = nullptr;
+    CameraPanel* m_cameraPanel = nullptr;
     PrevizWindow* m_previzWindow = nullptr;  // 別ウィンドウ(遅延生成)
     StoryboardWindow* m_storyboardWindow = nullptr;  // 絵コンテウィンドウ(別ウィンドウ、遅延生成)
     QString m_currentFilePath;

@@ -6,6 +6,7 @@
 #include <QOpenGLTexture>
 #include <QTabletEvent>
 #include <QVector3D>
+#include <QVector4D>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -31,6 +32,8 @@ void main() {
 //                      乗算ブレンドで重ねると白地は無視され色線だけが合成される。
 // どちらも0            : テクスチャをそのまま表示(通常描画)
 // uSolidWhite > 0    : 紙(白)。テクスチャを使わず白を出力する
+// uUseSolidColor > 0 : テクスチャを使わずuSolidColor(alpha込み)をそのまま出力する。
+//                      レイアウト用フレーム枠ガイドの線描画に使う
 const char* kFragmentShader = R"(
 varying vec2 vUV;
 uniform sampler2D uTex;
@@ -38,7 +41,13 @@ uniform vec3 uTint;
 uniform float uOnionStrength;
 uniform float uUnderlayMix;
 uniform float uSolidWhite;
+uniform float uUseSolidColor;
+uniform vec4 uSolidColor;
 void main() {
+    if (uUseSolidColor > 0.5) {
+        gl_FragColor = uSolidColor;
+        return;
+    }
     if (uSolidWhite > 0.5) {
         gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
         return;
@@ -62,6 +71,14 @@ constexpr float kOnionStrength = 0.55f;
 const QVector3D kPrevTint(0.95f, 0.35f, 0.35f);       // 前フレーム: 赤系
 const QVector3D kNextTint(0.30f, 0.75f, 0.35f);       // 次フレーム: 緑系
 const QVector3D kLightTableTint(0.35f, 0.45f, 0.90f);  // ライトテーブル: 青系(オニオンと区別)
+
+// レイアウト用フレーム枠ガイドの色(alpha 0.6程度の半透明)
+const QVector4D kFrameGuideColor(0.25f, 0.85f, 0.25f, 0.6f);      // 作画フレーム(100%): 緑系
+const QVector4D kTvSafeGuideColor(0.90f, 0.82f, 0.15f, 0.6f);     // TVセーフ(約90%): 黄系
+const QVector4D kTitleSafeGuideColor(0.85f, 0.20f, 0.20f, 0.6f);  // タイトルセーフ(約80%): 赤系
+
+// カメラフレーム(画面に写る範囲)枠オーバーレイの色: シアン(0,180,255)、不透明
+const QVector4D kCameraFrameOverlayColor(0.0f, 180.0f / 255.0f, 1.0f, 1.0f);
 
 }  // namespace
 
@@ -419,6 +436,7 @@ void GLCanvas::paintGL() {
     m_program->setUniformValue("uSolidWhite", 1.0f);
     m_program->setUniformValue("uOnionStrength", 0.0f);
     m_program->setUniformValue("uUnderlayMix", 0.0f);
+    m_program->setUniformValue("uUseSolidColor", 0.0f);  // 前フレームの状態が残っていても確実に無効化する
     drawQuad(canvasRect);
     m_program->setUniformValue("uSolidWhite", 0.0f);
 
@@ -487,6 +505,56 @@ void GLCanvas::paintGL() {
         drawQuad(canvasRect);
         m_underlayTexture->release();
 
+        glDisable(GL_BLEND);
+    }
+
+    // レイアウト用フレーム枠ガイド: 作画フレーム(100%)/TVセーフ(約90%)/タイトルセーフ(約80%)を
+    // 半透明の線で重ね表示する。全レイヤー・オニオン・下敷き等の最後(一番上)に描く。
+    // ビュー変換に乗せるため、線はキャンバス座標(画像座標)で定義する
+    if (m_frameGuidesEnabled) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        m_program->setUniformValue("uUseSolidColor", 1.0f);
+
+        constexpr qreal kLineThickness = 2.0;  // キャンバス座標での線の太さ(px相当)。ズームに依存しない
+
+        // scale(0〜1)で中央基準に縮小した矩形の外周を、太さkLineThicknessの4本の矩形で描く
+        const auto drawGuideFrame = [&](qreal scale, const QVector4D& color) {
+            const qreal w = m_canvasWidth * scale;
+            const qreal h = m_canvasHeight * scale;
+            const qreal x0 = (m_canvasWidth - w) * 0.5;
+            const qreal y0 = (m_canvasHeight - h) * 0.5;
+            m_program->setUniformValue("uSolidColor", color);
+            drawQuad(QRectF(x0, y0, w, kLineThickness));                              // 上辺
+            drawQuad(QRectF(x0, y0 + h - kLineThickness, w, kLineThickness));          // 下辺
+            drawQuad(QRectF(x0, y0, kLineThickness, h));                              // 左辺
+            drawQuad(QRectF(x0 + w - kLineThickness, y0, kLineThickness, h));          // 右辺
+        };
+
+        drawGuideFrame(1.0, kFrameGuideColor);       // 作画フレーム(100%)
+        drawGuideFrame(0.9, kTvSafeGuideColor);       // TVセーフ/アクションセーフ(約90%)
+        drawGuideFrame(0.8, kTitleSafeGuideColor);    // タイトルセーフ(約80%)
+
+        m_program->setUniformValue("uUseSolidColor", 0.0f);
+        glDisable(GL_BLEND);
+    }
+
+    // カメラフレーム(画面に写る範囲)枠オーバーレイ: シアンの太さ4pxの枠を最後(一番上)に描く。
+    // 矩形はキャンバス座標(画像座標)で指定される。空矩形なら非表示
+    if (!m_cameraFrameOverlay.isEmpty()) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        m_program->setUniformValue("uUseSolidColor", 1.0f);
+        m_program->setUniformValue("uSolidColor", kCameraFrameOverlayColor);
+
+        constexpr qreal kOverlayThickness = 4.0;  // キャンバス座標での線の太さ(px相当)
+        const QRectF r = m_cameraFrameOverlay;
+        drawQuad(QRectF(r.left(), r.top(), r.width(), kOverlayThickness));                        // 上辺
+        drawQuad(QRectF(r.left(), r.bottom() - kOverlayThickness, r.width(), kOverlayThickness));  // 下辺
+        drawQuad(QRectF(r.left(), r.top(), kOverlayThickness, r.height()));                        // 左辺
+        drawQuad(QRectF(r.right() - kOverlayThickness, r.top(), kOverlayThickness, r.height()));    // 右辺
+
+        m_program->setUniformValue("uUseSolidColor", 0.0f);
         glDisable(GL_BLEND);
     }
 
