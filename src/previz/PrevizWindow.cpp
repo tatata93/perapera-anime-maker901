@@ -55,8 +55,10 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     m_focalSpin->setFocusPolicy(Qt::ClickFocus);
     connect(m_focalSpin, &QDoubleSpinBox::valueChanged, this, [this](double value) {
         if (m_updating || !m_scene) return;
-        m_scene->camera.state.focalLengthMm = static_cast<float>(value);
+        // キー規則: キーがあれば現在コマのキーの焦点距離を編集する(ズームのカメラワークも打てる)
+        editableCamera().focalLengthMm = static_cast<float>(value);
         refreshCameraUi();
+        rebuildSheet();  // キーが新規作成される場合がある
         m_viewport->update();
         emit sceneEdited();
     });

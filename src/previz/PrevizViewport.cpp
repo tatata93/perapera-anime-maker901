@@ -501,6 +501,15 @@ void PrevizViewport::wheelEvent(QWheelEvent* event) {
     if (!m_scene) return;
     const int delta = event->angleDelta().y();
     if (usingCameraView()) {
+        // Ctrl+ホイール: ズーム(焦点距離を変える)。ホイール単体のドリー(移動)とは別物
+        if (event->modifiers() & Qt::ControlModifier) {
+            core::PrevizCameraState& cam = editableCameraState();
+            cam.focalLengthMm = std::clamp(cam.focalLengthMm + (delta > 0 ? 5.0f : -5.0f), 8.0f, 300.0f);
+            emit cameraEdited();
+            update();
+            event->accept();
+            return;
+        }
         // カメラ視点: 前後ドリー(本番カメラを編集)
         core::PrevizCameraState& cam = editableCameraState();
         QMatrix4x4 rot;
