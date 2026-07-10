@@ -382,6 +382,26 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --move-test <PNG1> <PNG2> で移動ツール(タップ/ペグ移動)のドラッグを検証する。
+    // 矩形枠を描いた状態を保存後、中央から(120,60)ドラッグして移動後の状態を保存する
+    // (PNG1→PNG2で矩形が右下へ移動しているはず)
+    const int moveIndex = args.indexOf("--move-test");
+    if (moveIndex >= 0 && moveIndex + 2 < args.size()) {
+        const QString out1 = args.at(moveIndex + 1);
+        const QString out2 = args.at(moveIndex + 2);
+        QTimer::singleShot(500, &window, [&window, out1, out2] {
+            window.debugSetupFillDemo();  // 閉じた矩形枠(黒)を描く
+            QTimer::singleShot(200, &window, [&window, out1, out2] {
+                window.canvas()->grabFramebuffer().save(out1);  // 移動前
+                window.canvas()->debugSimulateMoveDrag(QPointF(120, 60));
+                QTimer::singleShot(200, &window, [&window, out2] {
+                    window.canvas()->grabFramebuffer().save(out2);  // 移動後(右下へ移動)
+                    QApplication::exit(0);
+                });
+            });
+        });
+    }
+
     // 動作確認用: --perf-test <出力TXT> でストローク描画+再描画を繰り返し、描画時間(ms)を出力する
     const int perfIndex = args.indexOf("--perf-test");
     if (perfIndex >= 0 && perfIndex + 1 < args.size()) {

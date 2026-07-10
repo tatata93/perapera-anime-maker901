@@ -177,6 +177,7 @@ void GLCanvas::applySettingsFor(Tool tool) {
         settings.mode = core::BrushMode::Erase;
     }
     // Fill: ブラシ設定は使わない(performFillがペン色を直接参照する)
+    // Move: ブラシを使わない(ポインタ操作は位置キーの差分としてシグナルで伝える)
 }
 
 void GLCanvas::setPenRadius(float radius) {
@@ -483,6 +484,13 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
         performFill(widgetPos);
         return;
     }
+    if (m_tool == Tool::Move) {
+        // タップ/ペグ移動: オフセット補正なしの画像座標を開始点として記録する(ストロークは行わない)
+        m_moveStartImg = widgetToImage(widgetPos);
+        m_movingCel = true;
+        emit celMoveStarted();
+        return;
+    }
     // セルローカル座標へ(タップ移動中のセルにも正しい位置に描けるようオフセットを差し引く)
     const QPointF img = widgetToImage(widgetPos) - m_activeOffset;
     m_strokeActive = true;
@@ -495,6 +503,11 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
 }
 
 void GLCanvas::pointerMove(QPointF widgetPos, float pressure) {
+    if (m_movingCel) {
+        // 開始点からのトータル差分を渡す(累積誤差を避けるため、毎回開始点からの差分を計算する)
+        emit celMoveDelta(widgetToImage(widgetPos) - m_moveStartImg);
+        return;
+    }
     if (!m_bitmap || !m_strokeActive) return;
     QPointF img = widgetToImage(widgetPos) - m_activeOffset;
 
@@ -512,6 +525,11 @@ void GLCanvas::pointerMove(QPointF widgetPos, float pressure) {
 }
 
 void GLCanvas::pointerEnd() {
+    if (m_movingCel) {
+        m_movingCel = false;
+        emit celMoveFinished();
+        return;
+    }
     if (!m_strokeActive) return;
     m_strokeActive = false;
     m_brush.endStroke();
@@ -608,6 +626,16 @@ void GLCanvas::wheelEvent(QWheelEvent* event) {
 void GLCanvas::debugFillAt(QPointF widgetPos) {
     if (!m_bitmap) return;
     performFill(widgetPos);
+}
+
+void GLCanvas::debugSimulateMoveDrag(QPointF widgetDelta) {
+    const Tool previousTool = m_tool;
+    setTool(Tool::Move);
+    const QPointF center(width() * 0.5, height() * 0.5);
+    pointerBegin(center, 1.0f);
+    pointerMove(center + widgetDelta, 1.0f);
+    pointerEnd();
+    setTool(previousTool);
 }
 
 void GLCanvas::debugSimulateStroke() {

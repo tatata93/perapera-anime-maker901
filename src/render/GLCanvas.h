@@ -25,7 +25,7 @@ class GLCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 
 public:
-    enum class Tool { Pen, Eraser, Fill };
+    enum class Tool { Pen, Eraser, Fill, Move };
 
     explicit GLCanvas(QWidget* parent = nullptr);
     ~GLCanvas() override;
@@ -109,6 +109,9 @@ public:
     void debugSimulateStroke();
     // 指定ウィジェット座標を塗りつぶす(動作確認用フック)
     void debugFillAt(QPointF widgetPos);
+    // 移動ツールでウィジェット座標のドラッグ(widgetDelta分)を再現する(動作確認用フック)。
+    // 中央から開始し、元のツールへ戻して終了する
+    void debugSimulateMoveDrag(QPointF widgetDelta);
     // ビュー状態を直接設定する(動作確認用フック)
     void debugSetView(float zoom, qreal rotationDeg, QPointF panOffset) {
         m_zoom = zoom;
@@ -116,6 +119,12 @@ public:
         m_panOffset = panOffset;
         update();
     }
+
+signals:
+    // 移動ツール(タップ/ペグ移動)のドラッグ操作。MainWindowが位置キーへ反映する
+    void celMoveStarted();
+    void celMoveDelta(QPointF totalDeltaImage);  // ドラッグ開始点からの累積差分(画像座標px)
+    void celMoveFinished();
 
 protected:
     void initializeGL() override;
@@ -159,6 +168,10 @@ private:
     Tool m_tool = Tool::Pen;
     bool m_strokeActive = false;
     bool m_inputEnabled = true;
+
+    // 移動ツール(タップ/ペグ移動)のドラッグ状態
+    bool m_movingCel = false;
+    QPointF m_moveStartImg;  // ドラッグ開始点の画像座標(オフセット補正なし)
 
     // ペンツールの半径・色(ツールバーのUIから変更される)
     float m_penRadius = 6.0f;

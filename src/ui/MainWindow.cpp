@@ -37,6 +37,7 @@
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
 #include "ui/PalettePanel.h"
+#include "ui/TapPanel.h"
 #include "ui/XsheetPanel.h"
 
 namespace {
@@ -569,6 +570,46 @@ void MainWindow::setupPanels() {
         setCelVisibility(index, visible);
     });
 
+    m_tapPanel = new TapPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_tapPanel);
+    connect(m_tapPanel, &TapPanel::keySelected, this, [this](int frame) {
+        if (m_playing) return;
+        setCurrentFrame(static_cast<size_t>(frame));
+    });
+    connect(m_tapPanel, &TapPanel::addKeyRequested, this, [this] {
+        if (m_playing) return;
+        core::Cel& cel = activeCel();
+        cel.setPositionKey(m_currentFrame, cel.positionAt(m_currentFrame));  // 現在の補間位置でキーを打つ
+        m_dirty = true;
+        updateCanvasLayers();
+        updateWindowTitle();
+        updateTapPanel();
+    });
+    connect(m_tapPanel, &TapPanel::removeKeyRequested, this, [this](int frame) {
+        if (m_playing) return;
+        activeCel().removePositionKey(static_cast<size_t>(frame));
+        m_dirty = true;
+        updateCanvasLayers();
+        updateWindowTitle();
+        updateTapPanel();
+    });
+
+    // 移動ツール(タップ/ペグ移動): ドラッグ開始時のセル位置を保存し、差分を位置キーへ反映する
+    connect(m_canvas, &GLCanvas::celMoveStarted, this, [this] {
+        m_moveBase = QPointF(activeCel().positionAt(m_currentFrame).x, activeCel().positionAt(m_currentFrame).y);
+    });
+    connect(m_canvas, &GLCanvas::celMoveDelta, this, [this](QPointF delta) {
+        activeCel().setPositionKey(m_currentFrame,
+                                    core::Vec2{static_cast<float>(m_moveBase.x() + delta.x()),
+                                               static_cast<float>(m_moveBase.y() + delta.y())});
+        updateCanvasLayers();  // リアルタイム追従
+    });
+    connect(m_canvas, &GLCanvas::celMoveFinished, this, [this] {
+        m_dirty = true;
+        updateWindowTitle();
+        updateTapPanel();
+    });
+
     updateLayerPanel();
     updatePalettePanel();
     updateXsheetPanel();  // 末尾でupdateCelPanel()も呼ばれる
@@ -703,6 +744,7 @@ void MainWindow::updateXsheetPanel() {
                              static_cast<int>(m_currentFrame), static_cast<int>(m_activeCel));
 
     updateCelPanel();  // セルの構成・可視状態・アクティブセルはXsheetと同じ元データなのでここで一緒に更新する
+    updateTapPanel();  // 位置キーの一覧・現在コマの選択もアクティブセルに追従させる
 }
 
 // activeCut()の全セルからセル名・可視状態を集めてセルパネルに反映する
@@ -719,6 +761,19 @@ void MainWindow::updateCelPanel() {
     }
 
     m_celPanel->setCels(celNames, celVisible, static_cast<int>(m_activeCel));
+}
+
+// アクティブセルの位置キー一覧(コマ昇順)をタップパネルに反映する
+void MainWindow::updateTapPanel() {
+    if (!m_tapPanel) return;
+    const core::Cel& cel = activeCel();
+
+    QList<std::tuple<int, float, float>> keys;
+    for (const auto& [frame, position] : cel.positionKeys()) {
+        keys.append({static_cast<int>(frame), position.x, position.y});
+    }
+
+    m_tapPanel->setKeys(keys, static_cast<int>(m_currentFrame));
 }
 
 // 新しいセルを1枚追加する。名前は自動連番(1文字目のセルは新規文書時に"A"が既にあるので、
@@ -932,6 +987,7 @@ void MainWindow::setupMenus() {
     viewMenu->addAction(m_palettePanel->toggleViewAction());
     viewMenu->addAction(m_xsheetPanel->toggleViewAction());
     viewMenu->addAction(m_celPanel->toggleViewAction());
+    viewMenu->addAction(m_tapPanel->toggleViewAction());
     viewMenu->addSeparator();
     // 仕上げ表示: 色トレス線・作監修正レイヤーを隠して最終画を確認する(書き出しと同じ見え方)
     QAction* cleanViewAction = viewMenu->addAction(tr("仕上げ表示(トレス線/修正を隠す)(&C)"));
@@ -1114,6 +1170,12 @@ void MainWindow::setupToolBar() {
     fillAction->setShortcut(QKeySequence(Qt::Key_F));
     group->addAction(fillAction);
     connect(fillAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Fill); });
+
+    QAction* moveAction = toolBar->addAction(tr("移動"));
+    moveAction->setCheckable(true);
+    moveAction->setShortcut(QKeySequence(Qt::Key_V));
+    group->addAction(moveAction);
+    connect(moveAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Move); });
 
     toolBar->addSeparator();
 

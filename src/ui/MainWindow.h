@@ -2,6 +2,7 @@
 
 #include <QColor>
 #include <QMainWindow>
+#include <QPointF>
 #include <QStringList>
 #include <memory>
 
@@ -13,6 +14,7 @@ class FramePanel;
 class GLCanvas;
 class LayerPanel;
 class PalettePanel;
+class TapPanel;
 class XsheetPanel;
 class QCloseEvent;
 class QLabel;
@@ -144,6 +146,9 @@ private:
     // セルパネル操作(セルの可視/非表示をワンクリックで切り替える一覧)
     void updateCelPanel();
 
+    // タップパネル操作(アクティブセルの位置キー一覧)
+    void updateTapPanel();
+
     // セル(Xsheetの列)管理操作
     void addCel();
     void removeActiveCel();
@@ -194,8 +199,12 @@ private:
     PalettePanel* m_palettePanel = nullptr;
     XsheetPanel* m_xsheetPanel = nullptr;
     CelPanel* m_celPanel = nullptr;
+    TapPanel* m_tapPanel = nullptr;
     QString m_currentFilePath;
     bool m_dirty = false;  // 未保存の変更があるか
+
+    // 移動ツール(タップ/ペグ移動)のドラッグ状態: ドラッグ開始時点のアクティブセル位置(補間値)
+    QPointF m_moveBase;
 
     // 自動保存
     QTimer* m_autosaveTimer = nullptr;
