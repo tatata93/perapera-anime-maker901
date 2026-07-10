@@ -36,9 +36,18 @@ public:
         m_canvasHeight = height;
     }
 
+    // スタック1件 = ビットマップ+セルのタップ/ペグ移動オフセット(画像座標px)
+    struct StackEntry {
+        const core::Bitmap* bitmap = nullptr;
+        QPointF offset;
+    };
+
     // レイヤースタック(下→上の描画順)と編集対象を設定する(所有権は持たない)。
     // 紙(白)はキャンバス側が背景として描画し、各セルは透明ビットマップとして重なる。
-    // activeがnullptr(割付なしのコマ等)でも紙とスタックは描画される
+    // activeがnullptr(割付なしのコマ等)でも紙とスタックは描画される。
+    // activeOffsetは編集対象セルの現在コマ位置(入力座標の補正とオニオン等の位置合わせに使う)
+    void setLayerStack(std::vector<StackEntry> stack, core::Bitmap* active, QPointF activeOffset = {});
+    // 互換用(オフセットなしの単純スタック)
     void setLayerStack(std::vector<const core::Bitmap*> stack, core::Bitmap* active);
 
     // 塗りつぶしの境界レイヤー群。表示スタックとは独立に指定でき、
@@ -139,8 +148,9 @@ private:
     void queueUpload(core::Bitmap* bitmap, const core::DirtyRect& rect);
 
     core::Bitmap* m_bitmap = nullptr;                 // 編集対象(アクティブレイヤーのセル)
-    std::vector<const core::Bitmap*> m_layerStack;    // 表示レイヤー(下→上)
-    std::vector<const core::Bitmap*> m_fillBoundary;  // 塗りつぶし境界(空なら表示スタック)
+    QPointF m_activeOffset;                           // 編集対象セルの現在コマ位置(タップ移動)
+    std::vector<StackEntry> m_layerStack;             // 表示レイヤー(下→上、オフセット付き)
+    std::vector<const core::Bitmap*> m_fillBoundary;  // 塗りつぶし境界(セルローカル座標)
     const core::Bitmap* m_prevOnion = nullptr;
     const core::Bitmap* m_nextOnion = nullptr;
     std::vector<const core::Bitmap*> m_lightTable;  // ライトテーブル表示対象(任意の動画群)

@@ -78,10 +78,18 @@ GLCanvas::~GLCanvas() {
     doneCurrent();
 }
 
-void GLCanvas::setLayerStack(std::vector<const core::Bitmap*> stack, core::Bitmap* active) {
+void GLCanvas::setLayerStack(std::vector<StackEntry> stack, core::Bitmap* active, QPointF activeOffset) {
     m_layerStack = std::move(stack);
     m_bitmap = active;
+    m_activeOffset = activeOffset;
     update();
+}
+
+void GLCanvas::setLayerStack(std::vector<const core::Bitmap*> stack, core::Bitmap* active) {
+    std::vector<StackEntry> entries;
+    entries.reserve(stack.size());
+    for (const core::Bitmap* bitmap : stack) entries.push_back({bitmap, QPointF()});
+    setLayerStack(std::move(entries), active, QPointF());
 }
 
 void GLCanvas::setBitmap(core::Bitmap* bitmap) {
@@ -326,60 +334,64 @@ void GLCanvas::paintGL() {
         return;
     }
 
-    // 画像の四隅をビュー変換(ズーム/回転/パン込み)でウィジェット座標→NDCへ落とす
     const QTransform t = viewTransform();
     const qreal ww = width();
     const qreal wh = height();
-    const qreal iw = m_canvasWidth;
-    const qreal ih = m_canvasHeight;
-    const QPointF tl = t.map(QPointF(0, 0));
-    const QPointF tr = t.map(QPointF(iw, 0));
-    const QPointF bl = t.map(QPointF(0, ih));
-    const QPointF br = t.map(QPointF(iw, ih));
-
-    const auto toNdcX = [ww](qreal x) { return static_cast<float>(x / ww * 2.0 - 1.0); };
-    const auto toNdcY = [wh](qreal y) { return static_cast<float>(1.0 - y / wh * 2.0); };
-
-    // テクスチャの行0=画像上端なので、上端頂点にv=0を割り当てる
-    const float vertices[] = {
-        toNdcX(tl.x()), toNdcY(tl.y()), 0.0f, 0.0f,  //
-        toNdcX(tr.x()), toNdcY(tr.y()), 1.0f, 0.0f,  //
-        toNdcX(bl.x()), toNdcY(bl.y()), 0.0f, 1.0f,  //
-        toNdcX(br.x()), toNdcY(br.y()), 1.0f, 1.0f,  //
-    };
 
     m_program->bind();
     m_vbo.bind();
-    m_vbo.allocate(vertices, sizeof(vertices));
-
     m_program->enableAttributeArray(0);
     m_program->enableAttributeArray(1);
     m_program->setAttributeBuffer(0, GL_FLOAT, 0, 2, 4 * sizeof(float));
     m_program->setAttributeBuffer(1, GL_FLOAT, 2 * sizeof(float), 2, 4 * sizeof(float));
-
     glActiveTexture(GL_TEXTURE0);
     m_program->setUniformValue("uTex", 0);
+
+    // 画像座標の矩形をビュー変換(ズーム/回転/パン込み)でNDCへ落とし、クアッドを描く。
+    // テクスチャの行0=画像上端なので、上端頂点にv=0を割り当てる
+    const auto toNdcX = [ww](qreal x) { return static_cast<float>(x / ww * 2.0 - 1.0); };
+    const auto toNdcY = [wh](qreal y) { return static_cast<float>(1.0 - y / wh * 2.0); };
+    const auto drawQuad = [&](const QRectF& imageRect) {
+        const QPointF tl = t.map(imageRect.topLeft());
+        const QPointF tr = t.map(imageRect.topRight());
+        const QPointF bl = t.map(imageRect.bottomLeft());
+        const QPointF br = t.map(imageRect.bottomRight());
+        const float vertices[] = {
+            toNdcX(tl.x()), toNdcY(tl.y()), 0.0f, 0.0f,  //
+            toNdcX(tr.x()), toNdcY(tr.y()), 1.0f, 0.0f,  //
+            toNdcX(bl.x()), toNdcY(bl.y()), 0.0f, 1.0f,  //
+            toNdcX(br.x()), toNdcY(br.y()), 1.0f, 1.0f,  //
+        };
+        m_vbo.allocate(vertices, sizeof(vertices));
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    };
+    const QRectF canvasRect(0, 0, m_canvasWidth, m_canvasHeight);
+    // ビットマップ自身のサイズ+セルオフセットの矩形(引きセル=キャンバスより大きい紙にも対応)
+    const auto bitmapRect = [](const core::Bitmap* bitmap, QPointF offset) {
+        return QRectF(offset.x(), offset.y(), bitmap->width(), bitmap->height());
+    };
 
     // 1. 紙(白): キャンバス矩形を白で塗る
     m_program->setUniformValue("uSolidWhite", 1.0f);
     m_program->setUniformValue("uOnionStrength", 0.0f);
     m_program->setUniformValue("uUnderlayMix", 0.0f);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    drawQuad(canvasRect);
     m_program->setUniformValue("uSolidWhite", 0.0f);
 
-    // 2. レイヤースタックを下→上の順にアルファ合成(セルは透明ビットマップ)
+    // 2. レイヤースタックを下→上の順にアルファ合成(タップ/ペグ移動のオフセット付き)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    for (const core::Bitmap* layer : m_layerStack) {
-        QOpenGLTexture* tex = getOrCreateTexture(layer);
+    for (const StackEntry& entry : m_layerStack) {
+        QOpenGLTexture* tex = getOrCreateTexture(entry.bitmap);
         if (!tex) continue;
         tex->bind();
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        drawQuad(bitmapRect(entry.bitmap, entry.offset));
         tex->release();
     }
     glDisable(GL_BLEND);
 
-    // ライトテーブル(任意動画の透かし表示): オニオンと同じ乗算方式で、青系固定色に着色して重ねる
+    // ライトテーブル(任意動画の透かし表示): オニオンと同じ乗算方式で青系固定色。
+    // 編集対象セルの現在位置に合わせて表示する(タップ合わせ)
     if (!m_lightTable.empty()) {
         glEnable(GL_BLEND);
         glBlendFunc(GL_ZERO, GL_SRC_COLOR);
@@ -391,26 +403,26 @@ void GLCanvas::paintGL() {
             QOpenGLTexture* tex = getOrCreateTexture(bitmap);
             if (!tex) continue;
             tex->bind();
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            drawQuad(bitmapRect(bitmap, m_activeOffset));
             tex->release();
         }
 
         glDisable(GL_BLEND);
     }
 
-    // オニオンスキン(乗算ブレンドで白地を無視して色線のみ重ねる)
+    // オニオンスキン(乗算ブレンドで白地を無視して色線のみ重ねる)。位置はタップ合わせ
     if (m_prevOnion || m_nextOnion) {
         glEnable(GL_BLEND);
         glBlendFunc(GL_ZERO, GL_SRC_COLOR);
 
-        const auto drawOnion = [this](const core::Bitmap* bitmap, const QVector3D& tint) {
+        const auto drawOnion = [&](const core::Bitmap* bitmap, const QVector3D& tint) {
             QOpenGLTexture* tex = getOrCreateTexture(bitmap);
             if (!tex) return;
             m_program->setUniformValue("uTint", tint);
             m_program->setUniformValue("uOnionStrength", kOnionStrength);
             m_program->setUniformValue("uUnderlayMix", 0.0f);
             tex->bind();
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            drawQuad(bitmapRect(bitmap, m_activeOffset));
             tex->release();
         };
         if (m_prevOnion) drawOnion(m_prevOnion, kPrevTint);
@@ -420,8 +432,7 @@ void GLCanvas::paintGL() {
     }
 
     // 下敷き(参照画像/連番シーケンス): 白との混合を乗算ブレンドで重ね、透かして見せる。
-    // 現在フレームと同じ四角形(キャンバス全面)に引き伸ばして表示するため、
-    // 下敷き画像とキャンバスのアスペクト比が異なる場合は変形される(仕様として許容)
+    // キャンバス全面に引き伸ばして表示(アスペクト差は仕様として許容)
     if (m_underlayTexture) {
         glEnable(GL_BLEND);
         glBlendFunc(GL_ZERO, GL_SRC_COLOR);
@@ -429,7 +440,7 @@ void GLCanvas::paintGL() {
         m_program->setUniformValue("uOnionStrength", 0.0f);
         m_program->setUniformValue("uUnderlayMix", m_underlayOpacity);
         m_underlayTexture->bind();
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        drawQuad(canvasRect);
         m_underlayTexture->release();
 
         glDisable(GL_BLEND);
@@ -442,14 +453,17 @@ void GLCanvas::paintGL() {
 }
 
 void GLCanvas::performFill(QPointF widgetPos) {
-    const QPointF img = widgetToImage(widgetPos);
+    const QPointF img = widgetToImage(widgetPos) - m_activeOffset;
     core::Bitmap before;
     if (m_strokeCommandSink) before = *m_bitmap;  // Undo用
 
     const core::Bitmap::Pixel color{static_cast<uint8_t>(m_penColor.red()), static_cast<uint8_t>(m_penColor.green()),
                                     static_cast<uint8_t>(m_penColor.blue()), 255};
-    // 境界は専用リスト(非表示の色トレス線も含む)。未指定なら表示スタックを使う
-    const auto& boundary = m_fillBoundary.empty() ? m_layerStack : m_fillBoundary;
+    // 境界は専用リスト(非表示の色トレス線も含む)。未指定なら表示スタックのビットマップ群を使う
+    std::vector<const core::Bitmap*> boundary = m_fillBoundary;
+    if (boundary.empty()) {
+        for (const StackEntry& entry : m_layerStack) boundary.push_back(entry.bitmap);
+    }
     const auto dirty = core::floodFill(*m_bitmap, boundary, static_cast<int>(img.x()), static_cast<int>(img.y()), color);
     if (dirty.isEmpty()) return;
 
@@ -469,7 +483,8 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
         performFill(widgetPos);
         return;
     }
-    const QPointF img = widgetToImage(widgetPos);
+    // セルローカル座標へ(タップ移動中のセルにも正しい位置に描けるようオフセットを差し引く)
+    const QPointF img = widgetToImage(widgetPos) - m_activeOffset;
     m_strokeActive = true;
     m_smoothedImagePos = img;  // 手ブレ補正の起点
     if (m_strokeCommandSink) m_strokeSnapshot = *m_bitmap;  // Undo用に開始時点を保存
@@ -481,7 +496,7 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
 
 void GLCanvas::pointerMove(QPointF widgetPos, float pressure) {
     if (!m_bitmap || !m_strokeActive) return;
-    QPointF img = widgetToImage(widgetPos);
+    QPointF img = widgetToImage(widgetPos) - m_activeOffset;
 
     // 手ブレ補正: 生のペン位置へ指数移動平均で追従させ、線を滑らかにする
     if (m_stabilizer > 0) {

@@ -83,9 +83,15 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                                         {"role", layerRoleToString(layer.role())},
                                         {"frames", std::move(jFrames)}});
                 }
+                // 位置キー(タップ/ペグ移動): [コマ, x, y] の配列
+                json jPositionKeys = json::array();
+                for (const auto& [keyFrame, position] : cel.positionKeys()) {
+                    jPositionKeys.push_back({keyFrame, position.x, position.y});
+                }
                 jCels.push_back({{"name", cel.name()},
                                  {"visible", cel.visible()},
                                  {"exposure", cel.exposures()},
+                                 {"positionKeys", std::move(jPositionKeys)},
                                  {"layers", std::move(jLayers)}});
             }
             jCuts.push_back({{"name", cut.name()}, {"frameCount", cut.frameCount()}, {"cels", std::move(jCels)}});
@@ -226,6 +232,13 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                     for (const json& jLayer : jCel.at("layers")) {
                         Layer& layer = cel.addLayer(jLayer.at("name").get<std::string>());
                         if (!loadLayerFrames(layer, jLayer)) return nullptr;
+                    }
+                    // 位置キー(タップ/ペグ移動)
+                    if (jCel.contains("positionKeys")) {
+                        for (const json& jKey : jCel.at("positionKeys")) {
+                            cel.setPositionKey(jKey.at(0).get<size_t>(),
+                                               {jKey.at(1).get<float>(), jKey.at(2).get<float>()});
+                        }
                     }
                     // 露出表(欠落時は動画を1コマ打ちで並べた線形割付にする)
                     if (jCel.contains("exposure")) {

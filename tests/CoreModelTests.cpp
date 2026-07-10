@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "core/Compositor.h"
 #include "core/Project.h"
 
 TEST_CASE("Project owns Scene -> Cut -> Cel -> Layer -> Frame hierarchy", "[core]") {
@@ -156,6 +157,63 @@ TEST_CASE("Cel exposure sheet maps frames to drawings", "[core][sheet]") {
         cut.setFrameCount(2);
         REQUIRE(cel.exposures().size() == 2);
     }
+}
+
+TEST_CASE("Cel position keys interpolate linearly", "[core][tap]") {
+    core::Cel cel("A");
+
+    SECTION("no keys means origin") {
+        const auto p = cel.positionAt(5);
+        REQUIRE(p.x == 0.0f);
+        REQUIRE(p.y == 0.0f);
+    }
+
+    SECTION("interpolation between keys (等速の引き)") {
+        cel.setPositionKey(0, {0.0f, 0.0f});
+        cel.setPositionKey(10, {100.0f, -50.0f});
+
+        const auto mid = cel.positionAt(5);
+        REQUIRE(mid.x == 50.0f);
+        REQUIRE(mid.y == -25.0f);
+
+        // キーの外側は端の値を維持
+        REQUIRE(cel.positionAt(0).x == 0.0f);
+        REQUIRE(cel.positionAt(10).x == 100.0f);
+        REQUIRE(cel.positionAt(20).x == 100.0f);
+    }
+
+    SECTION("key removal") {
+        cel.setPositionKey(0, {0.0f, 0.0f});
+        cel.setPositionKey(10, {100.0f, 0.0f});
+        cel.removePositionKey(10);
+        REQUIRE(cel.positionAt(10).x == 0.0f);  // 残ったキーの値
+    }
+}
+
+TEST_CASE("renderCutFrame applies cel position offset", "[core][tap][compositor]") {
+    core::Cut cut("Cut 1");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L");
+    {
+        core::Bitmap bitmap(8, 8);
+        bitmap.fill({0, 0, 0, 0});
+        bitmap.setPixel(2, 2, {0, 0, 0, 255});
+        layer.addFrame().bitmap() = std::move(bitmap);
+    }
+    cut.setFrameCount(3);
+    cel.setExposure(0, 0);
+    cel.setExposure(1, 0);
+    cel.setExposure(2, 0);
+    cel.setPositionKey(0, {0.0f, 0.0f});
+    cel.setPositionKey(2, {4.0f, 2.0f});  // 2コマで(4,2)移動 → コマ2で(2,1)
+
+    const auto f0 = core::renderCutFrame(cut, 0, 8, 8);
+    const auto f1 = core::renderCutFrame(cut, 1, 8, 8);
+    const auto f2 = core::renderCutFrame(cut, 2, 8, 8);
+    REQUIRE(f0.pixel(2, 2).r == 0);
+    REQUIRE(f1.pixel(4, 3).r == 0);  // (2+2, 2+1)
+    REQUIRE(f1.pixel(2, 2).r == 255);
+    REQUIRE(f2.pixel(6, 4).r == 0);  // (2+4, 2+2)
 }
 
 TEST_CASE("Cut::moveCel reorders cels", "[core]") {

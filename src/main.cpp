@@ -358,6 +358,30 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --tap-test <PNG1> <PNG2> <PNG3> でタップ移動(位置キー補間)を検証する。
+    // 矩形(止め)がコマ1→3で右下へ等速移動する様子を3枚保存する
+    const int tapIndex = args.indexOf("--tap-test");
+    if (tapIndex >= 0 && tapIndex + 3 < args.size()) {
+        const QString out1 = args.at(tapIndex + 1);
+        const QString out2 = args.at(tapIndex + 2);
+        const QString out3 = args.at(tapIndex + 3);
+        QTimer::singleShot(500, &window, [&window, out1, out2, out3] {
+            window.debugSetupTapDemo();
+            QTimer::singleShot(150, &window, [&window, out1, out2, out3] {
+                window.canvas()->grabFramebuffer().save(out1);  // コマ1: 原点
+                window.debugSetCurrentFrame(1);
+                QTimer::singleShot(150, &window, [&window, out2, out3] {
+                    window.canvas()->grabFramebuffer().save(out2);  // コマ2: 中間(200,100)
+                    window.debugSetCurrentFrame(2);
+                    QTimer::singleShot(150, &window, [&window, out3] {
+                        window.canvas()->grabFramebuffer().save(out3);  // コマ3: (400,200)
+                        QApplication::exit(0);
+                    });
+                });
+            });
+        });
+    }
+
     // 動作確認用: --perf-test <出力TXT> でストローク描画+再描画を繰り返し、描画時間(ms)を出力する
     const int perfIndex = args.indexOf("--perf-test");
     if (perfIndex >= 0 && perfIndex + 1 < args.size()) {

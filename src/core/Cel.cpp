@@ -30,6 +30,22 @@ void Cel::applyStepPattern(int step, size_t frameCount) {
     }
 }
 
+Vec2 Cel::positionAt(size_t frame) const {
+    if (m_positionKeys.empty()) return {};
+
+    // frame以上の最初のキーを探す
+    const auto upper = m_positionKeys.lower_bound(frame);
+    if (upper == m_positionKeys.begin()) return upper->second;          // 最初のキーより前
+    if (upper == m_positionKeys.end()) return std::prev(upper)->second;  // 最後のキーより後
+    if (upper->first == frame) return upper->second;                     // キー上
+
+    // 前後のキーで線形補間(等速)
+    const auto lower = std::prev(upper);
+    const float t = static_cast<float>(frame - lower->first) / static_cast<float>(upper->first - lower->first);
+    return {lower->second.x + (upper->second.x - lower->second.x) * t,
+            lower->second.y + (upper->second.y - lower->second.y) * t};
+}
+
 void Cel::moveLayer(size_t from, size_t to) {
     if (from >= m_layers.size() || to >= m_layers.size() || from == to) return;
     std::unique_ptr<Layer> moved = std::move(m_layers[from]);

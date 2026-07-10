@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -7,6 +8,12 @@
 #include "Layer.h"
 
 namespace core {
+
+// 2Dベクトル(セルのタップ/ペグ移動量、px)
+struct Vec2 {
+    float x = 0.0f;
+    float y = 0.0f;
+};
 
 // カット内の1セル(Aセル/Bセル等、タイムシートの列に対応する作画単位)。
 // セルの中にレイヤー(主線/色トレス線/彩色等)を順序付き(下→上)で保持する。
@@ -47,10 +54,20 @@ public:
     // 動画が尽きたら残りは最後の動画を維持する(標準的な止め)
     void applyStepPattern(int step, size_t frameCount);
 
+    // --- 位置キー(タップ/ペグ移動) ---
+    // コマ→セルの移動量(px)。キー間は線形補間(等速)、キーの外側は端のキーの値を維持。
+    // キーが無ければ(0,0) = タップ位置そのまま
+
+    Vec2 positionAt(size_t frame) const;
+    void setPositionKey(size_t frame, Vec2 position) { m_positionKeys[frame] = position; }
+    void removePositionKey(size_t frame) { m_positionKeys.erase(frame); }
+    const std::map<size_t, Vec2>& positionKeys() const { return m_positionKeys; }
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Layer>> m_layers;
     std::vector<int> m_exposure;
+    std::map<size_t, Vec2> m_positionKeys;
     bool m_visible = true;
 };
 

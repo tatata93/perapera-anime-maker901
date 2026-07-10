@@ -120,7 +120,7 @@ core::Layer& MainWindow::activeLayer() {
 // 現在のコマ(シート位置)に露出表で割り付けられた動画を、セル×レイヤーの順で集めて渡す
 void MainWindow::updateCanvasLayers() {
     core::Cut& cut = activeCut();
-    std::vector<const core::Bitmap*> stack;
+    std::vector<GLCanvas::StackEntry> stack;
     std::vector<const core::Bitmap*> fillBoundary;
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
         core::Cel& cel = cut.cel(ci);
@@ -128,6 +128,11 @@ void MainWindow::updateCanvasLayers() {
         const int drawing = cel.exposure(m_currentFrame);
         if (drawing < 0) continue;  // このコマにセルなし
         const bool isActiveCel = (ci == m_activeCel);
+
+        // タップ/ペグ移動: このコマでのセル位置
+        const core::Vec2 position = cel.positionAt(m_currentFrame);
+        const QPointF offset(position.x, position.y);
+
         for (size_t li = 0; li < cel.layerCount(); ++li) {
             core::Layer& layer = cel.layer(li);
             if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
@@ -137,8 +142,8 @@ void MainWindow::updateCanvasLayers() {
             const bool hiddenByCleanView =
                 m_cleanView && (layer.role() == core::LayerRole::ColorTrace || layer.role() == core::LayerRole::Correction);
             if (layer.visible() && !hiddenByCleanView) {
-                stack.push_back(bitmap);
-                fillBoundary.push_back(bitmap);
+                stack.push_back({bitmap, offset});
+                fillBoundary.push_back(bitmap);  // 境界はセルローカル座標(同一セル内で整合)
             } else if (isActiveCel && layer.role() == core::LayerRole::ColorTrace) {
                 // 塗分け線: アクティブセルの色トレス線は非表示でも塗りつぶし境界として効かせる
                 fillBoundary.push_back(bitmap);
@@ -152,8 +157,9 @@ void MainWindow::updateCanvasLayers() {
     if (activeDrawing >= 0 && static_cast<size_t>(activeDrawing) < activeLayer().frameCount()) {
         editTarget = &activeLayer().frame(static_cast<size_t>(activeDrawing)).bitmap();
     }
+    const core::Vec2 activePos = activeCel().positionAt(m_currentFrame);
     m_canvas->setFillBoundaryLayers(std::move(fillBoundary));
-    m_canvas->setLayerStack(std::move(stack), editTarget);
+    m_canvas->setLayerStack(std::move(stack), editTarget, QPointF(activePos.x, activePos.y));
 }
 
 void MainWindow::createNewDocument() {
@@ -1261,6 +1267,18 @@ void MainWindow::debugSetupLayerDemo() {
     m_canvas->clearTextureCache();
     updateCanvasLayers();
     updateLayerPanel();
+}
+
+void MainWindow::debugSetupTapDemo() {
+    // 動画1(左上寄りの矩形枠)を尺3で止めにし、コマ1→3で右下へ移動するキーを打つ
+    debugSetupFillDemo();  // 矩形枠を描く
+    core::Cut& cut = activeCut();
+    core::Cel& cel = activeCel();
+    cut.setFrameCount(3);
+    for (size_t t = 0; t < 3; ++t) cel.setExposure(t, 0);  // 止め
+    cel.setPositionKey(0, {0.0f, 0.0f});
+    cel.setPositionKey(2, {400.0f, 200.0f});
+    setCurrentFrame(0);
 }
 
 void MainWindow::debugSetupFillDemo() {
