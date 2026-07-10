@@ -97,6 +97,9 @@ public:
     // 絵コンテウィンドウ確認用
     void debugOpenStoryboard() { openStoryboardWindow(); }
     StoryboardWindow* storyboardWindow() const { return m_storyboardWindow; }
+    // 絵コンテデモ確認用: パネル2枚(共にカット番号"1"、尺36/12)を追加し、
+    // パネル1のdrawingに赤い斜め線を描く
+    void debugSetupStoryboardDemo();
 
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
     // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる

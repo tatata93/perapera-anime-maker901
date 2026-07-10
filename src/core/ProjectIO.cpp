@@ -163,7 +163,34 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
             if (!cut.previz().isEmpty()) jCut["previz"] = previzToJson(cut.previz());
             jCuts.push_back(std::move(jCut));
         }
-        jScenes.push_back({{"name", scene.name()}, {"cuts", std::move(jCuts)}});
+        // 絵コンテ(パネル列)。絵はフレームと同じblob方式で圧縮する
+        json jStoryboard = json::array();
+        for (const StoryboardPanel& panel : scene.storyboard()) {
+            json jPanel;
+            jPanel["cutLabel"] = panel.cutLabel;
+            jPanel["action"] = panel.action;
+            jPanel["dialogue"] = panel.dialogue;
+            jPanel["duration"] = panel.durationFrames;
+            jPanel["width"] = panel.drawing.width();
+            jPanel["height"] = panel.drawing.height();
+            if (!panel.drawing.isEmpty()) {
+                uLongf compSize = compressBound(static_cast<uLong>(panel.drawing.byteSize()));
+                std::vector<unsigned char> compressed(compSize);
+                if (compress2(compressed.data(), &compSize, panel.drawing.data(),
+                              static_cast<uLong>(panel.drawing.byteSize()), Z_DEFAULT_COMPRESSION) != Z_OK) {
+                    setError(errorOut, "ピクセルデータの圧縮に失敗しました");
+                    return false;
+                }
+                jPanel["blobOffset"] = blobs.size();
+                jPanel["blobSize"] = static_cast<uint64_t>(compSize);
+                jPanel["rawSize"] = static_cast<uint64_t>(panel.drawing.byteSize());
+                blobs.insert(blobs.end(), compressed.begin(), compressed.begin() + compSize);
+            }
+            jStoryboard.push_back(std::move(jPanel));
+        }
+
+        jScenes.push_back(
+            {{"name", scene.name()}, {"storyboard", std::move(jStoryboard)}, {"cuts", std::move(jCuts)}});
     }
 
     json jProject = {{"name", project.name()}, {"scenes", std::move(jScenes)}};
@@ -291,6 +318,37 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
 
         for (const json& jScene : jProject.at("scenes")) {
             Scene& scene = project->addScene(jScene.at("name").get<std::string>());
+
+            // 絵コンテ(任意)
+            if (jScene.contains("storyboard")) {
+                for (const json& jPanel : jScene.at("storyboard")) {
+                    StoryboardPanel panel;
+                    panel.cutLabel = jPanel.value("cutLabel", std::string());
+                    panel.action = jPanel.value("action", std::string());
+                    panel.dialogue = jPanel.value("dialogue", std::string());
+                    panel.durationFrames = jPanel.value("duration", static_cast<size_t>(24));
+                    const int w = jPanel.value("width", 0);
+                    const int h = jPanel.value("height", 0);
+                    if (w > 0 && h > 0 && jPanel.contains("blobOffset")) {
+                        const uint64_t offset = jPanel.at("blobOffset").get<uint64_t>();
+                        const uint64_t blobSize = jPanel.at("blobSize").get<uint64_t>();
+                        const uint64_t rawSize = jPanel.at("rawSize").get<uint64_t>();
+                        Bitmap bitmap(w, h);
+                        if (rawSize != bitmap.byteSize() || offset + blobSize > blobTotal) {
+                            setError(errorOut, "ファイルが壊れています(ピクセルデータ不整合)");
+                            return nullptr;
+                        }
+                        uLongf destLen = static_cast<uLongf>(rawSize);
+                        if (uncompress(bitmap.data(), &destLen, blobBase + offset, static_cast<uLong>(blobSize)) != Z_OK ||
+                            destLen != rawSize) {
+                            setError(errorOut, "ファイルが壊れています(展開に失敗)");
+                            return nullptr;
+                        }
+                        panel.drawing = std::move(bitmap);
+                    }
+                    scene.storyboard().push_back(std::move(panel));
+                }
+            }
             for (const json& jCut : jScene.at("cuts")) {
                 Cut& cut = scene.addCut(jCut.at("name").get<std::string>());
                 for (const json& jCel : jCut.at("cels")) {

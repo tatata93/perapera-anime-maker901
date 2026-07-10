@@ -1688,14 +1688,58 @@ void MainWindow::openStoryboardWindow() {
             m_dirty = true;
             updateWindowTitle();
         });
-        connect(m_storyboardWindow, &StoryboardWindow::cutRenamed, this, &MainWindow::updateCutBar);
-        connect(m_storyboardWindow, &StoryboardWindow::cutActivated, this, &MainWindow::setActiveCut);
+        // 「パネルからカット作成」: 選択パネルと同じカット番号を持つ全パネルのduration合計を尺として
+        // 新規カットを作る(1カット複数コマの尺を合算する仕様)
+        connect(m_storyboardWindow, &StoryboardWindow::createCutRequested, this,
+                [this](const QString& cutLabel, int totalFrames) {
+                    core::Scene& scene = m_project->scene(0);
+                    core::Cut& cut = scene.addCut((QStringLiteral("カット ") + cutLabel).toStdString());
+                    initializeCut(cut);
+                    cut.setFrameCount(static_cast<size_t>(std::max(1, totalFrames)));
+                    m_dirty = true;
+                    updateWindowTitle();
+                    updateCutBar();
+                    setActiveCut(static_cast<int>(scene.cutCount() - 1));
+                });
     }
     m_storyboardWindow->setProject(m_project.get());
     m_storyboardWindow->refresh();
     m_storyboardWindow->show();
     m_storyboardWindow->raise();
     m_storyboardWindow->activateWindow();
+}
+
+void MainWindow::debugSetupStoryboardDemo() {
+    // 絵コンテウィンドウ確認用: パネル2枚(共にカット番号"1")を追加し、
+    // パネル1のdrawingに赤い斜め線を描く
+    if (!m_project || m_project->sceneCount() == 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    panels.clear();
+
+    constexpr int kPanelWidth = 960;
+    constexpr int kPanelHeight = 540;
+
+    core::StoryboardPanel panel1;
+    panel1.drawing = core::Bitmap(kPanelWidth, kPanelHeight);
+    panel1.drawing.fill({0, 0, 0, 0});
+    panel1.cutLabel = "1";
+    panel1.durationFrames = 36;
+
+    core::BrushEngine engine;
+    engine.settings().radius = 8.0f;
+    engine.settings().color = {220, 30, 30, 255};
+    engine.beginStroke(panel1.drawing, kPanelWidth * 0.2f, kPanelHeight * 0.2f, 1.0f);
+    engine.continueStroke(panel1.drawing, kPanelWidth * 0.8f, kPanelHeight * 0.8f, 1.0f);
+    engine.endStroke();
+
+    core::StoryboardPanel panel2;
+    panel2.drawing = core::Bitmap(kPanelWidth, kPanelHeight);
+    panel2.drawing.fill({0, 0, 0, 0});
+    panel2.cutLabel = "1";
+    panel2.durationFrames = 12;
+
+    panels.push_back(std::move(panel1));
+    panels.push_back(std::move(panel2));
 }
 
 void MainWindow::openExportDialog() {

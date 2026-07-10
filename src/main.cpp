@@ -468,13 +468,14 @@ int main(int argc, char* argv[]) {
         });
     }
 
-    // 動作確認用: --storyboard-test <出力PNG> でタイムシートデモ(尺6・2コマ打ちの絵入りカット)を組んでから
-    // 絵コンテウィンドウを開き、その全体(表+サムネイル)を保存して終了する
+    // 動作確認用: --storyboard-test <出力PNG> で絵コンテデモ(パネル2枚、カット番号1が2つ、
+    // 尺36/12、パネル1に赤い斜め線)を組んでから絵コンテウィンドウを開き、
+    // その全体(パネル表+描画エリア)を保存して終了する
     const int storyboardIndex = args.indexOf("--storyboard-test");
     if (storyboardIndex >= 0 && storyboardIndex + 1 < args.size()) {
         const QString outputPath = args.at(storyboardIndex + 1);
         QTimer::singleShot(500, &window, [&window, outputPath] {
-            window.debugSetupXsheetDemo();
+            window.debugSetupStoryboardDemo();
             window.debugOpenStoryboard();
             QTimer::singleShot(400, &window, [&window, outputPath] {
                 window.storyboardWindow()->grab().save(outputPath);

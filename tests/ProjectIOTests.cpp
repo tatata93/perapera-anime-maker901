@@ -114,6 +114,47 @@ TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
     std::filesystem::remove(path);
 }
 
+TEST_CASE("Storyboard panels round trip through ppam", "[core][io][storyboard]") {
+    core::Project project("P");
+    core::Scene& scene = project.addScene("S");
+    scene.addCut("C").addCel("A").addLayer("L").addFrame();
+
+    core::StoryboardPanel panel1;
+    panel1.cutLabel = "1";
+    panel1.action = "少年が走り出す";
+    panel1.dialogue = "行くぞ!";
+    panel1.durationFrames = 36;
+    panel1.drawing = core::Bitmap(16, 9);
+    panel1.drawing.fill({0, 0, 0, 0});
+    panel1.drawing.setPixel(3, 3, {200, 30, 30, 255});
+    scene.storyboard().push_back(std::move(panel1));
+
+    core::StoryboardPanel panel2;  // 同じカット番号の2コマ目(絵は未描画)
+    panel2.cutLabel = "1";
+    panel2.durationFrames = 12;
+    scene.storyboard().push_back(std::move(panel2));
+
+    const auto path = std::filesystem::temp_directory_path() / "ppam_storyboard_test.ppam";
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const auto& sb = loaded->scene(0).storyboard();
+    REQUIRE(sb.size() == 2);
+    REQUIRE(sb[0].cutLabel == "1");
+    REQUIRE(sb[0].action == "少年が走り出す");
+    REQUIRE(sb[0].dialogue == "行くぞ!");
+    REQUIRE(sb[0].durationFrames == 36);
+    REQUIRE(sb[0].drawing.width() == 16);
+    REQUIRE(sb[0].drawing.pixel(3, 3).r == 200);
+    REQUIRE(sb[1].cutLabel == "1");
+    REQUIRE(sb[1].durationFrames == 12);
+    REQUIRE(sb[1].drawing.isEmpty());
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("ProjectIO load reports errors for invalid files", "[core][io]") {
     std::string error;
 
