@@ -3,6 +3,7 @@
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QHBoxLayout>
 #include <QFileInfo>
 #include <QLabel>
 #include <QListWidget>
@@ -61,8 +62,109 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(addButton, &QPushButton::clicked, this, &PrevizWindow::addModel);
     connect(removeButton, &QPushButton::clicked, this, &PrevizWindow::removeSelectedModel);
+    connect(m_modelList, &QListWidget::currentRowChanged, this, [this](int) { refreshTransformUi(); });
+
+    // 選択モデルの配置編集
+    auto* transformLabel = new QLabel(tr("配置(選択モデル)"), container);
+    layout->addWidget(transformLabel);
+    const auto makeSpin = [container](double min, double max, double step) {
+        auto* spin = new QDoubleSpinBox(container);
+        spin->setRange(min, max);
+        spin->setSingleStep(step);
+        spin->setDecimals(2);
+        spin->setFocusPolicy(Qt::ClickFocus);
+        return spin;
+    };
+    m_posX = makeSpin(-1000, 1000, 0.1);
+    m_posY = makeSpin(-1000, 1000, 0.1);
+    m_posZ = makeSpin(-1000, 1000, 0.1);
+    m_rotY = makeSpin(-3600, 3600, 5.0);
+    m_scale = makeSpin(0.01, 100, 0.1);
+    const auto addRow = [container, layout](const QString& label, QWidget* w) {
+        auto* row = new QWidget(container);
+        auto* h = new QHBoxLayout(row);
+        h->setContentsMargins(4, 0, 4, 0);
+        h->addWidget(new QLabel(label, row));
+        h->addWidget(w, 1);
+        layout->addWidget(row);
+    };
+    addRow(tr("X"), m_posX);
+    addRow(tr("Y"), m_posY);
+    addRow(tr("Z"), m_posZ);
+    addRow(tr("回転Y°"), m_rotY);
+    addRow(tr("倍率"), m_scale);
+    for (QDoubleSpinBox* spin : {m_posX, m_posY, m_posZ, m_rotY, m_scale}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyTransformFromUi(); });
+    }
+
+    // モーションキー(カメラ/選択モデル): 現在コマにキーを打つ・消す
+    auto* cameraKeyButton = new QPushButton(tr("現在コマにカメラキー"), container);
+    layout->addWidget(cameraKeyButton);
+    connect(cameraKeyButton, &QPushButton::clicked, this, [this] {
+        if (!m_scene) return;
+        m_scene->camera.keys[m_viewport->frame()] = m_scene->camera.stateAt(m_viewport->frame());
+        emit sceneEdited();
+    });
+    auto* cameraKeyClearButton = new QPushButton(tr("カメラキー削除"), container);
+    layout->addWidget(cameraKeyClearButton);
+    connect(cameraKeyClearButton, &QPushButton::clicked, this, [this] {
+        if (!m_scene) return;
+        m_scene->camera.keys.erase(m_viewport->frame());
+        m_viewport->update();
+        emit sceneEdited();
+    });
+    auto* modelKeyButton = new QPushButton(tr("現在コマにモデルキー"), container);
+    layout->addWidget(modelKeyButton);
+    connect(modelKeyButton, &QPushButton::clicked, this, [this] {
+        core::PrevizModel* model = selectedModel();
+        if (!model) return;
+        model->transformKeys[m_viewport->frame()] = model->transformAt(m_viewport->frame());
+        emit sceneEdited();
+    });
 
     statusBar()->showMessage(tr("右ドラッグ=見回し / 中ドラッグ=移動 / ホイール=前後"));
+}
+
+core::PrevizModel* PrevizWindow::selectedModel() {
+    if (!m_scene) return nullptr;
+    const int row = m_modelList->currentRow();
+    if (row < 0 || row >= static_cast<int>(m_scene->models.size())) return nullptr;
+    return &m_scene->models[static_cast<size_t>(row)];
+}
+
+void PrevizWindow::refreshTransformUi() {
+    core::PrevizModel* model = selectedModel();
+    if (!model) return;
+    m_updating = true;
+    const core::PrevizTransform tf = model->transformAt(m_viewport->frame());
+    m_posX->setValue(tf.position.x);
+    m_posY->setValue(tf.position.y);
+    m_posZ->setValue(tf.position.z);
+    m_rotY->setValue(tf.rotationDeg.y);
+    m_scale->setValue(tf.scale.x);
+    m_updating = false;
+}
+
+void PrevizWindow::applyTransformFromUi() {
+    if (m_updating) return;
+    core::PrevizModel* model = selectedModel();
+    if (!model) return;
+
+    core::PrevizTransform tf = model->transformAt(m_viewport->frame());
+    tf.position = {static_cast<float>(m_posX->value()), static_cast<float>(m_posY->value()),
+                   static_cast<float>(m_posZ->value())};
+    tf.rotationDeg.y = static_cast<float>(m_rotY->value());
+    const float s = static_cast<float>(m_scale->value());
+    tf.scale = {s, s, s};
+
+    // キーが無ければ基本配置、キーがあれば現在コマのキーを編集(カメラと同じ規則)
+    if (model->transformKeys.empty()) {
+        model->transform = tf;
+    } else {
+        model->transformKeys[m_viewport->frame()] = tf;
+    }
+    m_viewport->update();
+    emit sceneEdited();
 }
 
 void PrevizWindow::setScene(core::PrevizScene* scene) {
@@ -75,6 +177,7 @@ void PrevizWindow::setScene(core::PrevizScene* scene) {
 void PrevizWindow::setFrame(size_t frame) {
     m_viewport->setFrame(frame);
     refreshCameraUi();
+    refreshTransformUi();  // モーションキーがあるとコマごとに配置が変わる
 }
 
 void PrevizWindow::addModel() {

@@ -435,5 +435,23 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --previz-underlay-test <出力PNG> でプリビズの絵(グリッド+キューブ)を
+    // 作画キャンバスの下敷きとして透かした状態を保存する(なぞり作画の検証)
+    const int pvuIndex = args.indexOf("--previz-underlay-test");
+    if (pvuIndex >= 0 && pvuIndex + 1 < args.size()) {
+        const QString outputPath = args.at(pvuIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugOpenPreviz();
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                window.debugSetPrevizUnderlay(true);
+                window.canvas()->debugSimulateStroke();  // 下敷きの上に手描き線
+                QTimer::singleShot(300, &window, [&window, outputPath] {
+                    window.canvas()->grabFramebuffer().save(outputPath);
+                    QApplication::exit(0);
+                });
+            });
+        });
+    }
+
     return app.exec();
 }

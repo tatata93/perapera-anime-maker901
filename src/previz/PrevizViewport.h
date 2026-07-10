@@ -58,6 +58,8 @@ private:
         bool loadFailed = false;
     };
 
+    core::PrevizCameraState& editableCameraState();
+
     // コンテキストがカレントな状態で呼ぶこと
     GpuMesh* getOrLoadMesh(const std::string& filePath);
     void drawPrimitive(const GpuPrimitive& prim, const QMatrix4x4& model, const QMatrix4x4& viewProj, bool unlit);

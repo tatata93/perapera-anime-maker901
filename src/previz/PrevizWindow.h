@@ -30,11 +30,20 @@ private:
     void removeSelectedModel();
     void refreshModelList();
     void refreshCameraUi();
+    void refreshTransformUi();
+    core::PrevizModel* selectedModel();
+    void applyTransformFromUi();
 
     core::PrevizScene* m_scene = nullptr;
     PrevizViewport* m_viewport = nullptr;
     QListWidget* m_modelList = nullptr;
     QDoubleSpinBox* m_focalSpin = nullptr;
     QLabel* m_fovLabel = nullptr;
+    // 選択モデルのトランスフォーム編集(位置XYZ/ヨー回転/等倍スケール)
+    QDoubleSpinBox* m_posX = nullptr;
+    QDoubleSpinBox* m_posY = nullptr;
+    QDoubleSpinBox* m_posZ = nullptr;
+    QDoubleSpinBox* m_rotY = nullptr;
+    QDoubleSpinBox* m_scale = nullptr;
     bool m_updating = false;
 };

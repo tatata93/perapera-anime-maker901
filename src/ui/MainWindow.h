@@ -88,6 +88,8 @@ public:
     void debugSetupTapDemo();
     // プリビズ確認用: プリビズウィンドウを開く
     void debugOpenPreviz() { openPrevizWindow(); }
+    // プリビズ下敷き確認用
+    void debugSetPrevizUnderlay(bool enabled) { setPrevizUnderlay(enabled); }
     PrevizWindow* previzWindow() const { return m_previzWindow; }
 
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
@@ -179,6 +181,7 @@ private:
 
     // プリビズ
     void openPrevizWindow();
+    void setPrevizUnderlay(bool enabled);
 
     // 書き出し
     void openExportDialog();
@@ -225,6 +228,9 @@ private:
     // 太さスライダーはツールごとに値を記憶する(ペン/塗りつぶしはペンの値を共有、消しゴムは専用)
     int m_penRadiusValue = 6;
     int m_eraserRadiusValue = 24;
+
+    // プリビズを下敷きにするか(有効時は連番下敷きより優先)
+    bool m_previzUnderlay = false;
 
     // 下敷き(参照画像/連番シーケンス): 選択フォルダ内の同拡張子ファイル一覧(名前順)
     QStringList m_underlaySequence;

@@ -31,6 +31,7 @@
 #include "core/Compositor.h"
 #include "core/ProjectIO.h"
 #include "core/StrokeCommand.h"
+#include "previz/PrevizViewport.h"
 #include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/CelPanel.h"
@@ -389,6 +390,13 @@ void MainWindow::clearUnderlaySequence() {
 }
 
 void MainWindow::updateUnderlay() {
+    // プリビズ下敷き: プリビズカメラの現在コマの絵をそのまま透かす(なぞり作画)
+    if (m_previzUnderlay && m_previzWindow) {
+        m_previzWindow->setFrame(m_currentFrame);
+        m_canvas->setUnderlayImage(m_previzWindow->viewport()->grabFramebuffer());
+        return;
+    }
+
     if (m_underlaySequence.isEmpty()) return;
 
     const int lastIndex = static_cast<int>(m_underlaySequence.size()) - 1;
@@ -987,6 +995,10 @@ void MainWindow::setupMenus() {
     QAction* previzAction = previzMenu->addAction(tr("プリビズウィンドウ(&W)"));
     previzAction->setShortcut(QKeySequence(Qt::Key_F5));
     connect(previzAction, &QAction::triggered, this, &MainWindow::openPrevizWindow);
+    QAction* previzUnderlayAction = previzMenu->addAction(tr("プリビズを下敷きにする(&U)"));
+    previzUnderlayAction->setCheckable(true);
+    previzUnderlayAction->setShortcut(QKeySequence(Qt::Key_F6));
+    connect(previzUnderlayAction, &QAction::toggled, this, [this](bool checked) { setPrevizUnderlay(checked); });
 
     // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
@@ -1524,12 +1536,25 @@ int MainWindow::debugRoleRoundTrip(const QString& ppamPath) {
     return 0;
 }
 
+void MainWindow::setPrevizUnderlay(bool enabled) {
+    m_previzUnderlay = enabled;
+    if (enabled) {
+        if (!m_previzWindow) openPrevizWindow();
+        updateUnderlay();
+    } else {
+        m_canvas->clearUnderlay();
+        m_underlayLoadedIndex = -1;  // 連番下敷きへ戻る場合に再ロードさせる
+        updateUnderlay();
+    }
+}
+
 void MainWindow::openPrevizWindow() {
     if (!m_previzWindow) {
         m_previzWindow = new PrevizWindow(this);  // QMainWindowなので独立ウィンドウになる
         connect(m_previzWindow, &PrevizWindow::sceneEdited, this, [this] {
             m_dirty = true;
             updateWindowTitle();
+            if (m_previzUnderlay) updateUnderlay();  // カメラ/配置の変更を下敷きへ即反映
         });
     }
     m_previzWindow->setScene(&activeCut().previz());

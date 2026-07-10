@@ -256,11 +256,20 @@ void PrevizViewport::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::MiddleButton) m_panningView = true;
 }
 
+// ナビ操作の書き込み先: キーが無ければ基本状態、キーがあれば現在コマのキー
+// (=コマを選んでカメラを動かすとそのコマのカメラワークになる)
+core::PrevizCameraState& PrevizViewport::editableCameraState() {
+    auto& camera = m_scene->camera;
+    if (camera.keys.empty()) return camera.state;
+    camera.keys[m_frame] = camera.stateAt(m_frame);  // 補間値を起点にキー化
+    return camera.keys[m_frame];
+}
+
 void PrevizViewport::mouseMoveEvent(QMouseEvent* event) {
     if (!m_scene || (!m_looking && !m_panningView)) return;
     const QPointF delta = event->position() - m_lastMousePos;
     m_lastMousePos = event->position();
-    core::PrevizCameraState& cam = m_scene->camera.state;
+    core::PrevizCameraState& cam = editableCameraState();
 
     if (m_looking) {
         // 見回し: ヨー/ピッチを回す
@@ -291,7 +300,7 @@ void PrevizViewport::mouseReleaseEvent(QMouseEvent* event) {
 
 void PrevizViewport::wheelEvent(QWheelEvent* event) {
     if (!m_scene) return;
-    core::PrevizCameraState& cam = m_scene->camera.state;
+    core::PrevizCameraState& cam = editableCameraState();
     // 前後ドリー: カメラの前方向へ移動
     QMatrix4x4 rot;
     rot.rotate(cam.rotationDeg.y, 0, 1, 0);
