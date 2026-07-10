@@ -20,7 +20,17 @@ add_executable(perapera-anime-maker901
     ui/ExportDialog.h
     render/GLCanvas.cpp
     render/GLCanvas.h
+    previz/GltfLoader.cpp
+    previz/GltfLoader.h
+    previz/PrevizViewport.cpp
+    previz/PrevizViewport.h
+    previz/PrevizWindow.cpp
+    previz/PrevizWindow.h
 )
+
+# tinygltf(ヘッダオンリー、MIT)
+find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h" REQUIRED)
+target_include_directories(perapera-anime-maker901 PRIVATE ${TINYGLTF_INCLUDE_DIRS})
 
 target_link_libraries(perapera-anime-maker901 PRIVATE
     perapera_core

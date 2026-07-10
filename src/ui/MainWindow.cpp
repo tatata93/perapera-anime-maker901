@@ -31,6 +31,7 @@
 #include "core/Compositor.h"
 #include "core/ProjectIO.h"
 #include "core/StrokeCommand.h"
+#include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/CelPanel.h"
 #include "ui/ExportDialog.h"
@@ -190,6 +191,7 @@ void MainWindow::setCurrentFrame(size_t index) {
     updateFrameLabel();
     updateUnderlay();
     updateXsheetPanel();  // 現在コマの行を追従させる
+    if (m_previzWindow) m_previzWindow->setFrame(m_currentFrame);  // プリビズもコマ連動
 }
 
 void MainWindow::addFrameAfterCurrent() {
@@ -980,6 +982,12 @@ void MainWindow::setupMenus() {
     redoAction->setShortcut(QKeySequence::Redo);
     connect(redoAction, &QAction::triggered, this, &MainWindow::redo);
 
+    // プリビズメニュー(別ウィンドウ)
+    QMenu* previzMenu = menuBar()->addMenu(tr("プリビズ(&P)"));
+    QAction* previzAction = previzMenu->addAction(tr("プリビズウィンドウ(&W)"));
+    previzAction->setShortcut(QKeySequence(Qt::Key_F5));
+    connect(previzAction, &QAction::triggered, this, &MainWindow::openPrevizWindow);
+
     // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
     viewMenu->addAction(m_framePanel->toggleViewAction());
@@ -1066,6 +1074,7 @@ void MainWindow::newDocument() {
     m_commands.clear();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
     createNewDocument();
     m_canvas->clearTextureCache();  // 旧プロジェクトのBitmapポインタ再利用に備えて破棄
+    if (m_previzWindow) m_previzWindow->setScene(&activeCut().previz());  // 旧シーンへのポインタを差し替え
     updateFrameLabel();
     updateLayerPanel();
     updatePalettePanel();
@@ -1108,6 +1117,7 @@ bool MainWindow::loadFromFile(const QString& path) {
     m_activeCel = 0;
     m_activeLayer = 0;
     m_canvas->clearTextureCache();
+    if (m_previzWindow) m_previzWindow->setScene(&activeCut().previz());  // 旧シーンへのポインタを差し替え
     setCurrentFrame(0);
     updateLayerPanel();
     updatePalettePanel();
@@ -1512,6 +1522,21 @@ int MainWindow::debugRoleRoundTrip(const QString& ppamPath) {
     if (loadedCel.layer(1).role() != core::LayerRole::ColorTrace) return 1;
     if (loadedCel.layer(2).role() != core::LayerRole::Correction) return 1;
     return 0;
+}
+
+void MainWindow::openPrevizWindow() {
+    if (!m_previzWindow) {
+        m_previzWindow = new PrevizWindow(this);  // QMainWindowなので独立ウィンドウになる
+        connect(m_previzWindow, &PrevizWindow::sceneEdited, this, [this] {
+            m_dirty = true;
+            updateWindowTitle();
+        });
+    }
+    m_previzWindow->setScene(&activeCut().previz());
+    m_previzWindow->setFrame(m_currentFrame);
+    m_previzWindow->show();
+    m_previzWindow->raise();
+    m_previzWindow->activateWindow();
 }
 
 void MainWindow::openExportDialog() {

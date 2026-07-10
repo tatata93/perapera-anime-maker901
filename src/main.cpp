@@ -3,6 +3,8 @@
 #include <QTimer>
 #include <algorithm>
 
+#include "previz/PrevizViewport.h"
+#include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/MainWindow.h"
 
@@ -416,6 +418,20 @@ int main(int argc, char* argv[]) {
                 file.write(QStringLiteral("paint_ms_ema=%1\n").arg(window.canvas()->paintMillis(), 0, 'f', 3).toUtf8());
             }
             QApplication::exit(0);
+        });
+    }
+
+    // 動作確認用: --previz-test <出力PNG> でプリビズウィンドウを開き、
+    // 3Dビューポート(グリッド+目安キューブ、物理カメラ)を保存して終了する
+    const int previzIndex = args.indexOf("--previz-test");
+    if (previzIndex >= 0 && previzIndex + 1 < args.size()) {
+        const QString outputPath = args.at(previzIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugOpenPreviz();
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                window.previzWindow()->viewport()->grabFramebuffer().save(outputPath);
+                QApplication::exit(0);
+            });
         });
     }
 

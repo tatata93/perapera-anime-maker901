@@ -14,6 +14,7 @@ class FramePanel;
 class GLCanvas;
 class LayerPanel;
 class PalettePanel;
+class PrevizWindow;
 class TapPanel;
 class XsheetPanel;
 class QCloseEvent;
@@ -85,6 +86,9 @@ public:
     int debugExportSequence(const QString& dir);
     // タップ移動確認用: 1枚の動画を尺3で止めにし、位置キー(コマ1=原点、コマ3=右下)を打つ
     void debugSetupTapDemo();
+    // プリビズ確認用: プリビズウィンドウを開く
+    void debugOpenPreviz() { openPrevizWindow(); }
+    PrevizWindow* previzWindow() const { return m_previzWindow; }
 
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
     // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる
@@ -173,6 +177,9 @@ private:
     QString autosavePath() const;
     bool performAutosave();
 
+    // プリビズ
+    void openPrevizWindow();
+
     // 書き出し
     void openExportDialog();
     bool exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts);
@@ -200,6 +207,7 @@ private:
     XsheetPanel* m_xsheetPanel = nullptr;
     CelPanel* m_celPanel = nullptr;
     TapPanel* m_tapPanel = nullptr;
+    PrevizWindow* m_previzWindow = nullptr;  // 別ウィンドウ(遅延生成)
     QString m_currentFilePath;
     bool m_dirty = false;  // 未保存の変更があるか
 
