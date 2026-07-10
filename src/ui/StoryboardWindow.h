@@ -44,19 +44,20 @@ private:
     void movePanel(int delta);
     void createCutFromPanel();
     void onStrokeFinished();
-    void onMemoStrokeFinished();
+    // 内容欄/セリフ欄キャンバスのストローク完了(サムネ更新はせず編集通知のみ)
+    void onOverlayStrokeFinished();
     void updateTotalDurationLabel();
     void updateThumbnail(int row);
-    // 選択中パネルのdrawing/memoDrawingへ描画エリアを再設定する(vectorの再配置でポインタが
-    // 無効になるため、パネル追加/削除/並べ替えの後は必ず呼ぶこと)
+    // 選択中パネルのdrawing/actionDrawing/dialogueDrawingへ描画エリアを再設定する(vectorの再配置で
+    // ポインタが無効になるため、パネル追加/削除/並べ替えの後は必ず呼ぶこと)
     void bindCanvasToSelectedPanel();
-    // 太さスライダーの値を選択中ツール(ペン/消しゴム)の半径へ反映する(両キャンバスへ同時適用)
+    // 太さスライダーの値を選択中ツール(ペン/消しゴム)の半径へ反映する(3キャンバスへ同時適用)
     void onRadiusSliderChanged(int value);
-    // 色選択ダイアログを開き、選択色を両キャンバスのペン色へ反映する
+    // 色選択ダイアログを開き、選択色を3キャンバスのペン色へ反映する
     void chooseColor();
-    // 現在の太さ/色設定を両キャンバスへ適用する
+    // 現在の太さ/色設定を3キャンバスへ適用する
     void applyToolSettingsToCanvases();
-    // 内容/セリフ欄(複数行テキスト)を選択パネルへ反映する
+    // 内容/セリフ欄(複数行テキスト)を選択パネルへ反映し、対応キャンバスのテキスト下敷きを更新する
     void onActionTextChanged();
     void onDialogueTextChanged();
     int selectedPanelIndex() const;
@@ -64,7 +65,8 @@ private:
     core::Project* m_project = nullptr;
     QTableWidget* m_table = nullptr;
     GLCanvas* m_canvas = nullptr;
-    GLCanvas* m_memoCanvas = nullptr;  // 手書きメモ用キャンバス(内容欄の手書き版)
+    GLCanvas* m_actionCanvas = nullptr;    // 内容欄キャンバス(テキストの上に手書き)
+    GLCanvas* m_dialogueCanvas = nullptr;  // セリフ欄キャンバス(テキストの上に手書き)
     QLabel* m_totalLabel = nullptr;
     QPushButton* m_penButton = nullptr;
     QPushButton* m_eraserButton = nullptr;

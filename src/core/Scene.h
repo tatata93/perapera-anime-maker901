@@ -13,7 +13,8 @@ namespace core {
 // 同じカット番号を複数パネルに書けば「1カット複数コマ」のコンテになる
 struct StoryboardPanel {
     Bitmap drawing;              // 手描きのコンテ絵(空=未描画)
-    Bitmap memoDrawing;          // 手書きメモ(内容欄の手書き版。空=未記入)
+    Bitmap actionDrawing;        // 内容欄への手書き(テキストに重ね書き。空=未記入)
+    Bitmap dialogueDrawing;      // セリフ欄への手書き(同上)
     std::string cutLabel;        // カット番号/名(自由記入)
     std::string action;          // 内容(アクション)
     std::string dialogue;        // セリフ

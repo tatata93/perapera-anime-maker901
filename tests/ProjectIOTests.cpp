@@ -127,9 +127,12 @@ TEST_CASE("Storyboard panels round trip through ppam", "[core][io][storyboard]")
     panel1.drawing = core::Bitmap(16, 9);
     panel1.drawing.fill({0, 0, 0, 0});
     panel1.drawing.setPixel(3, 3, {200, 30, 30, 255});
-    panel1.memoDrawing = core::Bitmap(16, 9);
-    panel1.memoDrawing.fill({0, 0, 0, 0});
-    panel1.memoDrawing.setPixel(5, 2, {10, 20, 30, 255});
+    panel1.actionDrawing = core::Bitmap(16, 9);
+    panel1.actionDrawing.fill({0, 0, 0, 0});
+    panel1.actionDrawing.setPixel(5, 2, {10, 20, 30, 255});
+    panel1.dialogueDrawing = core::Bitmap(16, 9);
+    panel1.dialogueDrawing.fill({0, 0, 0, 0});
+    panel1.dialogueDrawing.setPixel(6, 4, {40, 50, 60, 255});
     scene.storyboard().push_back(std::move(panel1));
 
     core::StoryboardPanel panel2;  // 同じカット番号の2コマ目(絵は未描画)
@@ -151,14 +154,19 @@ TEST_CASE("Storyboard panels round trip through ppam", "[core][io][storyboard]")
     REQUIRE(sb[0].durationFrames == 36);
     REQUIRE(sb[0].drawing.width() == 16);
     REQUIRE(sb[0].drawing.pixel(3, 3).r == 200);
-    REQUIRE(sb[0].memoDrawing.width() == 16);
-    REQUIRE(sb[0].memoDrawing.pixel(5, 2).r == 10);
-    REQUIRE(sb[0].memoDrawing.pixel(5, 2).g == 20);
-    REQUIRE(sb[0].memoDrawing.pixel(5, 2).b == 30);
+    REQUIRE(sb[0].actionDrawing.width() == 16);
+    REQUIRE(sb[0].actionDrawing.pixel(5, 2).r == 10);
+    REQUIRE(sb[0].actionDrawing.pixel(5, 2).g == 20);
+    REQUIRE(sb[0].actionDrawing.pixel(5, 2).b == 30);
+    REQUIRE(sb[0].dialogueDrawing.width() == 16);
+    REQUIRE(sb[0].dialogueDrawing.pixel(6, 4).r == 40);
+    REQUIRE(sb[0].dialogueDrawing.pixel(6, 4).g == 50);
+    REQUIRE(sb[0].dialogueDrawing.pixel(6, 4).b == 60);
     REQUIRE(sb[1].cutLabel == "1");
     REQUIRE(sb[1].durationFrames == 12);
     REQUIRE(sb[1].drawing.isEmpty());
-    REQUIRE(sb[1].memoDrawing.isEmpty());
+    REQUIRE(sb[1].actionDrawing.isEmpty());
+    REQUIRE(sb[1].dialogueDrawing.isEmpty());
 
     std::filesystem::remove(path);
 }

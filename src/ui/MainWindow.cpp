@@ -1711,7 +1711,7 @@ void MainWindow::openStoryboardWindow() {
 
 void MainWindow::debugSetupStoryboardDemo() {
     // 絵コンテウィンドウ確認用: パネル2枚(共にカット番号"1")を追加し、
-    // パネル1のdrawingに赤い斜め線、memoDrawingにも線を1本描く。
+    // パネル1のdrawingに赤い斜め線、actionDrawing/dialogueDrawingにもそれぞれ線を1本描く。
     // 内容欄は複数行入力の確認用に改行入りにする
     if (!m_project || m_project->sceneCount() == 0) return;
     auto& panels = m_project->scene(0).storyboard();
@@ -1719,14 +1719,15 @@ void MainWindow::debugSetupStoryboardDemo() {
 
     constexpr int kPanelWidth = 960;
     constexpr int kPanelHeight = 540;
-    constexpr int kMemoWidth = 960;
-    constexpr int kMemoHeight = 270;
+    constexpr int kMemoWidth = 400;
+    constexpr int kMemoHeight = 540;
 
     core::StoryboardPanel panel1;
     panel1.drawing = core::Bitmap(kPanelWidth, kPanelHeight);
     panel1.drawing.fill({0, 0, 0, 0});
     panel1.cutLabel = "1";
     panel1.action = "少年が走り出す\n(振り向きながら)";
+    panel1.dialogue = "行くぞ!";
     panel1.durationFrames = 36;
 
     core::BrushEngine engine;
@@ -1736,10 +1737,16 @@ void MainWindow::debugSetupStoryboardDemo() {
     engine.continueStroke(panel1.drawing, kPanelWidth * 0.8f, kPanelHeight * 0.8f, 1.0f);
     engine.endStroke();
 
-    panel1.memoDrawing = core::Bitmap(kMemoWidth, kMemoHeight);
-    panel1.memoDrawing.fill({0, 0, 0, 0});
-    engine.beginStroke(panel1.memoDrawing, kMemoWidth * 0.2f, kMemoHeight * 0.2f, 1.0f);
-    engine.continueStroke(panel1.memoDrawing, kMemoWidth * 0.8f, kMemoHeight * 0.8f, 1.0f);
+    panel1.actionDrawing = core::Bitmap(kMemoWidth, kMemoHeight);
+    panel1.actionDrawing.fill({0, 0, 0, 0});
+    engine.beginStroke(panel1.actionDrawing, kMemoWidth * 0.2f, kMemoHeight * 0.2f, 1.0f);
+    engine.continueStroke(panel1.actionDrawing, kMemoWidth * 0.8f, kMemoHeight * 0.8f, 1.0f);
+    engine.endStroke();
+
+    panel1.dialogueDrawing = core::Bitmap(kMemoWidth, kMemoHeight);
+    panel1.dialogueDrawing.fill({0, 0, 0, 0});
+    engine.beginStroke(panel1.dialogueDrawing, kMemoWidth * 0.2f, kMemoHeight * 0.3f, 1.0f);
+    engine.continueStroke(panel1.dialogueDrawing, kMemoWidth * 0.8f, kMemoHeight * 0.3f, 1.0f);
     engine.endStroke();
 
     core::StoryboardPanel panel2;

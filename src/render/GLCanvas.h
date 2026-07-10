@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QImage>
 #include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
@@ -14,7 +15,6 @@
 #include "core/BrushEngine.h"
 #include "core/Command.h"
 
-class QImage;
 class QOpenGLShaderProgram;
 class QOpenGLTexture;
 
@@ -71,7 +71,9 @@ public:
     double paintMillis() const { return m_paintMsEma; }
 
     // 下敷き(参照画像/連番シーケンス)。現在フレームに薄く透かして重ね表示する。
-    // セッション限定の参照であり、.ppamプロジェクトファイルには保存されない
+    // セッション限定の参照であり、.ppamプロジェクトファイルには保存されない。
+    // 実際のテクスチャ生成/アップロードは次回paintGL冒頭まで遅延される(makeCurrent()を描画ループ外
+    // から呼ぶと、GLコンテキストを共有する兄弟GLCanvas同士で連続アップロードした際に破損するため)
     void setUnderlayImage(const QImage& image);
     void clearUnderlay();
     void setUnderlayOpacity(float opacity01);
@@ -213,4 +215,8 @@ private:
     // 下敷き(参照画像/連番シーケンス)用のテクスチャ。存在すれば現在フレームに薄く重ねる
     std::unique_ptr<QOpenGLTexture> m_underlayTexture;
     float m_underlayOpacity = 0.5f;
+    // 下敷き画像の反映待ち状態(実アップロードはpaintGL冒頭で1回だけ行う)
+    QImage m_pendingUnderlayImage;    // 反映待ちの画像(nullなら変更なし)
+    bool m_underlayImageDirty = false;
+    bool m_underlayClearRequested = false;  // trueならpaintGL冒頭でテクスチャを破棄する
 };

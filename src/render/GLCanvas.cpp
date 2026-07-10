@@ -127,28 +127,24 @@ void GLCanvas::setUnderlayImage(const QImage& image) {
         return;
     }
 
-    // RGBA8888に統一してから、getOrCreateTextureと同じ手順で手動アップロードする。
+    // RGBA8888に統一して保持し、実際のテクスチャ生成/アップロードは次回paintGL冒頭まで遅延する。
+    // ここでmakeCurrent()して即時アップロードすると、GLコンテキストを共有する兄弟GLCanvas
+    // (内容欄/セリフ欄など)へ連続して呼んだ際に描画ループ外でのコンテキスト切り替えが競合し、
+    // 後から呼んだ側のテクスチャが壊れる(黒くなる)ことがあるため、paintGL内(getOrCreateTexture
+    // と同様に描画ループの中)でのみGL呼び出しを行うようにする。
     // QOpenGLTexture(QImage)コンストラクタは内部で上下反転してしまい、
     // 本プロジェクトのUV規約(行0=画像上端, v=0=上端)と食い違うため使用しない
-    const QImage converted = image.convertToFormat(QImage::Format_RGBA8888);
-
-    makeCurrent();
-    m_underlayTexture = std::make_unique<QOpenGLTexture>(QOpenGLTexture::Target2D);
-    m_underlayTexture->setFormat(QOpenGLTexture::RGBA8_UNorm);
-    m_underlayTexture->setSize(converted.width(), converted.height());
-    m_underlayTexture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
-    m_underlayTexture->setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
-    m_underlayTexture->setWrapMode(QOpenGLTexture::ClampToEdge);
-    m_underlayTexture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, converted.constBits());
-    doneCurrent();
+    m_pendingUnderlayImage = image.convertToFormat(QImage::Format_RGBA8888);
+    m_underlayImageDirty = true;
+    m_underlayClearRequested = false;
     update();
 }
 
 void GLCanvas::clearUnderlay() {
-    if (!m_underlayTexture) return;
-    makeCurrent();
-    m_underlayTexture.reset();
-    doneCurrent();
+    if (!m_underlayTexture && !m_underlayImageDirty) return;
+    m_pendingUnderlayImage = QImage();
+    m_underlayImageDirty = true;
+    m_underlayClearRequested = true;
     update();
 }
 
@@ -319,6 +315,24 @@ void GLCanvas::paintGL() {
     const auto paintStart = std::chrono::steady_clock::now();
 
     flushPendingUpload();  // 溜めた部分転送をフレームごとに1回だけ実行(60fps対策)
+
+    // 下敷き画像の反映待ちがあれば、ここ(paintGL内=コンテキストが確実にカレント)でテクスチャへ反映する
+    if (m_underlayImageDirty) {
+        if (m_underlayClearRequested || m_pendingUnderlayImage.isNull()) {
+            m_underlayTexture.reset();
+        } else {
+            m_underlayTexture = std::make_unique<QOpenGLTexture>(QOpenGLTexture::Target2D);
+            m_underlayTexture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+            m_underlayTexture->setSize(m_pendingUnderlayImage.width(), m_pendingUnderlayImage.height());
+            m_underlayTexture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
+            m_underlayTexture->setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
+            m_underlayTexture->setWrapMode(QOpenGLTexture::ClampToEdge);
+            m_underlayTexture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, m_pendingUnderlayImage.constBits());
+        }
+        m_underlayImageDirty = false;
+        m_underlayClearRequested = false;
+        m_pendingUnderlayImage = QImage();
+    }
 
     glDisable(GL_BLEND);  // Qt側がブレンド有効のまま呼ぶことがあるため明示的に無効化
     glClear(GL_COLOR_BUFFER_BIT);
