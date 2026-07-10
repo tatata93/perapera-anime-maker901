@@ -186,6 +186,24 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                 jPanel["rawSize"] = static_cast<uint64_t>(panel.drawing.byteSize());
                 blobs.insert(blobs.end(), compressed.begin(), compressed.begin() + compSize);
             }
+            // 手書きメモ(内容欄の手書き版)。drawingと全く同じblob圧縮方式で保存する
+            if (!panel.memoDrawing.isEmpty()) {
+                json jMemo;
+                jMemo["width"] = panel.memoDrawing.width();
+                jMemo["height"] = panel.memoDrawing.height();
+                uLongf compSize = compressBound(static_cast<uLong>(panel.memoDrawing.byteSize()));
+                std::vector<unsigned char> compressed(compSize);
+                if (compress2(compressed.data(), &compSize, panel.memoDrawing.data(),
+                              static_cast<uLong>(panel.memoDrawing.byteSize()), Z_DEFAULT_COMPRESSION) != Z_OK) {
+                    setError(errorOut, "ピクセルデータの圧縮に失敗しました");
+                    return false;
+                }
+                jMemo["blobOffset"] = blobs.size();
+                jMemo["blobSize"] = static_cast<uint64_t>(compSize);
+                jMemo["rawSize"] = static_cast<uint64_t>(panel.memoDrawing.byteSize());
+                blobs.insert(blobs.end(), compressed.begin(), compressed.begin() + compSize);
+                jPanel["memoDrawing"] = std::move(jMemo);
+            }
             jStoryboard.push_back(std::move(jPanel));
         }
 
@@ -345,6 +363,30 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                             return nullptr;
                         }
                         panel.drawing = std::move(bitmap);
+                    }
+                    // 手書きメモ(任意)。drawingと同じblob展開方式で読み込む
+                    if (jPanel.contains("memoDrawing")) {
+                        const json& jMemo = jPanel.at("memoDrawing");
+                        const int mw = jMemo.value("width", 0);
+                        const int mh = jMemo.value("height", 0);
+                        if (mw > 0 && mh > 0 && jMemo.contains("blobOffset")) {
+                            const uint64_t offset = jMemo.at("blobOffset").get<uint64_t>();
+                            const uint64_t blobSize = jMemo.at("blobSize").get<uint64_t>();
+                            const uint64_t rawSize = jMemo.at("rawSize").get<uint64_t>();
+                            Bitmap memoBitmap(mw, mh);
+                            if (rawSize != memoBitmap.byteSize() || offset + blobSize > blobTotal) {
+                                setError(errorOut, "ファイルが壊れています(ピクセルデータ不整合)");
+                                return nullptr;
+                            }
+                            uLongf destLen = static_cast<uLongf>(rawSize);
+                            if (uncompress(memoBitmap.data(), &destLen, blobBase + offset,
+                                           static_cast<uLong>(blobSize)) != Z_OK ||
+                                destLen != rawSize) {
+                                setError(errorOut, "ファイルが壊れています(展開に失敗)");
+                                return nullptr;
+                            }
+                            panel.memoDrawing = std::move(memoBitmap);
+                        }
                     }
                     scene.storyboard().push_back(std::move(panel));
                 }

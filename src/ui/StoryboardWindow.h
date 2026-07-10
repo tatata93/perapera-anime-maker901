@@ -1,11 +1,14 @@
 #pragma once
 
+#include <QColor>
 #include <QMainWindow>
 
 class QTableWidgetItem;
 class QTableWidget;
 class QLabel;
 class QPushButton;
+class QSlider;
+class QPlainTextEdit;
 class GLCanvas;
 
 namespace core {
@@ -41,19 +44,40 @@ private:
     void movePanel(int delta);
     void createCutFromPanel();
     void onStrokeFinished();
+    void onMemoStrokeFinished();
     void updateTotalDurationLabel();
     void updateThumbnail(int row);
-    // 選択中パネルのdrawingへ描画エリアを再設定する(vectorの再配置でポインタが
+    // 選択中パネルのdrawing/memoDrawingへ描画エリアを再設定する(vectorの再配置でポインタが
     // 無効になるため、パネル追加/削除/並べ替えの後は必ず呼ぶこと)
     void bindCanvasToSelectedPanel();
+    // 太さスライダーの値を選択中ツール(ペン/消しゴム)の半径へ反映する(両キャンバスへ同時適用)
+    void onRadiusSliderChanged(int value);
+    // 色選択ダイアログを開き、選択色を両キャンバスのペン色へ反映する
+    void chooseColor();
+    // 現在の太さ/色設定を両キャンバスへ適用する
+    void applyToolSettingsToCanvases();
+    // 内容/セリフ欄(複数行テキスト)を選択パネルへ反映する
+    void onActionTextChanged();
+    void onDialogueTextChanged();
     int selectedPanelIndex() const;
 
     core::Project* m_project = nullptr;
     QTableWidget* m_table = nullptr;
     GLCanvas* m_canvas = nullptr;
+    GLCanvas* m_memoCanvas = nullptr;  // 手書きメモ用キャンバス(内容欄の手書き版)
     QLabel* m_totalLabel = nullptr;
     QPushButton* m_penButton = nullptr;
     QPushButton* m_eraserButton = nullptr;
+    QSlider* m_radiusSlider = nullptr;
+    QLabel* m_radiusValueLabel = nullptr;
+    QPushButton* m_colorButton = nullptr;
+    QPlainTextEdit* m_actionEdit = nullptr;
+    QPlainTextEdit* m_dialogueEdit = nullptr;
     bool m_updating = false;
     int m_selectedRow = -1;  // 現在選択中のパネル行(パネルが1枚もなければ-1)
+
+    // ペン/消しゴムそれぞれの太さ・色設定(トグル切替時にスライダー表示を切り替えるため記憶する)
+    float m_penRadius = 6.0f;
+    float m_eraserRadius = 24.0f;
+    QColor m_penColor = Qt::black;
 };

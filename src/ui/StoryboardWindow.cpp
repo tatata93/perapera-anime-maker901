@@ -2,13 +2,16 @@
 
 #include <QAbstractItemView>
 #include <QAction>
+#include <QColorDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QImage>
 #include <QLabel>
 #include <QPainter>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSlider>
 #include <QTableWidget>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -21,11 +24,18 @@ namespace {
 // 絵コンテのパネルは全カット共通で960x540の紙に描く(実際の作画キャンバスとは独立)
 constexpr int kPanelWidth = 960;
 constexpr int kPanelHeight = 540;
+// 手書きメモの紙サイズ(内容欄の手書き版。メインの絵コンテ紙より小さい)
+constexpr int kMemoWidth = 960;
+constexpr int kMemoHeight = 270;
 // サムネイル解像度(表示は列幅に合わせて縮小する)
 constexpr int kThumbWidth = 96;
 constexpr int kThumbHeight = 54;
 constexpr int kRowHeight = 70;
 constexpr double kFps = 24.0;  // タイムシートは24fps基準
+
+// 太さスライダーの範囲(ペン/消しゴム共通)
+constexpr int kRadiusMin = 1;
+constexpr int kRadiusMax = 40;
 
 enum Column {
     kColNo = 0,
@@ -112,13 +122,52 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_penButton->setChecked(true);
     toolRow->addWidget(m_penButton);
     toolRow->addWidget(m_eraserButton);
+
+    // 太さ(選択中ツールの半径。ペン/消しゴムそれぞれの値をメンバで記憶し、トグル切替時に表示も切替)
+    toolRow->addWidget(new QLabel(tr("太さ"), rightContainer));
+    m_radiusSlider = new QSlider(Qt::Horizontal, rightContainer);
+    m_radiusSlider->setRange(kRadiusMin, kRadiusMax);
+    m_radiusSlider->setValue(static_cast<int>(m_penRadius));
+    m_radiusSlider->setFixedWidth(120);
+    toolRow->addWidget(m_radiusSlider);
+    m_radiusValueLabel = new QLabel(QString::number(static_cast<int>(m_penRadius)), rightContainer);
+    m_radiusValueLabel->setFixedWidth(24);
+    toolRow->addWidget(m_radiusValueLabel);
+
+    // 色(クリックでQColorDialogを開き、選択色をボタン背景にも反映する)
+    m_colorButton = new QPushButton(tr("色"), rightContainer);
+    m_colorButton->setFixedWidth(48);
+    m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+    toolRow->addWidget(m_colorButton);
+
     toolRow->addStretch();
     rightLayout->addLayout(toolRow);
 
     m_canvas = new GLCanvas(rightContainer);
     m_canvas->setCanvasSize(kPanelWidth, kPanelHeight);
     m_canvas->setTool(GLCanvas::Tool::Pen);
-    rightLayout->addWidget(m_canvas, 1);
+    rightLayout->addWidget(m_canvas, 2);
+
+    // 手書きメモ欄(内容欄の手書き版)。メインの絵コンテ紙より小さい紙にツール/太さ/色を同期して描く
+    rightLayout->addWidget(new QLabel(tr("手書きメモ"), rightContainer));
+    m_memoCanvas = new GLCanvas(rightContainer);
+    m_memoCanvas->setCanvasSize(kMemoWidth, kMemoHeight);
+    m_memoCanvas->setTool(GLCanvas::Tool::Pen);
+    rightLayout->addWidget(m_memoCanvas, 1);
+
+    // 内容/セリフ(複数行対応のテキスト欄。表の該当列は表示専用にする)
+    rightLayout->addWidget(new QLabel(tr("内容"), rightContainer));
+    m_actionEdit = new QPlainTextEdit(rightContainer);
+    m_actionEdit->setFixedHeight(60);
+    m_actionEdit->setEnabled(false);
+    rightLayout->addWidget(m_actionEdit);
+
+    rightLayout->addWidget(new QLabel(tr("セリフ"), rightContainer));
+    m_dialogueEdit = new QPlainTextEdit(rightContainer);
+    m_dialogueEdit->setFixedHeight(60);
+    m_dialogueEdit->setEnabled(false);
+    rightLayout->addWidget(m_dialogueEdit);
+
     mainLayout->addWidget(rightContainer, 4);
 
     setCentralWidget(central);
@@ -126,13 +175,25 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     // ストローク完了通知(Undo用コマンドが渡るが絵コンテにUndoはないため受け取って捨てる)
     m_canvas->setStrokeCommandSink(
         [this](std::unique_ptr<core::Command>) { onStrokeFinished(); });
+    m_memoCanvas->setStrokeCommandSink(
+        [this](std::unique_ptr<core::Command>) { onMemoStrokeFinished(); });
 
     connect(m_penButton, &QPushButton::toggled, this, [this](bool checked) {
-        if (checked) m_canvas->setTool(GLCanvas::Tool::Pen);
+        if (!checked) return;
+        m_canvas->setTool(GLCanvas::Tool::Pen);
+        m_memoCanvas->setTool(GLCanvas::Tool::Pen);
+        m_radiusSlider->setValue(static_cast<int>(m_penRadius));
+        m_radiusValueLabel->setText(QString::number(static_cast<int>(m_penRadius)));
     });
     connect(m_eraserButton, &QPushButton::toggled, this, [this](bool checked) {
-        if (checked) m_canvas->setTool(GLCanvas::Tool::Eraser);
+        if (!checked) return;
+        m_canvas->setTool(GLCanvas::Tool::Eraser);
+        m_memoCanvas->setTool(GLCanvas::Tool::Eraser);
+        m_radiusSlider->setValue(static_cast<int>(m_eraserRadius));
+        m_radiusValueLabel->setText(QString::number(static_cast<int>(m_eraserRadius)));
     });
+    connect(m_radiusSlider, &QSlider::valueChanged, this, &StoryboardWindow::onRadiusSliderChanged);
+    connect(m_colorButton, &QPushButton::clicked, this, &StoryboardWindow::chooseColor);
 
     connect(m_table, &QTableWidget::itemChanged, this, &StoryboardWindow::onItemChanged);
     connect(m_table, &QTableWidget::itemSelectionChanged, this, &StoryboardWindow::onSelectionChanged);
@@ -142,6 +203,10 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(upButton, &QPushButton::clicked, this, [this] { movePanel(-1); });
     connect(downButton, &QPushButton::clicked, this, [this] { movePanel(1); });
     connect(createCutButton, &QPushButton::clicked, this, &StoryboardWindow::createCutFromPanel);
+    connect(m_actionEdit, &QPlainTextEdit::textChanged, this, &StoryboardWindow::onActionTextChanged);
+    connect(m_dialogueEdit, &QPlainTextEdit::textChanged, this, &StoryboardWindow::onDialogueTextChanged);
+
+    applyToolSettingsToCanvases();
 
     QToolBar* toolBar = addToolBar(tr("絵コンテ"));
     toolBar->setMovable(false);
@@ -191,10 +256,14 @@ void StoryboardWindow::refresh() {
 
         // カット番号(編集可)
         m_table->setItem(row, kColCutLabel, new QTableWidgetItem(QString::fromStdString(panel.cutLabel)));
-        // 内容(編集可)
-        m_table->setItem(row, kColAction, new QTableWidgetItem(QString::fromStdString(panel.action)));
-        // セリフ(編集可)
-        m_table->setItem(row, kColDialogue, new QTableWidgetItem(QString::fromStdString(panel.dialogue)));
+        // 内容(表示専用。複数行対応のため右側のQPlainTextEditで編集する)
+        auto* actionItem = new QTableWidgetItem(QString::fromStdString(panel.action));
+        actionItem->setFlags(actionItem->flags() & ~Qt::ItemIsEditable);
+        m_table->setItem(row, kColAction, actionItem);
+        // セリフ(表示専用。複数行対応のため右側のQPlainTextEditで編集する)
+        auto* dialogueItem = new QTableWidgetItem(QString::fromStdString(panel.dialogue));
+        dialogueItem->setFlags(dialogueItem->flags() & ~Qt::ItemIsEditable);
+        m_table->setItem(row, kColDialogue, dialogueItem);
         // 尺コマ(編集可、数値)
         m_table->setItem(row, kColDuration, new QTableWidgetItem(QString::number(panel.durationFrames)));
     }
@@ -216,6 +285,7 @@ void StoryboardWindow::refresh() {
 
     // 構造変更後は古いテクスチャを破棄し、vectorの再配置に備えて必ず選択パネルへ再設定する
     m_canvas->clearTextureCache();
+    m_memoCanvas->clearTextureCache();
     bindCanvasToSelectedPanel();
 }
 
@@ -230,14 +300,6 @@ void StoryboardWindow::onItemChanged(QTableWidgetItem* item) {
     switch (item->column()) {
         case kColCutLabel:
             panel.cutLabel = item->text().toStdString();
-            emit edited();
-            break;
-        case kColAction:
-            panel.action = item->text().toStdString();
-            emit edited();
-            break;
-        case kColDialogue:
-            panel.dialogue = item->text().toStdString();
             emit edited();
             break;
         case kColDuration: {
@@ -256,7 +318,7 @@ void StoryboardWindow::onItemChanged(QTableWidgetItem* item) {
             break;
         }
         default:
-            break;  // No/絵は編集不可のため到達しない
+            break;  // No/絵/内容/セリフは編集不可のため到達しない
     }
 }
 
@@ -333,6 +395,11 @@ void StoryboardWindow::onStrokeFinished() {
     emit edited();
 }
 
+void StoryboardWindow::onMemoStrokeFinished() {
+    // 手書きメモはサムネイル対象外(サムネはdrawingのみ)だが、編集通知は発火する
+    emit edited();
+}
+
 void StoryboardWindow::updateThumbnail(int row) {
     if (!m_project || m_project->sceneCount() == 0 || !m_table) return;
     auto& panels = m_project->scene(0).storyboard();
@@ -348,11 +415,25 @@ void StoryboardWindow::updateThumbnail(int row) {
 void StoryboardWindow::bindCanvasToSelectedPanel() {
     if (!m_project || m_project->sceneCount() == 0) {
         m_canvas->setBitmap(nullptr);
+        m_memoCanvas->setBitmap(nullptr);
+        m_updating = true;
+        m_actionEdit->clear();
+        m_dialogueEdit->clear();
+        m_updating = false;
+        m_actionEdit->setEnabled(false);
+        m_dialogueEdit->setEnabled(false);
         return;
     }
     auto& panels = m_project->scene(0).storyboard();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) {
         m_canvas->setBitmap(nullptr);
+        m_memoCanvas->setBitmap(nullptr);
+        m_updating = true;
+        m_actionEdit->clear();
+        m_dialogueEdit->clear();
+        m_updating = false;
+        m_actionEdit->setEnabled(false);
+        m_dialogueEdit->setEnabled(false);
         return;
     }
 
@@ -362,6 +443,76 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
         panel.drawing.fill({0, 0, 0, 0});
     }
     m_canvas->setBitmap(&panel.drawing);
+
+    // 手書きメモは遅延初期化(isEmptyなら960x270透明で確保)
+    if (panel.memoDrawing.isEmpty()) {
+        panel.memoDrawing = core::Bitmap(kMemoWidth, kMemoHeight);
+        panel.memoDrawing.fill({0, 0, 0, 0});
+    }
+    m_memoCanvas->setBitmap(&panel.memoDrawing);
+
+    // 内容/セリフ(複数行テキスト)を読み込む。m_updatingガードでtextChangedの暴発を防ぐ
+    m_updating = true;
+    m_actionEdit->setPlainText(QString::fromStdString(panel.action));
+    m_dialogueEdit->setPlainText(QString::fromStdString(panel.dialogue));
+    m_updating = false;
+    m_actionEdit->setEnabled(true);
+    m_dialogueEdit->setEnabled(true);
+}
+
+void StoryboardWindow::onRadiusSliderChanged(int value) {
+    if (m_penButton->isChecked()) {
+        m_penRadius = static_cast<float>(value);
+    } else {
+        m_eraserRadius = static_cast<float>(value);
+    }
+    m_radiusValueLabel->setText(QString::number(value));
+    applyToolSettingsToCanvases();
+}
+
+void StoryboardWindow::chooseColor() {
+    const QColor chosen = QColorDialog::getColor(m_penColor, this, tr("ペンの色"));
+    if (!chosen.isValid()) return;
+    m_penColor = chosen;
+    m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+    applyToolSettingsToCanvases();
+}
+
+void StoryboardWindow::applyToolSettingsToCanvases() {
+    // ペン/消しゴムの太さ・色設定はメインキャンバスとメモキャンバスへ同時に適用する
+    for (GLCanvas* canvas : {m_canvas, m_memoCanvas}) {
+        canvas->setPenRadius(m_penRadius);
+        canvas->setPenColor(m_penColor);
+        canvas->setEraserRadius(m_eraserRadius);
+    }
+}
+
+void StoryboardWindow::onActionTextChanged() {
+    if (m_updating || !m_project || m_project->sceneCount() == 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+
+    panels[static_cast<size_t>(m_selectedRow)].action = m_actionEdit->toPlainText().toStdString();
+    m_updating = true;
+    if (QTableWidgetItem* item = m_table->item(m_selectedRow, kColAction)) {
+        item->setText(m_actionEdit->toPlainText());
+    }
+    m_updating = false;
+    emit edited();
+}
+
+void StoryboardWindow::onDialogueTextChanged() {
+    if (m_updating || !m_project || m_project->sceneCount() == 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+
+    panels[static_cast<size_t>(m_selectedRow)].dialogue = m_dialogueEdit->toPlainText().toStdString();
+    m_updating = true;
+    if (QTableWidgetItem* item = m_table->item(m_selectedRow, kColDialogue)) {
+        item->setText(m_dialogueEdit->toPlainText());
+    }
+    m_updating = false;
+    emit edited();
 }
 
 void StoryboardWindow::updateTotalDurationLabel() {
