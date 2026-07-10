@@ -1710,20 +1710,27 @@ void MainWindow::openStoryboardWindow() {
 }
 
 void MainWindow::debugSetupStoryboardDemo() {
-    // 絵コンテウィンドウ確認用: パネル2枚(共にカット番号"1")を追加し、
-    // パネル1のdrawingに赤い斜め線、actionDrawing/dialogueDrawingにもそれぞれ線を1本描く。
-    // 内容欄は複数行入力の確認用に改行入りにする
+    // 絵コンテウィンドウ確認用: パネル2枚(共にカット番号"1")を追加し、パネル1のdrawing
+    // (コンテ用紙全体を覆う1枚の手書きビットマップ)へ、絵の枠内に赤い斜め線、内容欄に
+    // 青い線(効果音メモ想定)を描く。内容欄テキストは複数行入力の確認用に改行入りにする
     if (!m_project || m_project->sceneCount() == 0) return;
     auto& panels = m_project->scene(0).storyboard();
     panels.clear();
 
-    constexpr int kPanelWidth = 960;
-    constexpr int kPanelHeight = 540;
-    constexpr int kMemoWidth = 400;
-    constexpr int kMemoHeight = 540;
+    // StoryboardWindow.cppの用紙レイアウトと同じ寸法(コンテ用紙全体)
+    constexpr int kSheetWidth = 1920;
+    constexpr int kSheetHeight = 600;
+    // 画面(絵)欄内の16:9フレーム枠(kFrameRect相当)
+    constexpr float kFrameX0 = 130.0f;
+    constexpr float kFrameY0 = 30.0f;
+    constexpr float kFrameX1 = 1090.0f;
+    constexpr float kFrameY1 = 570.0f;
+    // 内容欄
+    constexpr float kActionX0 = 1100.0f;
+    constexpr float kActionX1 = 1500.0f;
 
     core::StoryboardPanel panel1;
-    panel1.drawing = core::Bitmap(kPanelWidth, kPanelHeight);
+    panel1.drawing = core::Bitmap(kSheetWidth, kSheetHeight);
     panel1.drawing.fill({0, 0, 0, 0});
     panel1.cutLabel = "1";
     panel1.action = "少年が走り出す\n(振り向きながら)";
@@ -1733,24 +1740,21 @@ void MainWindow::debugSetupStoryboardDemo() {
     core::BrushEngine engine;
     engine.settings().radius = 8.0f;
     engine.settings().color = {220, 30, 30, 255};
-    engine.beginStroke(panel1.drawing, kPanelWidth * 0.2f, kPanelHeight * 0.2f, 1.0f);
-    engine.continueStroke(panel1.drawing, kPanelWidth * 0.8f, kPanelHeight * 0.8f, 1.0f);
+    // 絵の枠内に赤い斜め線
+    engine.beginStroke(panel1.drawing, kFrameX0 + (kFrameX1 - kFrameX0) * 0.2f,
+                        kFrameY0 + (kFrameY1 - kFrameY0) * 0.2f, 1.0f);
+    engine.continueStroke(panel1.drawing, kFrameX0 + (kFrameX1 - kFrameX0) * 0.8f,
+                           kFrameY0 + (kFrameY1 - kFrameY0) * 0.8f, 1.0f);
     engine.endStroke();
 
-    panel1.actionDrawing = core::Bitmap(kMemoWidth, kMemoHeight);
-    panel1.actionDrawing.fill({0, 0, 0, 0});
-    engine.beginStroke(panel1.actionDrawing, kMemoWidth * 0.2f, kMemoHeight * 0.2f, 1.0f);
-    engine.continueStroke(panel1.actionDrawing, kMemoWidth * 0.8f, kMemoHeight * 0.8f, 1.0f);
-    engine.endStroke();
-
-    panel1.dialogueDrawing = core::Bitmap(kMemoWidth, kMemoHeight);
-    panel1.dialogueDrawing.fill({0, 0, 0, 0});
-    engine.beginStroke(panel1.dialogueDrawing, kMemoWidth * 0.2f, kMemoHeight * 0.3f, 1.0f);
-    engine.continueStroke(panel1.dialogueDrawing, kMemoWidth * 0.8f, kMemoHeight * 0.3f, 1.0f);
+    // 内容欄に青い線(効果音メモ想定)
+    engine.settings().color = {30, 30, 220, 255};
+    engine.beginStroke(panel1.drawing, kActionX0 + (kActionX1 - kActionX0) * 0.2f, kSheetHeight * 0.3f, 1.0f);
+    engine.continueStroke(panel1.drawing, kActionX0 + (kActionX1 - kActionX0) * 0.8f, kSheetHeight * 0.7f, 1.0f);
     engine.endStroke();
 
     core::StoryboardPanel panel2;
-    panel2.drawing = core::Bitmap(kPanelWidth, kPanelHeight);
+    panel2.drawing = core::Bitmap(kSheetWidth, kSheetHeight);
     panel2.drawing.fill({0, 0, 0, 0});
     panel2.cutLabel = "1";
     panel2.durationFrames = 12;

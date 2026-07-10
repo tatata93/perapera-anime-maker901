@@ -186,28 +186,6 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                 jPanel["rawSize"] = static_cast<uint64_t>(panel.drawing.byteSize());
                 blobs.insert(blobs.end(), compressed.begin(), compressed.begin() + compSize);
             }
-            // 内容欄/セリフ欄への手書き。drawingと全く同じblob圧縮方式で保存する(空なら省略)
-            const auto saveOverlayDrawing = [&](const Bitmap& overlay, const char* key) -> bool {
-                if (overlay.isEmpty()) return true;
-                json jOverlay;
-                jOverlay["width"] = overlay.width();
-                jOverlay["height"] = overlay.height();
-                uLongf compSize = compressBound(static_cast<uLong>(overlay.byteSize()));
-                std::vector<unsigned char> compressed(compSize);
-                if (compress2(compressed.data(), &compSize, overlay.data(), static_cast<uLong>(overlay.byteSize()),
-                              Z_DEFAULT_COMPRESSION) != Z_OK) {
-                    setError(errorOut, "ピクセルデータの圧縮に失敗しました");
-                    return false;
-                }
-                jOverlay["blobOffset"] = blobs.size();
-                jOverlay["blobSize"] = static_cast<uint64_t>(compSize);
-                jOverlay["rawSize"] = static_cast<uint64_t>(overlay.byteSize());
-                blobs.insert(blobs.end(), compressed.begin(), compressed.begin() + compSize);
-                jPanel[key] = std::move(jOverlay);
-                return true;
-            };
-            if (!saveOverlayDrawing(panel.actionDrawing, "actionDrawing")) return false;
-            if (!saveOverlayDrawing(panel.dialogueDrawing, "dialogueDrawing")) return false;
             jStoryboard.push_back(std::move(jPanel));
         }
 
@@ -368,33 +346,6 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                         }
                         panel.drawing = std::move(bitmap);
                     }
-                    // 内容欄/セリフ欄への手書き(任意)。drawingと同じblob展開方式で読み込む
-                    const auto loadOverlayDrawing = [&](const char* key, Bitmap& overlayOut) -> bool {
-                        if (!jPanel.contains(key)) return true;
-                        const json& jOverlay = jPanel.at(key);
-                        const int ow = jOverlay.value("width", 0);
-                        const int oh = jOverlay.value("height", 0);
-                        if (ow <= 0 || oh <= 0 || !jOverlay.contains("blobOffset")) return true;
-                        const uint64_t offset = jOverlay.at("blobOffset").get<uint64_t>();
-                        const uint64_t blobSize = jOverlay.at("blobSize").get<uint64_t>();
-                        const uint64_t rawSize = jOverlay.at("rawSize").get<uint64_t>();
-                        Bitmap overlayBitmap(ow, oh);
-                        if (rawSize != overlayBitmap.byteSize() || offset + blobSize > blobTotal) {
-                            setError(errorOut, "ファイルが壊れています(ピクセルデータ不整合)");
-                            return false;
-                        }
-                        uLongf destLen = static_cast<uLongf>(rawSize);
-                        if (uncompress(overlayBitmap.data(), &destLen, blobBase + offset,
-                                       static_cast<uLong>(blobSize)) != Z_OK ||
-                            destLen != rawSize) {
-                            setError(errorOut, "ファイルが壊れています(展開に失敗)");
-                            return false;
-                        }
-                        overlayOut = std::move(overlayBitmap);
-                        return true;
-                    };
-                    if (!loadOverlayDrawing("actionDrawing", panel.actionDrawing)) return nullptr;
-                    if (!loadOverlayDrawing("dialogueDrawing", panel.dialogueDrawing)) return nullptr;
                     scene.storyboard().push_back(std::move(panel));
                 }
             }

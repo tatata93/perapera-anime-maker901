@@ -16,7 +16,10 @@ class Project;
 }
 
 // 絵コンテウィンドウ(別ウィンドウ)。絵コンテは全工程の前に単体で描くもの:
-// 独立した「パネル(コマ)」の列で、パネルごとにラフ絵を手描きする。
+// 独立した「パネル(コマ)」の列で、パネルごとに「よくあるコンテ用紙」風の1枚(罫線・見出し・
+// カット番号・絵の枠・内容欄・セリフ欄・秒欄を印字した紙)にラフ絵/手書きメモを描く。
+// 紙全体を1つの手書きビットマップが覆うため、絵の枠内はもちろん内容欄への効果音メモや
+// 枠をまたぐ矢印なども自由に手描きできる。
 // 同じカット番号を複数パネルに書けば「1カット複数コマ」のコンテになる。
 class StoryboardWindow : public QMainWindow {
     Q_OBJECT
@@ -44,29 +47,26 @@ private:
     void movePanel(int delta);
     void createCutFromPanel();
     void onStrokeFinished();
-    // 内容欄/セリフ欄キャンバスのストローク完了(サムネ更新はせず編集通知のみ)
-    void onOverlayStrokeFinished();
     void updateTotalDurationLabel();
     void updateThumbnail(int row);
-    // 選択中パネルのdrawing/actionDrawing/dialogueDrawingへ描画エリアを再設定する(vectorの再配置で
-    // ポインタが無効になるため、パネル追加/削除/並べ替えの後は必ず呼ぶこと)
+    // 選択中パネルのdrawing(コンテ用紙全体への手書きインク)へ描画エリアを再設定し、コンテ用紙の
+    // 下敷きも敷き直す(vectorの再配置でポインタが無効になるため、パネル追加/削除/並べ替えの
+    // 後は必ず呼ぶこと)
     void bindCanvasToSelectedPanel();
-    // 太さスライダーの値を選択中ツール(ペン/消しゴム)の半径へ反映する(3キャンバスへ同時適用)
+    // 太さスライダーの値を選択中ツール(ペン/消しゴム)の半径へ反映する
     void onRadiusSliderChanged(int value);
-    // 色選択ダイアログを開き、選択色を3キャンバスのペン色へ反映する
+    // 色選択ダイアログを開き、選択色をキャンバスのペン色へ反映する
     void chooseColor();
-    // 現在の太さ/色設定を3キャンバスへ適用する
+    // 現在の太さ/色設定をキャンバスへ適用する
     void applyToolSettingsToCanvases();
-    // 内容/セリフ欄(複数行テキスト)を選択パネルへ反映し、対応キャンバスのテキスト下敷きを更新する
+    // 内容/セリフ欄(複数行テキスト)を選択パネルへ反映し、コンテ用紙下敷きを最新テキストで敷き直す
     void onActionTextChanged();
     void onDialogueTextChanged();
     int selectedPanelIndex() const;
 
     core::Project* m_project = nullptr;
     QTableWidget* m_table = nullptr;
-    GLCanvas* m_canvas = nullptr;
-    GLCanvas* m_actionCanvas = nullptr;    // 内容欄キャンバス(テキストの上に手書き)
-    GLCanvas* m_dialogueCanvas = nullptr;  // セリフ欄キャンバス(テキストの上に手書き)
+    GLCanvas* m_canvas = nullptr;  // コンテ用紙1枚(下敷き+手書きインク)を表示・編集するキャンバス
     QLabel* m_totalLabel = nullptr;
     QPushButton* m_penButton = nullptr;
     QPushButton* m_eraserButton = nullptr;

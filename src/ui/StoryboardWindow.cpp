@@ -23,21 +23,39 @@
 #include "render/GLCanvas.h"
 
 namespace {
-// 絵コンテのパネルは全カット共通で960x540の紙に描く(実際の作画キャンバスとは独立)
-constexpr int kPanelWidth = 960;
-constexpr int kPanelHeight = 540;
-// 内容欄/セリフ欄の紙サイズ(ジブリ/東映系コンテ用紙の縦長の欄を模す)
-constexpr int kMemoWidth = 400;
-constexpr int kMemoHeight = 540;
+// 「よくあるコンテ用紙テンプレート」を模した1枚の紙のサイズ。全カット共通。
+// この紙全体を1つの手書きビットマップ(StoryboardPanel::drawing)が覆う
+constexpr int kSheetWidth = 1920;
+constexpr int kSheetHeight = 600;
+
+// 左→右のセルの境界(縦罫線)のx座標
+constexpr int kNoColX0 = 0;      // カットNo欄
+constexpr int kNoColX1 = 120;
+constexpr int kPictureColX1 = 1100;  // 画面(絵)欄
+constexpr int kActionColX1 = 1500;   // 内容欄
+constexpr int kDialogueColX1 = 1820;  // セリフ欄
+constexpr int kSecColX1 = kSheetWidth;  // 秒欄
+
+// 画面(絵)欄の中の16:9フレーム枠(絵はこの枠内に描く想定)
+const QRect kFrameRect(130, 30, 960, 540);
+
+constexpr double kFps = 24.0;  // タイムシートは24fps基準
+
 // サムネイル解像度(表示は列幅に合わせて縮小する)
 constexpr int kThumbWidth = 96;
 constexpr int kThumbHeight = 54;
 constexpr int kRowHeight = 70;
-constexpr double kFps = 24.0;  // タイムシートは24fps基準
 
 // 太さスライダーの範囲(ペン/消しゴム共通)
 constexpr int kRadiusMin = 1;
 constexpr int kRadiusMax = 40;
+
+// 罫線・見出しの色(濃いグレー)と余白/フォントサイズ
+const QColor kLineColor(0x44, 0x44, 0x44);
+constexpr int kMargin = 8;
+constexpr int kHeadingPixelSize = 14;
+constexpr int kBodyPixelSize = 20;
+constexpr int kHeadingHeight = 20;
 
 enum Column {
     kColNo = 0,
@@ -49,38 +67,118 @@ enum Column {
     kColCount,
 };
 
-// drawing(透明ビットマップ)を白背景に合成してからサムネイルサイズへ縮小する。
-// 透明のまま縮小するとデコレーション表示上は黒く見えてしまうため
+// サムネイルは「画面(絵)欄」のフレーム枠(kFrameRect)部分だけを切り出し、白背景に合成してから
+// サムネイルサイズへ縮小する。透明のまま縮小するとデコレーション表示上は黒く見えてしまうため
 QPixmap makeThumbnail(const core::Bitmap& bitmap) {
     if (bitmap.isEmpty()) return QPixmap();
     const QImage source(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
-    QImage composed(bitmap.width(), bitmap.height(), QImage::Format_RGB32);
+    const QImage cropped = source.copy(kFrameRect);
+    QImage composed(cropped.width(), cropped.height(), QImage::Format_RGB32);
     composed.fill(Qt::white);
     QPainter painter(&composed);
-    painter.drawImage(0, 0, source);
+    painter.drawImage(0, 0, cropped);
     painter.end();
     // drawImage()は即座にピクセルをコピーするためsource/bitmap破棄後も安全
     return QPixmap::fromImage(
         composed.scaled(kThumbWidth, kThumbHeight, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 }
 
-// 内容欄/セリフ欄のテキストをQImageに描画する(GLCanvasの下敷きとして敷き、手書きインクと重ねるため)。
-// 白地に黒文字で塗るため、乗算合成の下敷きとしてインク(通常は不透明な線)と共存できる
-QImage renderTextUnderlay(const QString& text) {
-    QImage image(kMemoWidth, kMemoHeight, QImage::Format_RGB32);
+// コンテ用紙1枚分の下敷き(罫線・見出し・カット番号・内容/セリフの印字テキスト・尺)をQImageに
+// 描画する。GLCanvasの下敷きとして敷き、この上に手書きインク(drawing)を重ねる。
+// panelNoは1始まりのパネル通し番号(カットNo欄の見出しに使う)
+QImage renderSheetUnderlay(const core::StoryboardPanel& panel, int panelNo) {
+    QImage image(kSheetWidth, kSheetHeight, QImage::Format_RGB32);
     image.fill(Qt::white);
 
     QPainter painter(&image);
-    painter.setPen(Qt::black);
-    QFont font = painter.font();
-    font.setPixelSize(22);
-    painter.setFont(font);
+    QPen linePen(kLineColor);
+    linePen.setWidth(1);
+    painter.setPen(linePen);
 
-    constexpr int kMargin = 12;
-    const QRect textRect(kMargin, kMargin, kMemoWidth - kMargin * 2, kMemoHeight - kMargin * 2);
-    QTextOption option;
-    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-    painter.drawText(textRect, text, option);
+    // 外枠+セルを区切る縦罫線
+    painter.drawRect(QRect(0, 0, kSheetWidth - 1, kSheetHeight - 1));
+    for (int x : {kNoColX1, kPictureColX1, kActionColX1, kDialogueColX1}) {
+        painter.drawLine(x, 0, x, kSheetHeight);
+    }
+
+    QFont headingFont = painter.font();
+    headingFont.setPixelSize(kHeadingPixelSize);
+    QFont bodyFont = painter.font();
+    bodyFont.setPixelSize(kBodyPixelSize);
+
+    QTextOption wrapOption;
+    wrapOption.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+
+    // カットNo欄: 上部に小さく「C#<パネル通し番号>」見出し、中央にカット番号を大きめに印字
+    {
+        painter.setPen(kLineColor);
+        painter.setFont(headingFont);
+        const QRect headRect(kNoColX0 + kMargin, kMargin, (kNoColX1 - kNoColX0) - kMargin * 2, kHeadingHeight);
+        painter.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("C#%1").arg(panelNo));
+
+        QFont cutFont = painter.font();
+        cutFont.setPixelSize(28);
+        painter.setFont(cutFont);
+        painter.setPen(Qt::black);
+        const QRect cutRect(kNoColX0, kHeadingHeight, kNoColX1 - kNoColX0, kSheetHeight - kHeadingHeight);
+        painter.drawText(cutRect, Qt::AlignCenter, QString::fromStdString(panel.cutLabel));
+    }
+
+    // 画面(絵)欄: 16:9フレーム枠を実線で印字(絵はこの枠内に描く想定)
+    {
+        painter.setPen(kLineColor);
+        painter.drawRect(kFrameRect);
+    }
+
+    // 内容欄: 見出し+内容テキストの折り返し印字
+    {
+        painter.setFont(headingFont);
+        painter.setPen(kLineColor);
+        const QRect headRect(kPictureColX1 + kMargin, kMargin, (kActionColX1 - kPictureColX1) - kMargin * 2,
+                              kHeadingHeight);
+        painter.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter, QObject::tr("内容"));
+
+        painter.setFont(bodyFont);
+        painter.setPen(Qt::black);
+        const QRect bodyRect(kPictureColX1 + kMargin, kHeadingHeight + kMargin,
+                              (kActionColX1 - kPictureColX1) - kMargin * 2,
+                              kSheetHeight - kHeadingHeight - kMargin * 2);
+        painter.drawText(bodyRect, QString::fromStdString(panel.action), wrapOption);
+    }
+
+    // セリフ欄: 見出し+セリフテキストの折り返し印字
+    {
+        painter.setFont(headingFont);
+        painter.setPen(kLineColor);
+        const QRect headRect(kActionColX1 + kMargin, kMargin, (kDialogueColX1 - kActionColX1) - kMargin * 2,
+                              kHeadingHeight);
+        painter.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter, QObject::tr("セリフ"));
+
+        painter.setFont(bodyFont);
+        painter.setPen(Qt::black);
+        const QRect bodyRect(kActionColX1 + kMargin, kHeadingHeight + kMargin,
+                              (kDialogueColX1 - kActionColX1) - kMargin * 2,
+                              kSheetHeight - kHeadingHeight - kMargin * 2);
+        painter.drawText(bodyRect, QString::fromStdString(panel.dialogue), wrapOption);
+    }
+
+    // 秒欄: 見出し+尺コマ数と秒数(例「36k」「1.5s」)
+    {
+        painter.setFont(headingFont);
+        painter.setPen(kLineColor);
+        const QRect headRect(kDialogueColX1 + kMargin, kMargin, (kSecColX1 - kDialogueColX1) - kMargin * 2,
+                              kHeadingHeight);
+        painter.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter, QObject::tr("秒"));
+
+        painter.setFont(bodyFont);
+        painter.setPen(Qt::black);
+        const double seconds = static_cast<double>(panel.durationFrames) / kFps;
+        const QString text = QStringLiteral("%1k\n%2s").arg(panel.durationFrames).arg(seconds, 0, 'f', 1);
+        const QRect bodyRect(kDialogueColX1, kHeadingHeight, kSecColX1 - kDialogueColX1,
+                              kSheetHeight - kHeadingHeight);
+        painter.drawText(bodyRect, Qt::AlignHCenter | Qt::AlignTop, text);
+    }
+
     painter.end();
     return image;
 }
@@ -166,36 +264,12 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     toolRow->addStretch();
     rightLayout->addLayout(toolRow);
 
-    // コンテ用紙風の3欄(ジブリ/東映系コンテ用紙を参考に、絵の右に内容欄/セリフ欄を縦長に並べる)。
-    // 内容欄/セリフ欄はテキスト入力の上に手書きで重ね書きできるようGLCanvasを重ねる
-    auto* paperLayout = new QHBoxLayout();
-
+    // コンテ用紙1枚(罫線・見出し・カット番号・絵の枠・内容欄・セリフ欄・秒欄を印字した下敷きの
+    // 上に手書きインクを重ねる、紙全体をカバーする1つのGLCanvas)
     m_canvas = new GLCanvas(rightContainer);
-    m_canvas->setCanvasSize(kPanelWidth, kPanelHeight);
+    m_canvas->setCanvasSize(kSheetWidth, kSheetHeight);
     m_canvas->setTool(GLCanvas::Tool::Pen);
-    paperLayout->addWidget(m_canvas, 12);
-
-    auto* actionColumn = new QVBoxLayout();
-    auto* actionHeader = new QLabel(tr("内容"), rightContainer);
-    actionHeader->setAlignment(Qt::AlignCenter);
-    actionColumn->addWidget(actionHeader);
-    m_actionCanvas = new GLCanvas(rightContainer);
-    m_actionCanvas->setCanvasSize(kMemoWidth, kMemoHeight);
-    m_actionCanvas->setTool(GLCanvas::Tool::Pen);
-    actionColumn->addWidget(m_actionCanvas);
-    paperLayout->addLayout(actionColumn, 5);
-
-    auto* dialogueColumn = new QVBoxLayout();
-    auto* dialogueHeader = new QLabel(tr("セリフ"), rightContainer);
-    dialogueHeader->setAlignment(Qt::AlignCenter);
-    dialogueColumn->addWidget(dialogueHeader);
-    m_dialogueCanvas = new GLCanvas(rightContainer);
-    m_dialogueCanvas->setCanvasSize(kMemoWidth, kMemoHeight);
-    m_dialogueCanvas->setTool(GLCanvas::Tool::Pen);
-    dialogueColumn->addWidget(m_dialogueCanvas);
-    paperLayout->addLayout(dialogueColumn, 5);
-
-    rightLayout->addLayout(paperLayout, 2);
+    rightLayout->addWidget(m_canvas, 2);
 
     // 内容/セリフ(複数行対応のテキスト欄。表の該当列は表示専用にする)。上の手書き欄と横並びにする
     auto* textRow = new QHBoxLayout();
@@ -225,20 +299,16 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     // ストローク完了通知(Undo用コマンドが渡るが絵コンテにUndoはないため受け取って捨てる)
     m_canvas->setStrokeCommandSink(
         [this](std::unique_ptr<core::Command>) { onStrokeFinished(); });
-    m_actionCanvas->setStrokeCommandSink(
-        [this](std::unique_ptr<core::Command>) { onOverlayStrokeFinished(); });
-    m_dialogueCanvas->setStrokeCommandSink(
-        [this](std::unique_ptr<core::Command>) { onOverlayStrokeFinished(); });
 
     connect(m_penButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
-        for (GLCanvas* canvas : {m_canvas, m_actionCanvas, m_dialogueCanvas}) canvas->setTool(GLCanvas::Tool::Pen);
+        m_canvas->setTool(GLCanvas::Tool::Pen);
         m_radiusSlider->setValue(static_cast<int>(m_penRadius));
         m_radiusValueLabel->setText(QString::number(static_cast<int>(m_penRadius)));
     });
     connect(m_eraserButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
-        for (GLCanvas* canvas : {m_canvas, m_actionCanvas, m_dialogueCanvas}) canvas->setTool(GLCanvas::Tool::Eraser);
+        m_canvas->setTool(GLCanvas::Tool::Eraser);
         m_radiusSlider->setValue(static_cast<int>(m_eraserRadius));
         m_radiusValueLabel->setText(QString::number(static_cast<int>(m_eraserRadius)));
     });
@@ -335,8 +405,6 @@ void StoryboardWindow::refresh() {
 
     // 構造変更後は古いテクスチャを破棄し、vectorの再配置に備えて必ず選択パネルへ再設定する
     m_canvas->clearTextureCache();
-    m_actionCanvas->clearTextureCache();
-    m_dialogueCanvas->clearTextureCache();
     bindCanvasToSelectedPanel();
 }
 
@@ -351,6 +419,11 @@ void StoryboardWindow::onItemChanged(QTableWidgetItem* item) {
     switch (item->column()) {
         case kColCutLabel:
             panel.cutLabel = item->text().toStdString();
+            // カット番号はコンテ用紙のカットNo欄に印字されるため、選択中パネルなら下敷きを敷き直す
+            if (row == m_selectedRow) {
+                m_canvas->setUnderlayImage(renderSheetUnderlay(panel, row + 1));
+                m_canvas->setUnderlayOpacity(1.0f);
+            }
             emit edited();
             break;
         case kColDuration: {
@@ -364,6 +437,11 @@ void StoryboardWindow::onItemChanged(QTableWidgetItem* item) {
                 return;
             }
             panel.durationFrames = static_cast<size_t>(value);
+            // 尺コマ数はコンテ用紙の秒欄に印字されるため、選択中パネルなら下敷きを敷き直す
+            if (row == m_selectedRow) {
+                m_canvas->setUnderlayImage(renderSheetUnderlay(panel, row + 1));
+                m_canvas->setUnderlayOpacity(1.0f);
+            }
             updateTotalDurationLabel();
             emit edited();
             break;
@@ -390,7 +468,7 @@ void StoryboardWindow::addPanel() {
     auto& panels = m_project->scene(0).storyboard();
 
     core::StoryboardPanel panel;
-    panel.drawing = core::Bitmap(kPanelWidth, kPanelHeight);
+    panel.drawing = core::Bitmap(kSheetWidth, kSheetHeight);
     panel.drawing.fill({0, 0, 0, 0});
     panel.cutLabel = panels.empty() ? std::string("1") : panels.back().cutLabel;
     panels.push_back(std::move(panel));
@@ -446,11 +524,6 @@ void StoryboardWindow::onStrokeFinished() {
     emit edited();
 }
 
-void StoryboardWindow::onOverlayStrokeFinished() {
-    // 内容欄/セリフ欄の手書きはサムネイル対象外(サムネはdrawingのみ)だが、編集通知は発火する
-    emit edited();
-}
-
 void StoryboardWindow::updateThumbnail(int row) {
     if (!m_project || m_project->sceneCount() == 0 || !m_table) return;
     auto& panels = m_project->scene(0).storyboard();
@@ -466,8 +539,6 @@ void StoryboardWindow::updateThumbnail(int row) {
 void StoryboardWindow::bindCanvasToSelectedPanel() {
     if (!m_project || m_project->sceneCount() == 0) {
         m_canvas->setBitmap(nullptr);
-        m_actionCanvas->setBitmap(nullptr);
-        m_dialogueCanvas->setBitmap(nullptr);
         m_updating = true;
         m_actionEdit->clear();
         m_dialogueEdit->clear();
@@ -479,8 +550,6 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
     auto& panels = m_project->scene(0).storyboard();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) {
         m_canvas->setBitmap(nullptr);
-        m_actionCanvas->setBitmap(nullptr);
-        m_dialogueCanvas->setBitmap(nullptr);
         m_updating = true;
         m_actionEdit->clear();
         m_dialogueEdit->clear();
@@ -491,23 +560,14 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
     }
 
     core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
-    if (panel.drawing.isEmpty()) {
-        panel.drawing = core::Bitmap(kPanelWidth, kPanelHeight);
+    // drawingはコンテ用紙全体(kSheetWidth x kSheetHeight)を覆う1枚の手書きビットマップ。
+    // 未確保またはサイズ不一致なら確保し直す(開発中につき旧サイズのデータは破棄してよい)
+    if (panel.drawing.isEmpty() || panel.drawing.width() != kSheetWidth ||
+        panel.drawing.height() != kSheetHeight) {
+        panel.drawing = core::Bitmap(kSheetWidth, kSheetHeight);
         panel.drawing.fill({0, 0, 0, 0});
     }
     m_canvas->setBitmap(&panel.drawing);
-
-    // 内容欄/セリフ欄への手書きは遅延初期化(isEmptyなら400x540透明で確保)
-    if (panel.actionDrawing.isEmpty()) {
-        panel.actionDrawing = core::Bitmap(kMemoWidth, kMemoHeight);
-        panel.actionDrawing.fill({0, 0, 0, 0});
-    }
-    m_actionCanvas->setBitmap(&panel.actionDrawing);
-    if (panel.dialogueDrawing.isEmpty()) {
-        panel.dialogueDrawing = core::Bitmap(kMemoWidth, kMemoHeight);
-        panel.dialogueDrawing.fill({0, 0, 0, 0});
-    }
-    m_dialogueCanvas->setBitmap(&panel.dialogueDrawing);
 
     // 内容/セリフ(複数行テキスト)を読み込む。m_updatingガードでtextChangedの暴発を防ぐ
     m_updating = true;
@@ -517,11 +577,10 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
     m_actionEdit->setEnabled(true);
     m_dialogueEdit->setEnabled(true);
 
-    // テキストをキャンバスの下敷きに敷く。テキストの上に手書きで重ね書きできるようにするため
-    m_actionCanvas->setUnderlayImage(renderTextUnderlay(m_actionEdit->toPlainText()));
-    m_actionCanvas->setUnderlayOpacity(1.0f);
-    m_dialogueCanvas->setUnderlayImage(renderTextUnderlay(m_dialogueEdit->toPlainText()));
-    m_dialogueCanvas->setUnderlayOpacity(1.0f);
+    // コンテ用紙の下敷き(罫線・見出し・カット番号・内容/セリフ・秒)を敷く。
+    // 手書きインク(drawing)はこの上に重なる
+    m_canvas->setUnderlayImage(renderSheetUnderlay(panel, m_selectedRow + 1));
+    m_canvas->setUnderlayOpacity(1.0f);
 }
 
 void StoryboardWindow::onRadiusSliderChanged(int value) {
@@ -543,12 +602,10 @@ void StoryboardWindow::chooseColor() {
 }
 
 void StoryboardWindow::applyToolSettingsToCanvases() {
-    // ペン/消しゴムの太さ・色設定は絵キャンバス・内容欄・セリフ欄の3キャンバスへ同時に適用する
-    for (GLCanvas* canvas : {m_canvas, m_actionCanvas, m_dialogueCanvas}) {
-        canvas->setPenRadius(m_penRadius);
-        canvas->setPenColor(m_penColor);
-        canvas->setEraserRadius(m_eraserRadius);
-    }
+    // ペン/消しゴムの太さ・色設定はコンテ用紙キャンバスへ適用する
+    m_canvas->setPenRadius(m_penRadius);
+    m_canvas->setPenColor(m_penColor);
+    m_canvas->setEraserRadius(m_eraserRadius);
 }
 
 void StoryboardWindow::onActionTextChanged() {
@@ -556,15 +613,16 @@ void StoryboardWindow::onActionTextChanged() {
     auto& panels = m_project->scene(0).storyboard();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) return;
 
-    panels[static_cast<size_t>(m_selectedRow)].action = m_actionEdit->toPlainText().toStdString();
+    core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+    panel.action = m_actionEdit->toPlainText().toStdString();
     m_updating = true;
     if (QTableWidgetItem* item = m_table->item(m_selectedRow, kColAction)) {
         item->setText(m_actionEdit->toPlainText());
     }
     m_updating = false;
-    // テキストの上に手書きで重ね書きできるよう、下敷きを最新のテキストで敷き直す
-    m_actionCanvas->setUnderlayImage(renderTextUnderlay(m_actionEdit->toPlainText()));
-    m_actionCanvas->setUnderlayOpacity(1.0f);
+    // コンテ用紙の下敷きを最新の内容テキストで敷き直す(手書きインクはそのまま重なる)
+    m_canvas->setUnderlayImage(renderSheetUnderlay(panel, m_selectedRow + 1));
+    m_canvas->setUnderlayOpacity(1.0f);
     emit edited();
 }
 
@@ -573,15 +631,16 @@ void StoryboardWindow::onDialogueTextChanged() {
     auto& panels = m_project->scene(0).storyboard();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) return;
 
-    panels[static_cast<size_t>(m_selectedRow)].dialogue = m_dialogueEdit->toPlainText().toStdString();
+    core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+    panel.dialogue = m_dialogueEdit->toPlainText().toStdString();
     m_updating = true;
     if (QTableWidgetItem* item = m_table->item(m_selectedRow, kColDialogue)) {
         item->setText(m_dialogueEdit->toPlainText());
     }
     m_updating = false;
-    // テキストの上に手書きで重ね書きできるよう、下敷きを最新のテキストで敷き直す
-    m_dialogueCanvas->setUnderlayImage(renderTextUnderlay(m_dialogueEdit->toPlainText()));
-    m_dialogueCanvas->setUnderlayOpacity(1.0f);
+    // コンテ用紙の下敷きを最新のセリフテキストで敷き直す(手書きインクはそのまま重なる)
+    m_canvas->setUnderlayImage(renderSheetUnderlay(panel, m_selectedRow + 1));
+    m_canvas->setUnderlayOpacity(1.0f);
     emit edited();
 }
 

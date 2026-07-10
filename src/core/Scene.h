@@ -12,9 +12,10 @@ namespace core {
 // 絵コンテの1パネル(コマ)。全工程の前に単体で描くため、カットや作画とは独立して存在する。
 // 同じカット番号を複数パネルに書けば「1カット複数コマ」のコンテになる
 struct StoryboardPanel {
-    Bitmap drawing;              // 手描きのコンテ絵(空=未描画)
-    Bitmap actionDrawing;        // 内容欄への手書き(テキストに重ね書き。空=未記入)
-    Bitmap dialogueDrawing;      // セリフ欄への手書き(同上)
+    // コンテ用紙のコマ全体(罫線・見出し・カット番号・絵の枠・内容欄・セリフ欄・秒欄を
+    // 1枚のQImageとして下敷きに敷いた紙全体)への手描きインク。絵の枠内はもちろん、
+    // 内容欄への効果音メモやセリフ欄への書き込み、枠をまたぐ矢印なども自由に描ける(空=未描画)
+    Bitmap drawing;
     std::string cutLabel;        // カット番号/名(自由記入)
     std::string action;          // 内容(アクション)
     std::string dialogue;        // セリフ
