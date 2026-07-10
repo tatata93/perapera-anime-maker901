@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QDialog>
 #include <QFile>
 #include <QTimer>
 #include <algorithm>
@@ -480,6 +481,45 @@ int main(int argc, char* argv[]) {
             QTimer::singleShot(400, &window, [&window, outputPath] {
                 window.storyboardWindow()->grab().save(outputPath);
                 QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
+    // 動作確認用: --storyboard-zoom-test <出力PNG> で絵コンテデモを組んで絵コンテウィンドウを開き、
+    // debugZoomToFrame()で絵の枠を拡大表示させた状態のウィンドウ全体を保存して終了する
+    const int storyboardZoomIndex = args.indexOf("--storyboard-zoom-test");
+    if (storyboardZoomIndex >= 0 && storyboardZoomIndex + 1 < args.size()) {
+        const QString outputPath = args.at(storyboardZoomIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupStoryboardDemo();
+            window.debugOpenStoryboard();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                window.storyboardWindow()->debugZoomToFrame();
+                QTimer::singleShot(200, &window, [&window, outputPath] {
+                    window.storyboardWindow()->grab().save(outputPath);
+                    QApplication::exit(0);  // exit()で直接終了(quit()はcloseEventのダイアログを経由するため)
+                });
+            });
+        });
+    }
+
+    // 動作確認用: --storyboard-preview-test <出力PNG> で絵コンテデモを組んで絵コンテウィンドウを開き、
+    // debugOpenPreview()でプレビュー(ビデオコンテ)ダイアログを開いて自動再生させ、
+    // 数百ms後にダイアログのスナップショットを保存して終了する
+    const int storyboardPreviewIndex = args.indexOf("--storyboard-preview-test");
+    if (storyboardPreviewIndex >= 0 && storyboardPreviewIndex + 1 < args.size()) {
+        const QString outputPath = args.at(storyboardPreviewIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupStoryboardDemo();
+            window.debugOpenStoryboard();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                window.storyboardWindow()->debugOpenPreview();
+                QTimer::singleShot(400, &window, [&window, outputPath] {
+                    if (QDialog* dialog = window.storyboardWindow()->debugPreviewDialog()) {
+                        dialog->grab().save(outputPath);
+                    }
+                    QApplication::exit(0);  // exit()で直接終了(quit()はcloseEventのダイアログを経由するため)
+                });
             });
         });
     }

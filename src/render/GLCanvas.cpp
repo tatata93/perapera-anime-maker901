@@ -311,6 +311,35 @@ void GLCanvas::resetView() {
     update();
 }
 
+void GLCanvas::zoomToCanvasRect(const QRectF& rectPx) {
+    if (m_canvasWidth <= 0 || m_canvasHeight <= 0 || rectPx.isEmpty()) return;
+    const qreal ww = width();
+    const qreal wh = height();
+    if (ww <= 0.0 || wh <= 0.0) return;
+
+    m_rotationDeg = 0.0;  // 回転はリセットしてよい仕様(viewTransform()と整合させるため0固定)
+
+    const qreal iw = m_canvasWidth;
+    const qreal ih = m_canvasHeight;
+    const qreal fitScale = qMin(ww / iw, wh / ih);
+    if (fitScale <= 0.0) return;
+
+    // 数%の余白を残して矩形がウィジェットに収まるスケールを求め、m_zoom(フィット基準倍率)へ変換する
+    constexpr qreal kMarginFactor = 0.92;
+    const qreal desiredScale = qMin(ww * kMarginFactor / rectPx.width(), wh * kMarginFactor / rectPx.height());
+    m_zoom = std::clamp(static_cast<float>(desiredScale / fitScale), 0.05f, 32.0f);
+
+    // viewTransform()と同じ式(画像中心を原点へ→拡縮→回転(0)→反転→ウィジェット中心+パン)で、
+    // 矩形の中心がウィジェット中心に来るようパンを逆算する
+    const qreal scale = fitScale * m_zoom;
+    const QPointF imageCenter(iw * 0.5, ih * 0.5);
+    QPointF scaled = (rectPx.center() - imageCenter) * scale;
+    if (m_mirrorView) scaled.setX(-scaled.x());
+    m_panOffset = -scaled;
+
+    update();
+}
+
 void GLCanvas::paintGL() {
     const auto paintStart = std::chrono::steady_clock::now();
 
@@ -611,6 +640,19 @@ void GLCanvas::mouseReleaseEvent(QMouseEvent* event) {
     }
     if (event->source() != Qt::MouseEventNotSynthesized) return;
     if (event->button() == Qt::LeftButton) pointerEnd();
+}
+
+void GLCanvas::mouseDoubleClickEvent(QMouseEvent* event) {
+    // ペン/消しゴムツール時は、1回目のクリックで既に点が打たれているためストロークは開始せず、
+    // シグナルのみ発火する(絵コンテの絵の枠拡大表示トグルなど、呼び出し側の後始末に委ねる)。
+    // 他ツール(塗りつぶし/移動)時は基底クラスの標準挙動に任せる
+    if (event->button() == Qt::LeftButton && event->source() == Qt::MouseEventNotSynthesized &&
+        (m_tool == Tool::Pen || m_tool == Tool::Eraser)) {
+        emit doubleClickedOnCanvas(widgetToImage(event->position()));
+        event->accept();
+        return;
+    }
+    QOpenGLWidget::mouseDoubleClickEvent(event);
 }
 
 void GLCanvas::wheelEvent(QWheelEvent* event) {

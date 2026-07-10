@@ -97,6 +97,9 @@ public:
     // ビュー操作: ズーム倍率(フィット基準)・回転(度)・パン。リセットでフィット表示に戻る
     void resetView();
     float zoom() const { return m_zoom; }
+    // 画像(キャンバス)座標の矩形がウィジェットにちょうど収まるようズーム/パンを設定する。
+    // 回転は0にリセットする。少し余白を持たせて表示する(絵コンテの絵の枠拡大表示などに使う)
+    void zoomToCanvasRect(const QRectF& rectPx);
 
     // 左右反転表示(ミラーチェック用)。表示のみ反転し、描画座標は正しく逆変換される
     void setMirrorView(bool mirrored) {
@@ -127,6 +130,9 @@ signals:
     void celMoveStarted();
     void celMoveDelta(QPointF totalDeltaImage);  // ドラッグ開始点からの累積差分(画像座標px)
     void celMoveFinished();
+    // ペン/消しゴムツール時にキャンバス上でダブルクリックされた(imagePosは画像座標)。
+    // 絵コンテの絵の枠拡大表示トグルなどに使う。ダブルクリックはストロークを開始しない
+    void doubleClickedOnCanvas(QPointF imagePos);
 
 protected:
     void initializeGL() override;
@@ -137,6 +143,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
 
 private:

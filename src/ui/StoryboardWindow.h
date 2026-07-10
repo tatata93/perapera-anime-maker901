@@ -1,7 +1,10 @@
 #pragma once
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QMainWindow>
+#include <QPointF>
+#include <memory>
 
 class QTableWidgetItem;
 class QTableWidget;
@@ -9,10 +12,12 @@ class QLabel;
 class QPushButton;
 class QSlider;
 class QPlainTextEdit;
+class QDialog;
 class GLCanvas;
 
 namespace core {
 class Project;
+class Command;
 }
 
 // 絵コンテウィンドウ(別ウィンドウ)。絵コンテは全工程の前に単体で描くもの:
@@ -32,6 +37,13 @@ public:
     // 全行を再構築し、サムネイルを撮り直す(m_updatingガードで編集シグナルの暴発を防ぐ)。
     // vector再配置に備え、描画エリアも選択パネルへ再設定する
     void refresh();
+
+    // 動作確認用: 絵の枠のダブルクリックと同じ効果(拡大トグルON)を「絵を拡大」ボタン経由で起こす
+    void debugZoomToFrame();
+    // 動作確認用: プレビュー(ビデオコンテ)ダイアログを開き自動再生を開始する
+    void debugOpenPreview();
+    // 動作確認用: 現在開いているプレビューダイアログ(未使用時はnullptr)
+    QDialog* debugPreviewDialog() const { return m_previewDialog; }
 
 signals:
     void edited();  // カット番号/内容/セリフ/尺またはコンテ絵が編集された
@@ -63,6 +75,11 @@ private:
     void onActionTextChanged();
     void onDialogueTextChanged();
     int selectedPanelIndex() const;
+    // 絵の枠(kFrameRect)のダブルクリックで拡大/解除をトグルする。直前クリックで打たれた点があれば
+    // undoしてから判定する(imagePosは画像座標)
+    void onCanvasDoubleClicked(QPointF imagePos);
+    // プレビュー(ビデオコンテ)ダイアログを開く(既に開いていれば前面へ)
+    void openPreview();
 
     core::Project* m_project = nullptr;
     QTableWidget* m_table = nullptr;
@@ -82,4 +99,14 @@ private:
     float m_penRadius = 6.0f;
     float m_eraserRadius = 24.0f;
     QColor m_penColor = Qt::black;
+
+    QPushButton* m_zoomButton = nullptr;  // 「絵を拡大」チェック可能ボタン(絵の枠の拡大/解除)
+    bool m_frameZoomed = false;           // 絵の枠を拡大表示中か(パネル切替時も維持する)
+
+    // 直近のストロークコマンドと受領時刻。ダブルクリックの1回目で打たれてしまった点を、
+    // ダブルクリック検出時に取り消す(undo)ために保持する
+    std::unique_ptr<core::Command> m_lastStroke;
+    QElapsedTimer m_lastStrokeTimer;
+
+    QDialog* m_previewDialog = nullptr;  // プレビュー(ビデオコンテ再生)ダイアログ(未使用時はnullptr)
 };

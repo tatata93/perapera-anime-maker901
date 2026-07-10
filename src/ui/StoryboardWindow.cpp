@@ -2,7 +2,10 @@
 
 #include <QAbstractItemView>
 #include <QAction>
+#include <QApplication>
+#include <QCloseEvent>
 #include <QColorDialog>
+#include <QDialog>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -12,14 +15,17 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSlider>
 #include <QTableWidget>
 #include <QTextOption>
+#include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <algorithm>
 
 #include "core/Project.h"
+#include "core/StrokeCommand.h"
 #include "render/GLCanvas.h"
 
 namespace {
@@ -183,6 +189,163 @@ QImage renderSheetUnderlay(const core::StoryboardPanel& panel, int panelNo) {
     return image;
 }
 
+// 絵の枠(kFrameRect)部分を白背景に合成したQImageを返す。絵が未描画(枠内が全面透明)なら
+// 白紙のまま中央にカット番号(panelNo、1始まり)を薄く重ねる。プレビュー再生の1コマ分の絵に使う
+QImage composeFrameImage(const core::StoryboardPanel& panel, int panelNo) {
+    QImage composed(kFrameRect.size(), QImage::Format_RGB32);
+    composed.fill(Qt::white);
+
+    bool blank = true;
+    if (!panel.drawing.isEmpty()) {
+        const QImage source(panel.drawing.data(), panel.drawing.width(), panel.drawing.height(),
+                             QImage::Format_RGBA8888);
+        const QImage cropped = source.copy(kFrameRect);
+        for (int y = 0; y < cropped.height() && blank; ++y) {
+            const uchar* row = cropped.constScanLine(y);
+            for (int x = 0; x < cropped.width(); ++x) {
+                if (row[x * 4 + 3] != 0) {
+                    blank = false;
+                    break;
+                }
+            }
+        }
+        QPainter painter(&composed);
+        painter.drawImage(0, 0, cropped);
+        painter.end();
+    }
+
+    if (blank) {
+        QPainter painter(&composed);
+        QFont font = painter.font();
+        font.setPixelSize(64);
+        painter.setFont(font);
+        painter.setPen(QColor(0, 0, 0, 60));
+        painter.drawText(composed.rect(), Qt::AlignCenter, QStringLiteral("C#%1").arg(panelNo));
+        painter.end();
+    }
+    return composed;
+}
+
+// プレビュー(ビデオコンテ)再生ダイアログ。各パネルの絵をdurationFrames(24fps)どおりの時間だけ
+// 順番に表示し、最後まで行ったら先頭へループする。モードレスで、閉じるとタイマーを止める
+class StoryboardPreviewDialog : public QDialog {
+public:
+    StoryboardPreviewDialog(core::Project* project, QWidget* parent) : QDialog(parent), m_project(project) {
+        setWindowTitle(QObject::tr("コンテプレビュー"));
+        resize(990, 640);
+
+        auto* layout = new QVBoxLayout(this);
+        m_imageLabel = new QLabel(this);
+        m_imageLabel->setAlignment(Qt::AlignCenter);
+        m_imageLabel->setMinimumSize(320, 180);
+        m_imageLabel->setStyleSheet(QStringLiteral("background-color: black;"));
+        layout->addWidget(m_imageLabel, 1);
+
+        auto* bottomRow = new QHBoxLayout();
+        m_playButton = new QPushButton(QObject::tr("一時停止"), this);
+        bottomRow->addWidget(m_playButton);
+        m_infoLabel = new QLabel(this);
+        bottomRow->addWidget(m_infoLabel);
+        bottomRow->addStretch();
+        layout->addLayout(bottomRow);
+
+        connect(m_playButton, &QPushButton::clicked, this, [this] {
+            m_playing = !m_playing;
+            m_playButton->setText(m_playing ? QObject::tr("一時停止") : QObject::tr("再生"));
+        });
+
+        m_timer = new QTimer(this);
+        connect(m_timer, &QTimer::timeout, this, [this] { onTick(); });
+        m_timer->start(static_cast<int>(1000.0 / kFps));
+
+        m_row = 0;
+        m_frameInPanel = 0;
+        m_playing = true;
+        updateComposedImage();
+        updateInfoLabel();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QDialog::resizeEvent(event);
+        applyScaledPixmap();
+    }
+
+    void closeEvent(QCloseEvent* event) override {
+        m_timer->stop();
+        QDialog::closeEvent(event);
+    }
+
+private:
+    const std::vector<core::StoryboardPanel>* panels() const {
+        if (!m_project || m_project->sceneCount() == 0) return nullptr;
+        return &m_project->scene(0).storyboard();
+    }
+
+    void onTick() {
+        const std::vector<core::StoryboardPanel>* list = panels();
+        if (!list || list->empty()) return;
+        if (!m_playing) return;
+
+        ++m_frameInPanel;
+        const size_t duration = std::max<size_t>(1, (*list)[static_cast<size_t>(m_row)].durationFrames);
+        if (static_cast<size_t>(m_frameInPanel) >= duration) {
+            m_frameInPanel = 0;
+            m_row = (m_row + 1) % static_cast<int>(list->size());  // 最後まで行ったら先頭へループ
+            updateComposedImage();
+        }
+        updateInfoLabel();
+    }
+
+    // パネルが変わった時だけ絵を合成し直す(毎フレームの再合成はしない)
+    void updateComposedImage() {
+        const std::vector<core::StoryboardPanel>* list = panels();
+        if (!list || list->empty() || m_row < 0 || static_cast<size_t>(m_row) >= list->size()) {
+            m_composedImage = QImage();
+            applyScaledPixmap();
+            return;
+        }
+        m_composedImage = composeFrameImage((*list)[static_cast<size_t>(m_row)], m_row + 1);
+        applyScaledPixmap();
+    }
+
+    void applyScaledPixmap() {
+        if (m_composedImage.isNull()) {
+            m_imageLabel->setPixmap(QPixmap());
+            return;
+        }
+        m_imageLabel->setPixmap(QPixmap::fromImage(
+            m_composedImage.scaled(m_imageLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+    }
+
+    void updateInfoLabel() {
+        const std::vector<core::StoryboardPanel>* list = panels();
+        if (!list || list->empty()) {
+            m_infoLabel->setText(QObject::tr("パネルなし"));
+            return;
+        }
+        const core::StoryboardPanel& panel = (*list)[static_cast<size_t>(m_row)];
+        const double elapsedSec = static_cast<double>(m_frameInPanel) / kFps;
+        const double totalSec = static_cast<double>(panel.durationFrames) / kFps;
+        m_infoLabel->setText(QObject::tr("パネル %1/%2  カット%3  %4s / %5s")
+                                  .arg(m_row + 1)
+                                  .arg(list->size())
+                                  .arg(QString::fromStdString(panel.cutLabel))
+                                  .arg(elapsedSec, 0, 'f', 1)
+                                  .arg(totalSec, 0, 'f', 1));
+    }
+
+    core::Project* m_project;
+    QLabel* m_imageLabel = nullptr;
+    QLabel* m_infoLabel = nullptr;
+    QPushButton* m_playButton = nullptr;
+    QTimer* m_timer = nullptr;
+    QImage m_composedImage;  // 現在パネルの合成済み絵(白背景+絵の枠切り出し)。パネル変更時のみ更新
+    int m_row = 0;
+    int m_frameInPanel = 0;
+    bool m_playing = true;
+};
+
 }  // namespace
 
 StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
@@ -261,6 +424,11 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
     toolRow->addWidget(m_colorButton);
 
+    // 絵の枠(kFrameRect)の拡大表示トグル(枠のダブルクリックと同じ効果。ボタンでも切替可能)
+    m_zoomButton = new QPushButton(tr("絵を拡大"), rightContainer);
+    m_zoomButton->setCheckable(true);
+    toolRow->addWidget(m_zoomButton);
+
     toolRow->addStretch();
     rightLayout->addLayout(toolRow);
 
@@ -296,9 +464,24 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
 
     setCentralWidget(central);
 
-    // ストローク完了通知(Undo用コマンドが渡るが絵コンテにUndoはないため受け取って捨てる)
-    m_canvas->setStrokeCommandSink(
-        [this](std::unique_ptr<core::Command>) { onStrokeFinished(); });
+    // ストローク完了通知(Undo用コマンドが渡る。絵コンテに通常のUndo操作はないが、絵の枠の
+    // ダブルクリング1回目で打たれてしまう点を取り消すために直近のコマンドだけ保持しておく)
+    m_canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
+        m_lastStroke = std::move(command);
+        m_lastStrokeTimer.restart();
+        onStrokeFinished();
+    });
+    connect(m_canvas, &GLCanvas::doubleClickedOnCanvas, this, &StoryboardWindow::onCanvasDoubleClicked);
+
+    connect(m_zoomButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked == m_frameZoomed) return;  // トグル側からの反映(setChecked)による再帰を防ぐ
+        m_frameZoomed = checked;
+        if (m_frameZoomed) {
+            m_canvas->zoomToCanvasRect(kFrameRect);
+        } else {
+            m_canvas->resetView();
+        }
+    });
 
     connect(m_penButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
@@ -332,6 +515,8 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     toolBar->setMovable(false);
     QAction* refreshAction = toolBar->addAction(tr("更新"));
     connect(refreshAction, &QAction::triggered, this, &StoryboardWindow::refresh);
+    QAction* previewAction = toolBar->addAction(tr("プレビュー"));
+    connect(previewAction, &QAction::triggered, this, &StoryboardWindow::openPreview);
     m_totalLabel = new QLabel(toolBar);
     toolBar->addWidget(m_totalLabel);
     updateTotalDurationLabel();
@@ -581,6 +766,9 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
     // 手書きインク(drawing)はこの上に重なる
     m_canvas->setUnderlayImage(renderSheetUnderlay(panel, m_selectedRow + 1));
     m_canvas->setUnderlayOpacity(1.0f);
+
+    // 絵の枠を拡大表示中だった場合は、パネル切替後も拡大状態を維持する
+    if (m_frameZoomed) m_canvas->zoomToCanvasRect(kFrameRect);
 }
 
 void StoryboardWindow::onRadiusSliderChanged(int value) {
@@ -652,4 +840,49 @@ void StoryboardWindow::updateTotalDurationLabel() {
     }
     const double seconds = static_cast<double>(total) / kFps;
     m_totalLabel->setText(tr(" 合計: %1コマ (%2秒) ").arg(total).arg(seconds, 0, 'f', 2));
+}
+
+void StoryboardWindow::onCanvasDoubleClicked(QPointF imagePos) {
+    // ダブルクリックの1回目のクリックで既に点が打たれてしまっているため、直近のストロークが
+    // ダブルクリック判定時間(+余裕100ms)以内に受領されたものならundoして取り消す
+    if (m_lastStroke && m_lastStrokeTimer.isValid() &&
+        m_lastStrokeTimer.elapsed() <= QApplication::doubleClickInterval() + 100) {
+        if (auto* stroke = dynamic_cast<core::StrokeCommand*>(m_lastStroke.get())) {
+            stroke->undo();
+            m_canvas->notifyBitmapRegionChanged(stroke->bitmap(), stroke->region());
+            const int row = selectedPanelIndex();
+            if (row >= 0) updateThumbnail(row);
+        }
+    }
+    m_lastStroke.reset();
+
+    // トグル: 未拡大かつimagePosが絵の枠内ならズームイン。拡大中ならどこをダブルクリックしても解除する。
+    // 実際の反映はm_zoomButtonのtoggledハンドラに任せる(ボタンでの切替と経路を一本化するため)
+    if (m_frameZoomed) {
+        m_zoomButton->setChecked(false);
+    } else if (kFrameRect.contains(imagePos.toPoint())) {
+        m_zoomButton->setChecked(true);
+    }
+}
+
+void StoryboardWindow::openPreview() {
+    if (m_previewDialog) {
+        m_previewDialog->raise();
+        m_previewDialog->activateWindow();
+        return;
+    }
+    auto* dialog = new StoryboardPreviewDialog(m_project, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_previewDialog = dialog;
+    connect(dialog, &QObject::destroyed, this, [this] { m_previewDialog = nullptr; });
+    dialog->show();
+}
+
+void StoryboardWindow::debugZoomToFrame() {
+    // 絵の枠のダブルクリックと同じ経路(m_zoomButtonのtoggled)で拡大をONにする
+    if (m_zoomButton) m_zoomButton->setChecked(true);
+}
+
+void StoryboardWindow::debugOpenPreview() {
+    openPreview();
 }
