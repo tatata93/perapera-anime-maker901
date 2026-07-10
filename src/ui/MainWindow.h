@@ -18,6 +18,7 @@ class PrevizWindow;
 class TapPanel;
 class XsheetPanel;
 class QCloseEvent;
+class QComboBox;
 class QLabel;
 class QSlider;
 class QSpinBox;
@@ -155,6 +156,14 @@ private:
     // タップパネル操作(アクティブセルの位置キー一覧)
     void updateTapPanel();
 
+    // カット管理操作(カットバー)
+    void setupCutBar();
+    void updateCutBar();
+    void addCut();
+    void removeActiveCut();
+    void renameActiveCut();
+    void setActiveCut(int index);
+
     // セル(Xsheetの列)管理操作
     void addCel();
     void removeActiveCel();
@@ -193,6 +202,7 @@ private:
     GLCanvas* m_canvas = nullptr;
 
     size_t m_currentFrame = 0;
+    size_t m_activeCut = 0;    // 編集対象のカットインデックス
     size_t m_activeCel = 0;    // 編集対象のセルインデックス
     size_t m_activeLayer = 0;  // 編集対象のレイヤーインデックス(アクティブセル内)
     bool m_onionEnabled = true;
@@ -204,6 +214,7 @@ private:
     QSpinBox* m_fpsSpin = nullptr;
     QAction* m_playAction = nullptr;
     QAction* m_onionAction = nullptr;
+    QComboBox* m_cutCombo = nullptr;  // カットバーのカット選択
     FramePanel* m_framePanel = nullptr;
     LayerPanel* m_layerPanel = nullptr;
     PalettePanel* m_palettePanel = nullptr;

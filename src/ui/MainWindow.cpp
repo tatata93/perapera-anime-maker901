@@ -2,6 +2,7 @@
 
 #include <QActionGroup>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QColorDialog>
 #include <QDir>
 #include <QFile>
@@ -57,6 +58,15 @@ core::Bitmap makeTransparentCel() {
     bitmap.fill({0, 0, 0, 0});
     return bitmap;
 }
+// 新規カットの最小構成(セルA+レイヤー1+動画1、尺1コマ)を作る
+void initializeCut(core::Cut& cut) {
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("レイヤー 1");
+    layer.addFrame().bitmap() = makeTransparentCel();
+    cut.setFrameCount(1);
+    cel.setExposure(0, 0);
+}
+
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -87,6 +97,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setupPanels();
     setupMenus();
     setupToolBar();
+    setupCutBar();
     updateFrameLabel();
     updateWindowTitle();
 
@@ -104,8 +115,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 MainWindow::~MainWindow() = default;
 
 core::Cut& MainWindow::activeCut() {
-    // MVPでは1シーン・1カット固定
-    return m_project->scene(0).cut(0);
+    // シーンはMVPでは1つ固定。カットは複数対応(カットバーで切替)
+    core::Scene& scene = m_project->scene(0);
+    m_activeCut = std::min(m_activeCut, scene.cutCount() - 1);
+    return scene.cut(m_activeCut);
 }
 
 core::Cel& MainWindow::activeCel() {
@@ -168,15 +181,11 @@ void MainWindow::updateCanvasLayers() {
 void MainWindow::createNewDocument() {
     m_project = std::make_unique<core::Project>("Untitled");
     core::Scene& scene = m_project->addScene("Scene 1");
-    core::Cut& cut = scene.addCut("Cut 1");
-    core::Cel& cel = cut.addCel("A");
-    core::Layer& layer = cel.addLayer("レイヤー 1");
-    core::Frame& frame = layer.addFrame();
-    frame.bitmap() = makeTransparentCel();
-    cut.setFrameCount(1);
-    cel.setExposure(0, 0);  // コマ1に動画1を割付
+    core::Cut& cut = scene.addCut("カット 1");
+    initializeCut(cut);
 
     m_currentFrame = 0;
+    m_activeCut = 0;
     m_activeCel = 0;
     m_activeLayer = 0;
     updateCanvasLayers();
@@ -424,6 +433,95 @@ void MainWindow::updatePenColorButton() {
     if (!m_penColorButton) return;
     m_penColorButton->setStyleSheet(
         QStringLiteral("background-color: %1; border: 1px solid #444;").arg(m_penColor.name()));
+}
+
+void MainWindow::setupCutBar() {
+    QToolBar* cutBar = addToolBar(tr("カット"));
+    cutBar->setMovable(false);
+
+    cutBar->addWidget(new QLabel(tr(" カット: "), this));
+    m_cutCombo = new QComboBox(this);
+    m_cutCombo->setMinimumWidth(140);
+    m_cutCombo->setFocusPolicy(Qt::ClickFocus);
+    connect(m_cutCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (index >= 0) setActiveCut(index);
+    });
+    cutBar->addWidget(m_cutCombo);
+
+    QAction* addAction = cutBar->addAction(tr("カット追加"));
+    connect(addAction, &QAction::triggered, this, &MainWindow::addCut);
+    QAction* removeAction = cutBar->addAction(tr("カット削除"));
+    connect(removeAction, &QAction::triggered, this, &MainWindow::removeActiveCut);
+    QAction* renameAction = cutBar->addAction(tr("カット名変更"));
+    connect(renameAction, &QAction::triggered, this, &MainWindow::renameActiveCut);
+
+    updateCutBar();
+}
+
+void MainWindow::updateCutBar() {
+    if (!m_cutCombo) return;
+    const QSignalBlocker blocker(m_cutCombo);  // 再構築でsetActiveCutが暴発しないように
+    m_cutCombo->clear();
+    core::Scene& scene = m_project->scene(0);
+    for (size_t i = 0; i < scene.cutCount(); ++i) {
+        m_cutCombo->addItem(QString::fromStdString(scene.cut(i).name()));
+    }
+    m_cutCombo->setCurrentIndex(static_cast<int>(m_activeCut));
+}
+
+// カット切替: 編集位置をリセットし、全パネル・プリビズを新カットへ追従させる
+void MainWindow::setActiveCut(int index) {
+    if (m_playing) togglePlayback();
+    core::Scene& scene = m_project->scene(0);
+    if (index < 0 || static_cast<size_t>(index) >= scene.cutCount()) return;
+    m_activeCut = static_cast<size_t>(index);
+    m_currentFrame = 0;
+    m_activeCel = 0;
+    m_activeLayer = 0;
+    m_commands.clear();             // 別カットのBitmapを参照するUndoを破棄
+    m_canvas->clearTextureCache();
+    if (m_previzWindow) {
+        m_previzWindow->setScene(&activeCut().previz());
+        m_previzWindow->setTimeline(m_currentFrame, activeCut().frameCount());
+    }
+    updateCanvasLayers();
+    updateOnionSkin();
+    updateFrameLabel();
+    updateLayerPanel();
+    updateXsheetPanel();
+    updateUnderlay();
+    updateCutBar();
+}
+
+void MainWindow::addCut() {
+    if (m_playing) return;
+    core::Scene& scene = m_project->scene(0);
+    core::Cut& cut = scene.addCut(tr("カット %1").arg(scene.cutCount() + 1).toStdString());
+    initializeCut(cut);
+    m_dirty = true;
+    updateWindowTitle();
+    setActiveCut(static_cast<int>(scene.cutCount() - 1));
+}
+
+void MainWindow::removeActiveCut() {
+    if (m_playing) return;
+    core::Scene& scene = m_project->scene(0);
+    if (scene.cutCount() <= 1) return;  // 最後の1カットは消さない
+    scene.removeCut(m_activeCut);
+    m_dirty = true;
+    updateWindowTitle();
+    setActiveCut(static_cast<int>(std::min(m_activeCut, scene.cutCount() - 1)));
+}
+
+void MainWindow::renameActiveCut() {
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("カット名変更"), tr("カット名:"), QLineEdit::Normal,
+                                               QString::fromStdString(activeCut().name()), &ok);
+    if (!ok || name.isEmpty()) return;
+    activeCut().setName(name.toStdString());
+    m_dirty = true;
+    updateWindowTitle();
+    updateCutBar();
 }
 
 void MainWindow::setupPanels() {
@@ -1126,12 +1224,14 @@ bool MainWindow::loadFromFile(const QString& path) {
     if (m_playing) togglePlayback();
     m_commands.clear();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
     m_project = std::move(project);
+    m_activeCut = 0;
     m_activeCel = 0;
     m_activeLayer = 0;
     m_canvas->clearTextureCache();
     if (m_previzWindow) m_previzWindow->setScene(&activeCut().previz());  // 旧シーンへのポインタを差し替え
     setCurrentFrame(0);
     updateLayerPanel();
+    updateCutBar();
     updatePalettePanel();
     updateXsheetPanel();
     m_currentFilePath = path;
