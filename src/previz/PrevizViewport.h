@@ -65,6 +65,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
 private:
     struct GpuPrimitive {
@@ -100,7 +101,11 @@ private:
     void buildCameraGizmo();
 
     QMatrix4x4 cameraView(const core::PrevizCameraState& state) const;
-    QMatrix4x4 cameraProjection(size_t frame) const;
+    QMatrix4x4 cameraProjection(size_t frame, float aspect) const;
+    // シーン一式(グリッド/モデル/ギズモ)を指定のビュー射影で描く(paintGLとオフスクリーンで共用)
+    void renderScene(const QMatrix4x4& viewProj);
+    // FPS移動: ローカル方向(x=右, y=上, z=前)へ視点を動かす
+    void moveFreely(const QVector3D& localDir, float step);
 
     core::PrevizScene* m_scene = nullptr;
     size_t m_frame = 0;

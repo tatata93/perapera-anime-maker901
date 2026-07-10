@@ -43,8 +43,8 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     cameraViewAction->setCheckable(true);
     connect(cameraViewAction, &QAction::toggled, this, [this](bool checked) {
         m_viewport->setViewMode(checked ? PrevizViewport::ViewMode::Camera : PrevizViewport::ViewMode::Work);
-        statusBar()->showMessage(checked ? tr("カメラ視点: 右ドラッグ=見回し / 中=移動 / ホイール=前後(カメラを編集)")
-                                         : tr("作業視点: 右ドラッグ=軌道 / 中=パン / ホイール=距離 / 左ドラッグ=選択モデル移動(Shift=上下)"));
+        statusBar()->showMessage(checked ? tr("カメラ視点: 右ドラッグ=見回し / WASD+Q/E=移動 / ホイール=前後(カメラを編集)")
+                                         : tr("作業視点: 右ドラッグ=軌道 / WASD+Q/E=移動 / 左ドラッグ=選択モデル移動(Shift=上下)"));
     });
     toolBar->addSeparator();
     toolBar->addWidget(new QLabel(tr(" 焦点距離: "), this));
@@ -143,6 +143,17 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     });
     auto* modelKeyButton = new QPushButton(tr("現在コマにモデルキー"), container);
     layout->addWidget(modelKeyButton);
+    auto* modelKeyClearButton = new QPushButton(tr("モデルキー削除"), container);
+    layout->addWidget(modelKeyClearButton);
+    connect(modelKeyClearButton, &QPushButton::clicked, this, [this] {
+        core::PrevizModel* model = selectedModel();
+        if (!model) return;
+        model->transformKeys.erase(m_viewport->frame());
+        rebuildSheet();
+        m_viewport->update();
+        refreshTransformUi();
+        emit sceneEdited();
+    });
     connect(modelKeyButton, &QPushButton::clicked, this, [this] {
         core::PrevizModel* model = selectedModel();
         if (!model) return;
@@ -295,7 +306,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     m_pitchDownButton->setEnabled(true);
 
     statusBar()->showMessage(
-        tr("作業視点: 右ドラッグ=軌道 / 中=パン / ホイール=距離 / 左ドラッグ=選択モデル移動(Shift=上下)"));
+        tr("作業視点: 右ドラッグ=軌道 / WASD+Q/E=移動 / 左ドラッグ=選択モデル移動(Shift=上下)"));
 }
 
 core::PrevizModel* PrevizWindow::selectedModel() {
