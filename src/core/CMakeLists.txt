@@ -20,6 +20,10 @@ add_library(perapera_core STATIC
     Command.h
     Compositor.cpp
     Compositor.h
+    Effect.cpp
+    Effect.h
+    EffectProcessor.cpp
+    EffectProcessor.h
     CommandStack.cpp
     CommandStack.h
     ProjectIO.cpp

@@ -12,6 +12,7 @@
 class CameraPanel;
 class CelPanel;
 class EditWindow;
+class EffectPanel;
 class FramePanel;
 class GLCanvas;
 class LayerPanel;
@@ -129,6 +130,12 @@ public:
     // グローバルコマ18(カット2内)へシークする
     void debugSetupEditDemo();
 
+    // 撮影パネル確認用
+    EffectPanel* effectPanel() const { return m_effectPanel; }
+    // 撮影デモ確認用: ストローク1本を描き、全体ブラー(半径6)・全体パラ(既定)・
+    // セル0対象グローの3エフェクトを追加してから撮影プレビューダイアログを開く
+    void debugSetupEffectsDemo();
+
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
     // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる
     void checkAutosaveRecovery();
@@ -196,6 +203,12 @@ private:
     void updateCameraPanel();
     // カメラパネルの現在の表示値からキャンバスのオーバーレイ矩形を更新する
     void updateCameraOverlay();
+
+    // 撮影パネル操作(カットのエフェクトスタック)
+    void updateEffectPanel();
+    // 「現在コマをプレビュー」要求: activeCut()の現在コマをrenderCutFrameで描画し、
+    // 撮影パネルのプレビューダイアログへ渡す
+    void showEffectPreview();
 
     // カット管理操作(カットバー)
     void setupCutBar();
@@ -279,6 +292,7 @@ private:
     CelPanel* m_celPanel = nullptr;
     TapPanel* m_tapPanel = nullptr;
     CameraPanel* m_cameraPanel = nullptr;
+    EffectPanel* m_effectPanel = nullptr;
     PrevizWindow* m_previzWindow = nullptr;  // 別ウィンドウ(遅延生成)
     StoryboardWindow* m_storyboardWindow = nullptr;  // 絵コンテウィンドウ(別ウィンドウ、遅延生成)
     SettingBoardWindow* m_settingBoardWindow = nullptr;  // 設定ボードウィンドウ(別ウィンドウ、遅延生成)

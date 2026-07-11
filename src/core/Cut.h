@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Cel.h"
+#include "Effect.h"
 #include "Previz.h"
 
 namespace core {
@@ -68,6 +69,12 @@ public:
     void clearCameraKeys() { m_cameraKeys.clear(); }
     const std::map<size_t, CameraFrameState>& cameraKeys() const { return m_cameraKeys; }
 
+    // --- 撮影エフェクト(ブラー/グロー/パラ/シェイク等) ---
+    // カット単位のスタック。先頭から順に適用される(EffectProcessor::applyEffect参照)
+
+    std::vector<Effect>& effects() { return m_effects; }
+    const std::vector<Effect>& effects() const { return m_effects; }
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Cel>> m_cels;
@@ -77,6 +84,7 @@ private:
     std::string m_dialogue;   // 絵コンテ: セリフ
     std::map<size_t, CameraFrameState> m_cameraKeys;
     CutStatus m_status = CutStatus::NotStarted;  // 制作進捗(編集/カッティング工程の進行管理用)
+    std::vector<Effect> m_effects;               // 撮影エフェクトのスタック(カット単位)
 };
 
 }  // namespace core

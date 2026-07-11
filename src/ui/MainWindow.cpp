@@ -40,6 +40,7 @@
 #include "ui/CelPanel.h"
 #include "ui/CelSizeDialog.h"
 #include "ui/EditWindow.h"
+#include "ui/EffectPanel.h"
 #include "ui/ExportDialog.h"
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
@@ -769,6 +770,16 @@ void MainWindow::setupPanels() {
     });
     connect(m_cameraPanel, &CameraPanel::showFrameToggled, this, [this](bool) { updateCameraOverlay(); });
 
+    m_effectPanel = new EffectPanel(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_effectPanel);
+    connect(m_effectPanel, &EffectPanel::effectsEdited, this, [this] {
+        activeCut().effects() = m_effectPanel->effects();
+        m_dirty = true;
+        updateWindowTitle();
+        refreshEditWindowIfOpen();  // プレビューキャッシュを捨てて反映する
+    });
+    connect(m_effectPanel, &EffectPanel::previewRequested, this, &MainWindow::showEffectPreview);
+
     m_referencePanel = new ReferencePanel(this);
     addDockWidget(Qt::RightDockWidgetArea, m_referencePanel);
     connect(m_referencePanel, &ReferencePanel::boardSelected, this, [this](int index) {
@@ -919,6 +930,7 @@ void MainWindow::updateXsheetPanel() {
     updateCelPanel();  // セルの構成・可視状態・アクティブセルはXsheetと同じ元データなのでここで一緒に更新する
     updateTapPanel();  // 位置キーの一覧・現在コマの選択もアクティブセルに追従させる
     updateCameraPanel();  // カメラフレーム(カット単位)も現在コマ・現在カットに追従させる
+    updateEffectPanel();  // 撮影エフェクトのスタック(カット単位)も現在カットに追従させる
 }
 
 // activeCut()の全セルからセル名・可視状態を集めてセルパネルに反映する
@@ -984,6 +996,27 @@ void MainWindow::updateCameraOverlay() {
     const double cx = m_cameraPanel->centerX();
     const double cy = m_cameraPanel->centerY();
     m_canvas->setCameraFrameOverlay(QRectF(cx - w / 2.0, cy - h / 2.0, w, h));
+}
+
+// アクティブカットのエフェクトスタックとセル名一覧を撮影パネルへ反映する
+void MainWindow::updateEffectPanel() {
+    if (!m_effectPanel) return;
+    core::Cut& cut = activeCut();
+
+    QStringList celNames;
+    for (size_t ci = 0; ci < cut.celCount(); ++ci) celNames.append(QString::fromStdString(cut.cel(ci).name()));
+
+    m_effectPanel->setEffects(cut.effects(), celNames);
+}
+
+// 撮影パネルの「現在コマをプレビュー」要求: activeCut()の現在コマをエフェクト適用込みで
+// renderCutFrameし、撮影パネルのプレビューダイアログへ渡す
+void MainWindow::showEffectPreview() {
+    if (!m_effectPanel) return;
+    const core::Bitmap bitmap = core::renderCutFrame(activeCut(), m_currentFrame, kCanvasWidth, kCanvasHeight);
+    const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
+    // showPreview内でQPixmapへ変換(ピクセルデータを複製)するため、bitmap(ローカル変数)の寿命中に呼べば安全
+    m_effectPanel->showPreview(image);
 }
 
 // 新しいセルを1枚追加する。名前は自動連番(1文字目のセルは新規文書時に"A"が既にあるので、
@@ -1697,6 +1730,43 @@ void MainWindow::debugSetupCameraDemo() {
     m_dirty = true;
     updateWindowTitle();
     setCurrentFrame(12);
+}
+
+void MainWindow::debugSetupEffectsDemo() {
+    // 撮影パネル確認用: ストローク1本(矩形枠、セル0=アクティブセルに描く)を描いてから、
+    // 全体ブラー(半径6)・全体パラ(既定)・セル0対象グローの3エフェクトを追加し、
+    // 撮影プレビューダイアログを開く
+    debugSetupFillDemo();  // 目印になる矩形枠をアクティブセル(セル0)に描く
+
+    core::Cut& cut = activeCut();
+    cut.effects().clear();
+
+    core::Effect blur;
+    blur.type = core::EffectType::Blur;
+    blur.enabled = true;
+    blur.targetCel = -1;  // 全体
+    blur.params = core::effectDefaultParams(core::EffectType::Blur);
+    blur.params["radius"] = 6.0;
+    cut.effects().push_back(blur);
+
+    core::Effect para;
+    para.type = core::EffectType::Para;
+    para.enabled = true;
+    para.targetCel = -1;  // 全体
+    para.params = core::effectDefaultParams(core::EffectType::Para);
+    cut.effects().push_back(para);
+
+    core::Effect glow;
+    glow.type = core::EffectType::Glow;
+    glow.enabled = true;
+    glow.targetCel = 0;  // セル0対象
+    glow.params = core::effectDefaultParams(core::EffectType::Glow);
+    cut.effects().push_back(glow);
+
+    m_dirty = true;
+    updateWindowTitle();
+    updateEffectPanel();
+    showEffectPreview();
 }
 
 void MainWindow::debugSetupFillDemo() {

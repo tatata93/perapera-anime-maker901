@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
+
+#include "EffectProcessor.h"
 
 namespace core {
 
@@ -101,21 +104,62 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
         const int offsetX = static_cast<int>(std::lround(position.x));
         const int offsetY = static_cast<int>(std::lround(position.y));
 
-        for (size_t li = 0; li < cel.layerCount(); ++li) {
-            const Layer& layer = cel.layer(li);
-            if (!layer.visible()) continue;
-            if (layer.role() == LayerRole::ColorTrace && !options.includeColorTrace) continue;
-            if (layer.role() == LayerRole::Correction && !options.includeCorrection) continue;
-            if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
+        // このセルをtargetCelとする有効な撮影エフェクトを集める(スタック順)
+        std::vector<const Effect*> celEffects;
+        for (const Effect& effect : cut.effects()) {
+            if (effect.enabled && effect.targetCel == static_cast<int>(ci)) celEffects.push_back(&effect);
+        }
 
-            const Bitmap& src = layer.frame(static_cast<size_t>(drawing)).bitmap();
-            if (src.isEmpty()) continue;
-            blendOver(out, src, offsetX, offsetY);
+        if (celEffects.empty()) {
+            // 従来経路: レイヤーを直接outへblendOverする(エフェクト無しの場合の性能維持、バイト同一を保証)
+            for (size_t li = 0; li < cel.layerCount(); ++li) {
+                const Layer& layer = cel.layer(li);
+                if (!layer.visible()) continue;
+                if (layer.role() == LayerRole::ColorTrace && !options.includeColorTrace) continue;
+                if (layer.role() == LayerRole::Correction && !options.includeCorrection) continue;
+                if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
+
+                const Bitmap& src = layer.frame(static_cast<size_t>(drawing)).bitmap();
+                if (src.isEmpty()) continue;
+                blendOver(out, src, offsetX, offsetY);
+            }
+        } else {
+            // エフェクトあり: セルのレイヤーをまずセル自身の座標系(0,0起点)の透明キャンバスへ合成し、
+            // そのコピーへエフェクトを適用してから画面へ合成する(他セル・紙には影響しない)
+            std::vector<const Bitmap*> visibleLayers;
+            int celW = 0;
+            int celH = 0;
+            for (size_t li = 0; li < cel.layerCount(); ++li) {
+                const Layer& layer = cel.layer(li);
+                if (!layer.visible()) continue;
+                if (layer.role() == LayerRole::ColorTrace && !options.includeColorTrace) continue;
+                if (layer.role() == LayerRole::Correction && !options.includeCorrection) continue;
+                if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
+
+                const Bitmap& src = layer.frame(static_cast<size_t>(drawing)).bitmap();
+                if (src.isEmpty()) continue;
+                visibleLayers.push_back(&src);
+                celW = std::max(celW, src.width());
+                celH = std::max(celH, src.height());
+            }
+            if (celW > 0 && celH > 0) {
+                Bitmap celImage(celW, celH);
+                celImage.fill({0, 0, 0, 0});
+                for (const Bitmap* src : visibleLayers) blendOver(celImage, *src, 0, 0);
+                for (const Effect* effect : celEffects) applyEffect(celImage, *effect, frame);
+                blendOver(out, celImage, offsetX, offsetY);
+            }
         }
     }
 
+    // 全セル合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
+    for (const Effect& effect : cut.effects()) {
+        if (effect.enabled && effect.targetCel == -1) applyEffect(out, effect, frame);
+    }
+
     // カメラフレーム(画面に写る範囲)が指定されていればクロップ+リサンプルする。
-    // キーが無い場合は完全に既存動作のまま(バイト単位で同一)
+    // エフェクトの後にクロップする(撮影の自然な順: エフェクト→カメラ)。
+    // キーもエフェクトも無い場合は完全に既存動作のまま(バイト単位で同一)
     if (const auto cam = cut.cameraFrameAt(frame)) {
         out = applyCameraFrame(out, *cam, width, height);
     }

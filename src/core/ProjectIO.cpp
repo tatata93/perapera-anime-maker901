@@ -177,6 +177,19 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                 }
                 jCut["cameraKeys"] = std::move(jCameraKeys);
             }
+            // 撮影エフェクトのスタック。空なら省略する
+            if (!cut.effects().empty()) {
+                json jEffects = json::array();
+                for (const Effect& effect : cut.effects()) {
+                    json jParams = json::object();
+                    for (const auto& [key, value] : effect.params) jParams[key] = value;
+                    jEffects.push_back({{"type", static_cast<int>(effect.type)},
+                                        {"enabled", effect.enabled},
+                                        {"targetCel", effect.targetCel},
+                                        {"params", std::move(jParams)}});
+                }
+                jCut["effects"] = std::move(jEffects);
+            }
             jCuts.push_back(std::move(jCut));
         }
         // 絵コンテ(パネル列)。絵はフレームと同じblob方式で圧縮する
@@ -443,6 +456,22 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                         state.center = {jKey.at("cx").get<float>(), jKey.at("cy").get<float>()};
                         state.scale = jKey.at("scale").get<double>();
                         cut.setCameraKey(jKey.at("frame").get<size_t>(), state);
+                    }
+                }
+
+                // 撮影エフェクトのスタック(任意、欠落時は空のまま)
+                if (jCut.contains("effects")) {
+                    for (const json& jEffect : jCut.at("effects")) {
+                        Effect effect;
+                        effect.type = static_cast<EffectType>(jEffect.value("type", 0));
+                        effect.enabled = jEffect.value("enabled", true);
+                        effect.targetCel = jEffect.value("targetCel", -1);
+                        if (jEffect.contains("params")) {
+                            for (auto it = jEffect.at("params").begin(); it != jEffect.at("params").end(); ++it) {
+                                effect.params[it.key()] = it.value().get<double>();
+                            }
+                        }
+                        cut.effects().push_back(std::move(effect));
                     }
                 }
 
