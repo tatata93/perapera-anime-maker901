@@ -1,0 +1,279 @@
+#include <catch2/catch_test_macros.hpp>
+#include <cmath>
+#include <cstring>
+
+#include "core/Multiplane.h"
+
+namespace {
+
+// 全面透明のアートワークを作る
+core::Bitmap makeTransparent(int w, int h) {
+    core::Bitmap bmp(w, h);
+    bmp.fill({0, 0, 0, 0});
+    return bmp;
+}
+
+// 中心付近に1px の目印(不透明)を置いた透明アートワークを作る
+core::Bitmap makeMarker(int w, int h, int mx, int my, core::Bitmap::Pixel color) {
+    core::Bitmap bmp = makeTransparent(w, h);
+    bmp.setPixel(mx, my, color);
+    return bmp;
+}
+
+// 「白からどれだけ離れているか(=赤み)」を重みとして使い、画像全体の重心x座標を求める。
+// 単一の目印(赤)がバイリニア補間やレンズボケでピクセルにまたがって出ても位置を検出できる
+double weightedCentroidX(const core::Bitmap& img) {
+    double sumW = 0.0;
+    double sumWX = 0.0;
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 0; x < img.width(); ++x) {
+            const core::Bitmap::Pixel p = img.pixel(x, y);
+            const double w = 255.0 - p.g;  // 背景は白(g=255)、赤い目印はg=0
+            sumW += w;
+            sumWX += w * x;
+        }
+    }
+    REQUIRE(sumW > 0.0);
+    return sumWX / sumW;
+}
+
+// (x,y)の重み(赤み)を返す
+double weightAt(const core::Bitmap& img, int x, int y) {
+    if (x < 0 || y < 0 || x >= img.width() || y >= img.height()) return 0.0;
+    return 255.0 - img.pixel(x, y).g;
+}
+
+// 画像内で最も重み(赤み)が強いピクセルを探す
+std::pair<int, int> findPeak(const core::Bitmap& img) {
+    int bestX = 0, bestY = 0;
+    double best = -1.0;
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 0; x < img.width(); ++x) {
+            const double w = weightAt(img, x, y);
+            if (w > best) {
+                best = w;
+                bestX = x;
+                bestY = y;
+            }
+        }
+    }
+    return {bestX, bestY};
+}
+
+// ピンホール投影の期待画素位置(spec通りの式)
+double expectedPinholePixel(double wx, double focal, double distanceMm, double sensorWidthMm, int width) {
+    return width * (0.5 + wx * focal / (distanceMm * sensorWidthMm));
+}
+
+}  // namespace
+
+TEST_CASE("renderMultiplane pinhole projects a centered marker to the image center", "[core][multiplane]") {
+    core::Bitmap art = makeMarker(40, 40, 20, 20, {255, 0, 0, 255});  // ビットマップ中央の目印
+
+    core::MultiplanePlane plane;
+    plane.artwork = &art;
+    plane.distanceMm = 500.0;
+    plane.widthMm = 400.0;
+
+    core::MultiplaneCamera camera;
+    camera.focalLengthMm = 50.0;
+    camera.sensorWidthMm = 36.0;
+    camera.apertureFStop = 0.0;  // ピンホール
+    camera.focusDistanceMm = 500.0;
+
+    const core::Bitmap out = core::renderMultiplane({plane}, camera, 100, 100, 1, 1);
+
+    const double cx = weightedCentroidX(out);
+    REQUIRE(std::abs(cx - 50.0) <= 2.0);
+}
+
+TEST_CASE("renderMultiplane pinhole projects an offset marker to the expected pixel", "[core][multiplane]") {
+    // ビットマップ中央からずれた位置(列30)に目印を置く。テクセル中心は u=mx+0.5 とみなす
+    core::Bitmap art = makeMarker(40, 40, 30, 20, {255, 0, 0, 255});
+
+    core::MultiplanePlane plane;
+    plane.artwork = &art;
+    plane.distanceMm = 500.0;
+    plane.widthMm = 400.0;
+
+    core::MultiplaneCamera camera;
+    camera.focalLengthMm = 50.0;
+    camera.sensorWidthMm = 36.0;
+    camera.apertureFStop = 0.0;
+    camera.focusDistanceMm = 500.0;
+
+    const core::Bitmap out = core::renderMultiplane({plane}, camera, 100, 100, 1, 1);
+
+    // 目印テクセル(列30)のワールドx座標(mm)
+    const double u = 30.5;
+    const double wx = ((u / art.width()) - 0.5) * plane.widthMm;
+    const double expectedPx = expectedPinholePixel(wx, camera.focalLengthMm, plane.distanceMm, camera.sensorWidthMm, 100);
+
+    const double cx = weightedCentroidX(out);
+    REQUIRE(std::abs(cx - expectedPx) <= 2.0);
+}
+
+TEST_CASE("renderMultiplane draws a farther plane smaller (parallax/scale)", "[core][multiplane]") {
+    // 縦バー(列16-23が不透明)を持つアートワークを、距離D と 2D に置いて描画幅を比較する
+    core::Bitmap art = makeTransparent(40, 40);
+    for (int y = 0; y < 40; ++y) {
+        for (int x = 16; x < 24; ++x) art.setPixel(x, y, {255, 0, 0, 255});
+    }
+
+    core::MultiplaneCamera camera;
+    camera.focalLengthMm = 50.0;
+    camera.sensorWidthMm = 36.0;
+    camera.apertureFStop = 0.0;
+    camera.focusDistanceMm = 500.0;
+
+    const auto barWidthAt = [&](double distanceMm) -> int {
+        core::MultiplanePlane plane;
+        plane.artwork = &art;
+        plane.distanceMm = distanceMm;
+        plane.widthMm = 400.0;
+        const core::Bitmap out = core::renderMultiplane({plane}, camera, 100, 100, 1, 1);
+
+        const int row = 50;
+        double maxW = 0.0;
+        for (int x = 0; x < out.width(); ++x) maxW = std::max(maxW, weightAt(out, x, row));
+        REQUIRE(maxW > 0.0);
+        int count = 0;
+        for (int x = 0; x < out.width(); ++x) {
+            if (weightAt(out, x, row) > maxW * 0.5) ++count;
+        }
+        return count;
+    };
+
+    const int widthNear = barWidthAt(500.0);
+    const int widthFar = barWidthAt(1000.0);
+
+    // 2倍遠い平面は描画幅がおよそ半分になる
+    REQUIRE(widthFar > 0);
+    REQUIRE(std::abs(widthFar - widthNear / 2) <= 2);
+}
+
+TEST_CASE("renderMultiplane depth of field: focus plane is sharp, other planes blur", "[core][multiplane]") {
+    core::Bitmap art = makeMarker(40, 40, 20, 20, {255, 0, 0, 255});  // 中央の目印
+
+    core::MultiplaneCamera camera;
+    camera.focalLengthMm = 50.0;
+    camera.sensorWidthMm = 36.0;
+    camera.apertureFStop = 2.0;    // 開放
+    camera.focusDistanceMm = 500.0;
+
+    core::MultiplanePlane focusPlane;
+    focusPlane.artwork = &art;
+    focusPlane.distanceMm = 500.0;  // ピントが合う距離
+    focusPlane.widthMm = 400.0;
+
+    core::MultiplanePlane defocusPlane;
+    defocusPlane.artwork = &art;
+    defocusPlane.distanceMm = 250.0;  // ピントが合わない距離
+    defocusPlane.widthMm = 400.0;
+
+    const core::Bitmap outFocus = core::renderMultiplane({focusPlane}, camera, 100, 100, 64, 1);
+    const core::Bitmap outDefocus = core::renderMultiplane({defocusPlane}, camera, 100, 100, 64, 1);
+
+    // ピークピクセル周辺(半径2px)にどれだけエネルギーが集中しているか
+    const auto concentrationRatio = [](const core::Bitmap& img) {
+        const auto [px, py] = findPeak(img);
+        double total = 0.0;
+        double nearPeak = 0.0;
+        for (int y = 0; y < img.height(); ++y) {
+            for (int x = 0; x < img.width(); ++x) {
+                const double w = weightAt(img, x, y);
+                total += w;
+                if (std::abs(x - px) <= 2 && std::abs(y - py) <= 2) nearPeak += w;
+            }
+        }
+        REQUIRE(total > 0.0);
+        return nearPeak / total;
+    };
+
+    const double focusRatio = concentrationRatio(outFocus);
+    const double defocusRatio = concentrationRatio(outDefocus);
+
+    REQUIRE(focusRatio > 0.9);    // シャープ: ほぼ全エネルギーがピーク近傍に集中
+    REQUIRE(defocusRatio < 0.6);  // ボケ: 周囲に広く拡散
+
+    // 決定論性: 同じseedで2回描画するとバイト同一になる
+    const core::Bitmap outDefocus2 = core::renderMultiplane({defocusPlane}, camera, 100, 100, 64, 1);
+    REQUIRE(outDefocus.width() == outDefocus2.width());
+    REQUIRE(outDefocus.height() == outDefocus2.height());
+    REQUIRE(std::memcmp(outDefocus.data(), outDefocus2.data(), outDefocus.byteSize()) == 0);
+}
+
+TEST_CASE("renderMultiplane composites planes front-to-back with straight-alpha over", "[core][multiplane]") {
+    // 手前: 左半分(列0-19)が不透明緑、右半分(列20-39)は透明
+    core::Bitmap front = makeTransparent(40, 40);
+    for (int y = 0; y < 40; ++y) {
+        for (int x = 0; x < 20; ++x) front.setPixel(x, y, {0, 180, 0, 255});
+    }
+
+    // 奥: 全面不透明赤、ただし右下1/4(列20-39, 行20-39)は透明
+    core::Bitmap back = makeTransparent(40, 40);
+    for (int y = 0; y < 40; ++y) {
+        for (int x = 0; x < 40; ++x) {
+            if (x >= 20 && y >= 20) continue;  // 右下は透明のまま
+            back.setPixel(x, y, {255, 0, 0, 255});
+        }
+    }
+
+    core::MultiplanePlane frontPlane;
+    frontPlane.artwork = &front;
+    frontPlane.distanceMm = 300.0;
+    frontPlane.widthMm = 300.0;  // 視野(216mm)より広く、フレーム全体を覆う
+
+    core::MultiplanePlane backPlane;
+    backPlane.artwork = &back;
+    backPlane.distanceMm = 600.0;
+    backPlane.widthMm = 500.0;  // 視野(432mm)より広く、フレーム全体を覆う
+
+    core::MultiplaneCamera camera;
+    camera.focalLengthMm = 50.0;
+    camera.sensorWidthMm = 36.0;
+    camera.apertureFStop = 0.0;  // ピンホール
+    camera.focusDistanceMm = 500.0;
+
+    const core::Bitmap out = core::renderMultiplane({frontPlane, backPlane}, camera, 100, 100, 1, 1);
+
+    // 左半分: 手前の緑が奥を隠す
+    const core::Bitmap::Pixel left = out.pixel(20, 50);
+    REQUIRE(left.g > left.r);
+    REQUIRE(left.g > 100);
+
+    // 右上: 手前は透明、奥の赤が見える
+    const core::Bitmap::Pixel rightTop = out.pixel(80, 20);
+    REQUIRE(rightTop.r > rightTop.g);
+    REQUIRE(rightTop.r > 100);
+
+    // 右下: 手前・奥とも透明 → 紙(白)
+    const core::Bitmap::Pixel rightBottom = out.pixel(80, 80);
+    REQUIRE(rightBottom.r > 240);
+    REQUIRE(rightBottom.g > 240);
+    REQUIRE(rightBottom.b > 240);
+}
+
+TEST_CASE("renderMultiplane pinhole is nearly identical with samples=1 and samples=16", "[core][multiplane]") {
+    core::Bitmap art = makeMarker(40, 40, 20, 20, {255, 0, 0, 255});
+
+    core::MultiplanePlane plane;
+    plane.artwork = &art;
+    plane.distanceMm = 500.0;
+    plane.widthMm = 400.0;
+
+    core::MultiplaneCamera camera;
+    camera.focalLengthMm = 50.0;
+    camera.sensorWidthMm = 36.0;
+    camera.apertureFStop = 0.0;  // ピンホール(ジッタのみがサンプル間の差)
+    camera.focusDistanceMm = 500.0;
+
+    const core::Bitmap out1 = core::renderMultiplane({plane}, camera, 100, 100, 1, 1);
+    const core::Bitmap out16 = core::renderMultiplane({plane}, camera, 100, 100, 16, 1);
+
+    const double cx1 = weightedCentroidX(out1);
+    const double cx16 = weightedCentroidX(out16);
+    REQUIRE(std::abs(cx1 - cx16) <= 2.0);
+    REQUIRE(std::abs(cx1 - 50.0) <= 2.0);
+    REQUIRE(std::abs(cx16 - 50.0) <= 2.0);
+}

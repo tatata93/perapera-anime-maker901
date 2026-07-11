@@ -9,6 +9,7 @@ add_executable(perapera_core_tests
     FillToolTests.cpp
     ProjectIOTests.cpp
     StrokeCommandTests.cpp
+    MultiplaneTests.cpp
 )
 
 target_link_libraries(perapera_core_tests PRIVATE

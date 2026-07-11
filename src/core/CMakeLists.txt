@@ -24,6 +24,8 @@ add_library(perapera_core STATIC
     Effect.h
     EffectProcessor.cpp
     EffectProcessor.h
+    Multiplane.cpp
+    Multiplane.h
     CommandStack.cpp
     CommandStack.h
     ProjectIO.cpp

@@ -1,9 +1,12 @@
 #include <QApplication>
 #include <QDialog>
 #include <QFile>
+#include <QImage>
 #include <QTimer>
 #include <algorithm>
+#include <cmath>
 
+#include "core/Multiplane.h"
 #include "previz/PrevizViewport.h"
 #include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
@@ -13,8 +16,112 @@
 #include "ui/ShootingWindow.h"
 #include "ui/StoryboardWindow.h"
 
+namespace {
+
+// core::BitmapをQImage(Format_RGBA8888)に変換する(--multiplane-testの保存用)
+QImage bitmapToQImage(const core::Bitmap& bmp) {
+    QImage image(bmp.width(), bmp.height(), QImage::Format_RGBA8888);
+    for (int y = 0; y < bmp.height(); ++y) {
+        for (int x = 0; x < bmp.width(); ++x) {
+            const core::Bitmap::Pixel p = bmp.pixel(x, y);
+            image.setPixelColor(x, y, QColor(p.r, p.g, p.b, p.a));
+        }
+    }
+    return image;
+}
+
+// --multiplane-test用のデモアートワーク「背景」: 薄青地+グリッド線
+core::Bitmap makeMultiplaneBackgroundArt() {
+    core::Bitmap bmp(160, 160);
+    bmp.fill({210, 230, 245, 255});  // 薄青
+    for (int i = 0; i <= 160; i += 20) {
+        for (int y = 0; y < 160; ++y) {
+            if (i < 160) bmp.setPixel(i, y, {120, 150, 190, 255});
+        }
+        for (int x = 0; x < 160; ++x) {
+            if (i < 160) bmp.setPixel(x, i, {120, 150, 190, 255});
+        }
+    }
+    return bmp;
+}
+
+// --multiplane-test用のデモアートワーク「セルA」: 透明地に赤い矩形枠(中央)
+core::Bitmap makeMultiplaneCelAArt() {
+    core::Bitmap bmp(80, 80);
+    bmp.fill({0, 0, 0, 0});
+    const int x0 = 20, y0 = 20, x1 = 59, y1 = 59;
+    for (int x = x0; x <= x1; ++x) {
+        bmp.setPixel(x, y0, {220, 30, 30, 255});
+        bmp.setPixel(x, y1, {220, 30, 30, 255});
+    }
+    for (int y = y0; y <= y1; ++y) {
+        bmp.setPixel(x0, y, {220, 30, 30, 255});
+        bmp.setPixel(x1, y, {220, 30, 30, 255});
+    }
+    return bmp;
+}
+
+// --multiplane-test用のデモアートワーク「セルB」: 透明地に左寄りの緑の丸
+core::Bitmap makeMultiplaneCelBArt() {
+    core::Bitmap bmp(60, 60);
+    bmp.fill({0, 0, 0, 0});
+    const double cx = 20.0, cy = 30.0, r = 7.0;
+    for (int y = 0; y < 60; ++y) {
+        for (int x = 0; x < 60; ++x) {
+            const double dx = x - cx;
+            const double dy = y - cy;
+            if (dx * dx + dy * dy <= r * r) bmp.setPixel(x, y, {40, 170, 70, 255});
+        }
+    }
+    return bmp;
+}
+
+}  // namespace
+
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
+
+    // 動作確認用: --multiplane-test <出力PNG> でマルチプレーン撮影台のデモシーン
+    // (奥=背景/中=セルA/手前=セルB、セルAにピント)をレイトレースし、
+    // ウィンドウを開かずにPNGへ保存して終了する
+    {
+        const QStringList earlyArgs = app.arguments();
+        const int multiplaneIndex = earlyArgs.indexOf("--multiplane-test");
+        if (multiplaneIndex >= 0 && multiplaneIndex + 1 < earlyArgs.size()) {
+            const QString outputPath = earlyArgs.at(multiplaneIndex + 1);
+
+            static core::Bitmap backgroundArt = makeMultiplaneBackgroundArt();
+            static core::Bitmap celAArt = makeMultiplaneCelAArt();
+            static core::Bitmap celBArt = makeMultiplaneCelBArt();
+
+            core::MultiplanePlane background;
+            background.artwork = &backgroundArt;
+            background.distanceMm = 1000.0;
+            background.widthMm = 800.0;
+
+            core::MultiplanePlane celA;
+            celA.artwork = &celAArt;
+            celA.distanceMm = 500.0;
+            celA.widthMm = 400.0;
+
+            // セルB自体のアートワーク内で丸を左寄りに描いているため、平面自体は中央(offset 0)でよい
+            core::MultiplanePlane celB;
+            celB.artwork = &celBArt;
+            celB.distanceMm = 300.0;
+            celB.widthMm = 300.0;
+
+            core::MultiplaneCamera camera;
+            camera.focalLengthMm = 50.0;
+            camera.sensorWidthMm = 36.0;
+            camera.apertureFStop = 2.0;
+            camera.focusDistanceMm = 500.0;  // セルAにピント
+
+            const core::Bitmap result =
+                core::renderMultiplane({background, celA, celB}, camera, 960, 540, 16, 1);
+            bitmapToQImage(result).save(outputPath);
+            return 0;
+        }
+    }
 
     MainWindow window;
     window.resize(1280, 800);
