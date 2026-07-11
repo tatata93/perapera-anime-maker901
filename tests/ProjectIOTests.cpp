@@ -166,6 +166,16 @@ TEST_CASE("Setting boards round trip through ppam", "[core][io][settingboard]") 
     board1.image.setPixel(5, 2, {10, 200, 40, 255});  // 目印ピクセル
     project.settingBoards().push_back(std::move(board1));
 
+    // 色指定(色指定書)2色
+    core::ColorSpec spec1;
+    spec1.name = "肌";
+    spec1.color = {255, 224, 196, 255};
+    core::ColorSpec spec2;
+    spec2.name = "肌 影";
+    spec2.color = {233, 183, 150, 255};
+    project.settingBoards()[0].colorSpecs.push_back(spec1);
+    project.settingBoards()[0].colorSpecs.push_back(spec2);
+
     core::SettingBoard board2;  // 空画像のボード
     board2.name = "美術: 教室";
     project.settingBoards().push_back(std::move(board2));
@@ -187,6 +197,18 @@ TEST_CASE("Setting boards round trip through ppam", "[core][io][settingboard]") 
     REQUIRE(marked.b == 40);
     REQUIRE(boards[1].name == "美術: 教室");
     REQUIRE(boards[1].image.isEmpty());
+
+    // 色指定の往復確認
+    REQUIRE(boards[0].colorSpecs.size() == 2);
+    REQUIRE(boards[0].colorSpecs[0].name == "肌");
+    REQUIRE(boards[0].colorSpecs[0].color.r == 255);
+    REQUIRE(boards[0].colorSpecs[0].color.g == 224);
+    REQUIRE(boards[0].colorSpecs[0].color.b == 196);
+    REQUIRE(boards[0].colorSpecs[1].name == "肌 影");
+    REQUIRE(boards[0].colorSpecs[1].color.r == 233);
+    REQUIRE(boards[0].colorSpecs[1].color.g == 183);
+    REQUIRE(boards[0].colorSpecs[1].color.b == 150);
+    REQUIRE(boards[1].colorSpecs.empty());
 
     std::filesystem::remove(path);
 }

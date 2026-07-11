@@ -2,6 +2,7 @@
 
 #include <QFont>
 #include <QListWidget>
+#include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -14,6 +15,11 @@ CelPanel::CelPanel(QWidget* parent) : QDockWidget(tr("セル"), parent) {
 
     m_list = new QListWidget(container);
     layout->addWidget(m_list);
+
+    // 引きセル: アクティブセルの用紙サイズ(キャンバスより大きい紙にしてパンを再現)を変更する
+    auto* sizeButton = new QPushButton(tr("セルサイズ..."), container);
+    connect(sizeButton, &QPushButton::clicked, this, &CelPanel::celSizeRequested);
+    layout->addWidget(sizeButton);
 
     setWidget(container);
 

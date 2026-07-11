@@ -418,6 +418,25 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --oversize-test <出力PNG> で引きセル(セルの用紙サイズをキャンバスより
+    // 大きくする)を検証する。アクティブセルを横2倍にリサイズし、左半分=赤/右半分=青の
+    // 縦線を描いた上で位置キー(コマ0=0、コマ2=-キャンバス幅)を打ち、コマ2(右半分=青が
+    // 見えているはず)へ移動した状態を保存して終了する
+    const int oversizeIndex = args.indexOf("--oversize-test");
+    if (oversizeIndex >= 0 && oversizeIndex + 1 < args.size()) {
+        const QString outputPath = args.at(oversizeIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupOversizeDemo();
+            QTimer::singleShot(200, &window, [&window, outputPath] {
+                window.debugSetCurrentFrame(2);
+                QTimer::singleShot(150, &window, [&window, outputPath] {
+                    window.canvas()->grabFramebuffer().save(outputPath);
+                    QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                });
+            });
+        });
+    }
+
     // 動作確認用: --move-test <PNG1> <PNG2> で移動ツール(タップ/ペグ移動)のドラッグを検証する。
     // 矩形枠を描いた状態を保存後、中央から(120,60)ドラッグして移動後の状態を保存する
     // (PNG1→PNG2で矩形が右下へ移動しているはず)
@@ -556,16 +575,21 @@ int main(int argc, char* argv[]) {
         });
     }
 
-    // 動作確認用: --settingboard-test <出力PNG> で設定ボードデモ(ボード2枚、1枚目に赤い線)を
-    // 組んでから設定ボードウィンドウを開き、その全体(ボード一覧+描画エリア)を保存して終了する
+    // 動作確認用: --settingboard-test <出力PNG> で設定ボードデモ(ボード2枚、1枚目に赤い線+色指定3色)を
+    // 組んでから設定ボードウィンドウを開き、その全体(ボード一覧+描画エリア+色指定)を保存する。
+    // 併せてメインウィンドウ(参照ドックの色指定込み)も「ベース名_main.png」で保存して終了する
     const int settingBoardIndex = args.indexOf("--settingboard-test");
     if (settingBoardIndex >= 0 && settingBoardIndex + 1 < args.size()) {
         const QString outputPath = args.at(settingBoardIndex + 1);
-        QTimer::singleShot(500, &window, [&window, outputPath] {
+        const int dotIndex = outputPath.lastIndexOf('.');
+        const QString mainOutputPath = dotIndex >= 0 ? outputPath.left(dotIndex) + "_main" + outputPath.mid(dotIndex)
+                                                       : outputPath + "_main";
+        QTimer::singleShot(500, &window, [&window, outputPath, mainOutputPath] {
             window.debugSetupSettingBoardDemo();
             window.debugOpenSettingBoard();
-            QTimer::singleShot(400, &window, [&window, outputPath] {
+            QTimer::singleShot(400, &window, [&window, outputPath, mainOutputPath] {
                 window.settingBoardWindow()->grab().save(outputPath);
+                window.grab().save(mainOutputPath);  // 参照ドック(色指定含む)を確認するためメインウィンドウも保存
                 QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
         });

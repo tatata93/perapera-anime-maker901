@@ -38,6 +38,7 @@
 #include "render/GLCanvas.h"
 #include "ui/CameraPanel.h"
 #include "ui/CelPanel.h"
+#include "ui/CelSizeDialog.h"
 #include "ui/EditWindow.h"
 #include "ui/ExportDialog.h"
 #include "ui/FramePanel.h"
@@ -58,11 +59,20 @@ constexpr int kDefaultFps = 24;  // タイムシートは24fps基準
 const QString kAutosaveFileName = QStringLiteral("autosave.ppam");
 constexpr int kAutosaveIntervalMs = 180 * 1000;
 
-// 透明なセル(作画用紙)。紙の白はGLCanvasが背景として描画する
-core::Bitmap makeTransparentCel() {
-    core::Bitmap bitmap(kCanvasWidth, kCanvasHeight);
+// 透明なセル(作画用紙)。紙の白はGLCanvasが背景として描画する。
+// width/heightを省略するとキャンバスサイズになる
+core::Bitmap makeTransparentCel(int width = kCanvasWidth, int height = kCanvasHeight) {
+    core::Bitmap bitmap(width, height);
     bitmap.fill({0, 0, 0, 0});
     return bitmap;
+}
+
+// 引きセル対応: 指定セルの用紙サイズ(0ならキャンバスサイズ)で透明ビットマップを作る。
+// 既存セルへ動画やレイヤーを追加する際、既にリサイズ済みの用紙サイズに合わせるために使う
+core::Bitmap makeTransparentCelForCel(const core::Cel& cel) {
+    const int w = cel.paperWidth() > 0 ? cel.paperWidth() : kCanvasWidth;
+    const int h = cel.paperHeight() > 0 ? cel.paperHeight() : kCanvasHeight;
+    return makeTransparentCel(w, h);
 }
 // 新規カットの最小構成(セルA+レイヤー1+動画1、尺1コマ)を作る
 void initializeCut(core::Cut& cut) {
@@ -218,7 +228,7 @@ void MainWindow::addFrameAfterCurrent() {
     core::Cel& cel = activeCel();
     const int newDrawing = static_cast<int>(cel.drawingCount());
     for (size_t li = 0; li < cel.layerCount(); ++li) {
-        cel.layer(li).addFrame().bitmap() = makeTransparentCel();
+        cel.layer(li).addFrame().bitmap() = makeTransparentCelForCel(cel);
     }
     const bool currentIsEmpty = cel.exposure(m_currentFrame) == -1;
     const size_t target = currentIsEmpty ? m_currentFrame : m_currentFrame + 1;
@@ -686,6 +696,7 @@ void MainWindow::setupPanels() {
     connect(m_celPanel, &CelPanel::visibilityChanged, this, [this](int index, bool visible) {
         setCelVisibility(index, visible);
     });
+    connect(m_celPanel, &CelPanel::celSizeRequested, this, &MainWindow::openCelSizeDialog);
 
     m_tapPanel = new TapPanel(this);
     addDockWidget(Qt::RightDockWidgetArea, m_tapPanel);
@@ -764,6 +775,12 @@ void MainWindow::setupPanels() {
         m_referenceBoardIndex = index;
         updateReferencePanel();
     });
+    // 参照ドックの色指定行クリック: パレットパネルの色選択と同じ経路でペン色に反映する
+    connect(m_referencePanel, &ReferencePanel::colorPicked, this, [this](QColor color) {
+        m_penColor = color;
+        m_canvas->setPenColor(m_penColor);
+        updatePenColorButton();
+    });
 
     updateLayerPanel();
     updatePalettePanel();
@@ -804,7 +821,7 @@ void MainWindow::addLayerToActiveCel() {
     const size_t frameCount = activeLayer().frameCount();
     core::Layer& layer = cel.addLayer(tr("レイヤー %1").arg(cel.layerCount() + 1).toStdString());
     for (size_t fi = 0; fi < frameCount; ++fi) {
-        layer.addFrame().bitmap() = makeTransparentCel();  // 既存レイヤーとコマ数を揃える
+        layer.addFrame().bitmap() = makeTransparentCelForCel(cel);  // 既存レイヤーとコマ数(・用紙サイズ)を揃える
     }
     m_activeLayer = cel.layerCount() - 1;
     m_commands.clear();
@@ -1025,6 +1042,32 @@ void MainWindow::renameActiveCel() {
     updateXsheetPanel();
     updateLayerPanel();
     updateFrameLabel();
+    updateWindowTitle();
+}
+
+// 引きセル: アクティブセルの用紙サイズ変更ダイアログを開く。OKで確定した場合、
+// セル内の全レイヤー・全フレームのビットマップを新サイズへ中央基準で移し替える
+void MainWindow::openCelSizeDialog() {
+    if (m_playing) return;
+    core::Cel& cel = activeCel();
+
+    CelSizeDialog dialog(cel.paperWidth(), cel.paperHeight(), kCanvasWidth, kCanvasHeight, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const int newW = dialog.paperWidth();
+    const int newH = dialog.paperHeight();
+    // 現在有効なサイズ(0ならキャンバスサイズ)と比較し、実質変更なしなら何もしない
+    const int effectiveW = cel.paperWidth() > 0 ? cel.paperWidth() : kCanvasWidth;
+    const int effectiveH = cel.paperHeight() > 0 ? cel.paperHeight() : kCanvasHeight;
+    if (newW == effectiveW && newH == effectiveH) return;
+
+    cel.resizePaper(newW, newH);
+
+    m_commands.clear();             // 全ビットマップが再確保されたためUndo履歴を破棄
+    m_canvas->clearTextureCache();  // 同上、テクスチャキャッシュも破棄
+    m_dirty = true;
+    updateCanvasLayers();
+    updateOnionSkin();
     updateWindowTitle();
 }
 
@@ -1604,6 +1647,43 @@ void MainWindow::debugSetupTapDemo() {
     setCurrentFrame(0);
 }
 
+void MainWindow::debugSetupOversizeDemo() {
+    // 引きセル: アクティブセルをキャンバス幅の2倍(横パン用の背景セル)にリサイズする。
+    // 既存の(キャンバスサイズの)動画1は中央基準で新サイズへ移し替えられる(元々空なので実害なし)
+    core::Cel& cel = activeCel();
+    cel.resizePaper(kCanvasWidth * 2, kCanvasHeight);
+    m_canvas->clearTextureCache();
+
+    // 用紙全域(縦方向は上〜下いっぱい)に、左半分=赤・右半分=青の縦線を描く
+    core::Bitmap& bitmap = activeLayer().frame(0).bitmap();
+    core::BrushEngine engine;
+    engine.settings().radius = 20.0f;
+
+    engine.settings().color = {220, 30, 30, 255};  // 左半分: 赤
+    const float leftX = kCanvasWidth * 0.5f;
+    engine.beginStroke(bitmap, leftX, kCanvasHeight * 0.1f, 1.0f);
+    engine.continueStroke(bitmap, leftX, kCanvasHeight * 0.9f, 1.0f);
+    engine.endStroke();
+
+    engine.settings().color = {30, 60, 220, 255};  // 右半分: 青
+    const float rightX = kCanvasWidth * 1.5f;
+    engine.beginStroke(bitmap, rightX, kCanvasHeight * 0.1f, 1.0f);
+    engine.continueStroke(bitmap, rightX, kCanvasHeight * 0.9f, 1.0f);
+    engine.endStroke();
+
+    // 位置キー: コマ0=オフセット0(左半分の赤がキャンバス内)、
+    // コマ2=左へキャンバス幅ぶんパン(セルが左へずれ、右半分の青がキャンバス内に来る)
+    core::Cut& cut = activeCut();
+    cut.setFrameCount(3);
+    for (size_t t = 0; t < 3; ++t) cel.setExposure(t, 0);  // 止め(同じ動画をコマ0〜2に表示)
+    cel.setPositionKey(0, {0.0f, 0.0f});
+    cel.setPositionKey(2, {static_cast<float>(-kCanvasWidth), 0.0f});
+
+    m_dirty = true;
+    updateWindowTitle();
+    setCurrentFrame(0);
+}
+
 void MainWindow::debugSetupCameraDemo() {
     // ストローク1本を描き、カット尺を24コマにしてカメラキーを2つ打つ
     // (コマ0=中心・100%、コマ23=左上寄り・50%)、コマ12(中間点)へ移動する
@@ -1934,15 +2014,24 @@ void MainWindow::updateReferencePanel() {
     m_referencePanel->setBoards(names, m_referenceBoardIndex);
 
     QImage image;
+    QList<QPair<QString, QColor>> colorSpecs;
     if (m_project && m_referenceBoardIndex >= 0 &&
         static_cast<size_t>(m_referenceBoardIndex) < m_project->settingBoards().size()) {
-        const core::Bitmap& board = m_project->settingBoards()[static_cast<size_t>(m_referenceBoardIndex)].image;
-        if (!board.isEmpty()) {
+        const core::SettingBoard& selectedBoard =
+            m_project->settingBoards()[static_cast<size_t>(m_referenceBoardIndex)];
+        if (!selectedBoard.image.isEmpty()) {
             // 参照パネルは表示専用のコピーを持つため、Bitmapの寿命/再配置に依存しないよう即コピーする
-            image = QImage(board.data(), board.width(), board.height(), QImage::Format_RGBA8888).copy();
+            image = QImage(selectedBoard.image.data(), selectedBoard.image.width(), selectedBoard.image.height(),
+                            QImage::Format_RGBA8888)
+                        .copy();
+        }
+        for (const core::ColorSpec& spec : selectedBoard.colorSpecs) {
+            colorSpecs.append({QString::fromStdString(spec.name),
+                               QColor(spec.color.r, spec.color.g, spec.color.b, spec.color.a)});
         }
     }
     m_referencePanel->setImage(image);
+    m_referencePanel->setColorSpecs(colorSpecs);
 }
 
 void MainWindow::debugSetupSettingBoardDemo() {
@@ -1963,6 +2052,11 @@ void MainWindow::debugSetupSettingBoardDemo() {
     engine.beginStroke(board1.image, kCanvasWidth * 0.2f, kCanvasHeight * 0.2f, 1.0f);
     engine.continueStroke(board1.image, kCanvasWidth * 0.8f, kCanvasHeight * 0.8f, 1.0f);
     engine.endStroke();
+
+    // 色指定(色指定書): 「肌」「肌 影」「髪」の3色を見本として登録する
+    board1.colorSpecs.push_back({"肌", {255, 224, 196, 255}});
+    board1.colorSpecs.push_back({"肌 影", {233, 183, 150, 255}});
+    board1.colorSpecs.push_back({"髪", {80, 60, 120, 255}});
 
     core::SettingBoard board2;
     board2.name = "美術: 教室";

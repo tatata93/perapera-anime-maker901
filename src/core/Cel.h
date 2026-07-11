@@ -63,12 +63,29 @@ public:
     void removePositionKey(size_t frame) { m_positionKeys.erase(frame); }
     const std::map<size_t, Vec2>& positionKeys() const { return m_positionKeys; }
 
+    // --- セルの用紙サイズ(引きセル用、px) ---
+    // 0はキャンバスサイズに従う(既定)。背景セルなどをキャンバスより大きい紙にすると、
+    // 位置キーでタップ位置をずらすことでパン(引き)を再現できる
+
+    int paperWidth() const { return m_paperWidth; }
+    int paperHeight() const { return m_paperHeight; }
+    // 用紙サイズの値だけを設定する(ビットマップ自体のリサイズは行わない)
+    void setPaperSize(int w, int h) {
+        m_paperWidth = w;
+        m_paperHeight = h;
+    }
+    // セル内の全レイヤー・全フレームの非空ビットマップを新サイズへ中央基準で移し替える
+    // (はみ出す部分は切り捨て、余白は透明)。paperWidth/HeightもnewW/newHへ更新する
+    void resizePaper(int newW, int newH);
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Layer>> m_layers;
     std::vector<int> m_exposure;
     std::map<size_t, Vec2> m_positionKeys;
     bool m_visible = true;
+    int m_paperWidth = 0;   // 0=キャンバスサイズに従う
+    int m_paperHeight = 0;  // 0=キャンバスサイズに従う
 };
 
 }  // namespace core

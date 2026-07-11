@@ -139,6 +139,49 @@ TEST_CASE("renderCutFrame crops and resamples the camera frame", "[core][composi
     REQUIRE(zoomed.pixel(4, 4).g == 0);
 }
 
+TEST_CASE("renderCutFrame supports oversized paper cels panned via position keys (引きセル)",
+          "[core][compositor][paper]") {
+    // 引きセル: キャンバス幅Wの2倍(横パン用)の背景セルを作り、左半分と右半分に色違いの目印を置く。
+    // コマ0=オフセット0(セル左端がキャンバス左端、右半分の目印が画面内)、
+    // コマN=オフセット-W(セルが左へずれ、右半分の紙の中身がキャンバス右側に来る=左パン)
+    constexpr int kCanvasW = 8;
+    constexpr int kCanvasH = 8;
+    constexpr int kPaperW = kCanvasW * 2;
+
+    core::Cut cut("Cut 1");
+    core::Cel& cel = cut.addCel("BG");
+    cel.setPaperSize(kPaperW, kCanvasH);
+    core::Layer& layer = cel.addLayer("背景");
+
+    core::Bitmap bitmap(kPaperW, kCanvasH);
+    bitmap.fill({0, 0, 0, 0});
+    // 左半分(紙のx=2)に赤、右半分(紙のx=10)に青の目印を置く
+    bitmap.setPixel(2, 4, {255, 0, 0, 255});
+    bitmap.setPixel(kCanvasW + 2, 4, {0, 0, 255, 255});
+    layer.addFrame().bitmap() = std::move(bitmap);
+
+    cut.setFrameCount(3);
+    cel.setExposure(0, 0);
+    cel.setExposure(1, 0);
+    cel.setExposure(2, 0);
+    cel.setPositionKey(0, {0.0f, 0.0f});                          // コマ0: オフセット0
+    cel.setPositionKey(2, {static_cast<float>(-kCanvasW), 0.0f});  // コマ2: 左へキャンバス幅ぶんパン
+
+    const auto f0 = core::renderCutFrame(cut, 0, kCanvasW, kCanvasH);
+    // コマ0: 紙のx=2(赤)がキャンバスx=2に、紙のx=10(青)は画面外(クリップ)
+    REQUIRE(f0.pixel(2, 4).r == 255);
+    REQUIRE(f0.pixel(2, 4).b == 0);
+    // 右半分(紙のx=10相当のキャンバス位置)は紙(白)のまま
+    REQUIRE(f0.pixel(6, 4).r == 255);
+    REQUIRE(f0.pixel(6, 4).g == 255);
+    REQUIRE(f0.pixel(6, 4).b == 255);
+
+    const auto f2 = core::renderCutFrame(cut, 2, kCanvasW, kCanvasH);
+    // コマ2: オフセット-8適用後、紙のx=10(青)がキャンバスx=2に来る。紙のx=2(赤)は画面外
+    REQUIRE(f2.pixel(2, 4).b == 255);
+    REQUIRE(f2.pixel(2, 4).r == 0);
+}
+
 TEST_CASE("renderCutFrame blends semi-transparent pixels over paper", "[core][compositor]") {
     core::Cut cut("Cut 1");
     core::Cel& cel = cut.addCel("A");

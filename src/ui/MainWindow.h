@@ -116,6 +116,11 @@ public:
     void debugSetupSettingBoardDemo();
     ReferencePanel* referencePanel() const { return m_referencePanel; }
 
+    // 引きセル確認用: アクティブセルを横2倍(キャンバス幅の2倍)にリサイズし、
+    // 左右半分に色違いのストロークを描いた上で、位置キー(コマ0=0、コマ2=-キャンバス幅)を打ち、
+    // 尺3で止めてからコマ2へ移動する
+    void debugSetupOversizeDemo();
+
     // 編集(カッティング)ウィンドウ確認用
     void debugOpenEditWindow() { openEditWindow(); }
     EditWindow* editWindow() const { return m_editWindow; }
@@ -209,6 +214,8 @@ private:
     void setCelVisibility(int celIndex, bool visible);
     // アクティブセルを切り替える(CelPanelでのセル選択・Xsheetのセルクリックで共通利用)
     void setActiveCel(int celIndex);
+    // 引きセル: アクティブセルの用紙サイズ変更ダイアログを開く(CelPanelの「セルサイズ...」ボタンから)
+    void openCelSizeDialog();
 
     // 下敷き(参照画像/連番シーケンス)。セッション限定でプロジェクトには保存しない
     void openUnderlay();

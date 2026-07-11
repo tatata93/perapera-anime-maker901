@@ -28,6 +28,8 @@ add_executable(perapera-anime-maker901
     ui/XsheetPanel.h
     ui/ExportDialog.cpp
     ui/ExportDialog.h
+    ui/CelSizeDialog.cpp
+    ui/CelSizeDialog.h
     render/GLCanvas.cpp
     render/GLCanvas.h
     previz/GltfLoader.cpp

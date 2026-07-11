@@ -149,11 +149,15 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                 for (const auto& [keyFrame, position] : cel.positionKeys()) {
                     jPositionKeys.push_back({keyFrame, position.x, position.y});
                 }
-                jCels.push_back({{"name", cel.name()},
-                                 {"visible", cel.visible()},
-                                 {"exposure", cel.exposures()},
-                                 {"positionKeys", std::move(jPositionKeys)},
-                                 {"layers", std::move(jLayers)}});
+                json jCelEntry = {{"name", cel.name()},
+                                  {"visible", cel.visible()},
+                                  {"exposure", cel.exposures()},
+                                  {"positionKeys", std::move(jPositionKeys)},
+                                  {"layers", std::move(jLayers)}};
+                // 用紙サイズ(引きセル)。0(キャンバスサイズに従う既定)は省略する
+                if (cel.paperWidth() > 0) jCelEntry["paperWidth"] = cel.paperWidth();
+                if (cel.paperHeight() > 0) jCelEntry["paperHeight"] = cel.paperHeight();
+                jCels.push_back(std::move(jCelEntry));
             }
             json jCut = {{"name", cut.name()},
                          {"frameCount", cut.frameCount()},
@@ -224,6 +228,18 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
             jBoard["blobSize"] = static_cast<uint64_t>(compSize);
             jBoard["rawSize"] = static_cast<uint64_t>(board.image.byteSize());
             blobs.insert(blobs.end(), compressed.begin(), compressed.begin() + compSize);
+        }
+        // 色指定(名前付き色見本)。空なら省略する
+        if (!board.colorSpecs.empty()) {
+            json jColorSpecs = json::array();
+            for (const ColorSpec& spec : board.colorSpecs) {
+                jColorSpecs.push_back({{"name", spec.name},
+                                       {"r", spec.color.r},
+                                       {"g", spec.color.g},
+                                       {"b", spec.color.b},
+                                       {"a", spec.color.a}});
+            }
+            jBoard["colorSpecs"] = std::move(jColorSpecs);
         }
         jSettingBoards.push_back(std::move(jBoard));
     }
@@ -390,6 +406,8 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                 for (const json& jCel : jCut.at("cels")) {
                     Cel& cel = cut.addCel(jCel.at("name").get<std::string>());
                     cel.setVisible(jCel.value("visible", true));
+                    // 用紙サイズ(引きセル)。欠落時は0(キャンバスサイズに従う既定)のまま
+                    cel.setPaperSize(jCel.value("paperWidth", 0), jCel.value("paperHeight", 0));
                     for (const json& jLayer : jCel.at("layers")) {
                         Layer& layer = cel.addLayer(jLayer.at("name").get<std::string>());
                         if (!loadLayerFrames(layer, jLayer)) return nullptr;
@@ -463,6 +481,18 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                         return nullptr;
                     }
                     board.image = std::move(bitmap);
+                }
+                // 色指定(任意、存在しなければ空のまま)
+                if (jBoard.contains("colorSpecs")) {
+                    for (const json& jSpec : jBoard.at("colorSpecs")) {
+                        ColorSpec spec;
+                        spec.name = jSpec.value("name", std::string());
+                        spec.color.r = jSpec.value("r", static_cast<uint8_t>(0));
+                        spec.color.g = jSpec.value("g", static_cast<uint8_t>(0));
+                        spec.color.b = jSpec.value("b", static_cast<uint8_t>(0));
+                        spec.color.a = jSpec.value("a", static_cast<uint8_t>(255));
+                        board.colorSpecs.push_back(std::move(spec));
+                    }
                 }
                 project->settingBoards().push_back(std::move(board));
             }

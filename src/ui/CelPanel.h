@@ -10,7 +10,7 @@ class QListWidgetItem;
 // セル一覧のドッキングパネル。上のセルがリストの上に並ぶ(リスト行0=最前面セル)。
 // 各行のチェックボックスで可視/不可視を切り替えられる。
 // 追加/削除/並べ替えはXsheetパネル側の既存ボタン・右クリックメニューが担当するため、
-// このパネルはリスト表示とクリック操作のみを持つ(ボタンなし)。
+// このパネルはリスト表示とクリック操作、および「セルサイズ...」ボタン(引きセル用)を持つ。
 class CelPanel : public QDockWidget {
     Q_OBJECT
 
@@ -24,6 +24,8 @@ public:
 signals:
     void celSelected(int celIndex);                  // コア側インデックス
     void visibilityChanged(int celIndex, bool visible);  // コア側インデックス
+    // 「セルサイズ...」ボタン押下(引きセル: アクティブセルの用紙サイズ変更ダイアログを開く要求)
+    void celSizeRequested();
 
 private:
     // リスト行(0=最前面)とコア側インデックス(0=最奥)を相互変換する

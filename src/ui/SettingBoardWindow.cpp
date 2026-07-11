@@ -4,13 +4,17 @@
 #include <QColorDialog>
 #include <QFileDialog>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QImage>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QListWidgetItem>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPushButton>
+#include <QSize>
 #include <QSlider>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -28,6 +32,9 @@ constexpr int kBoardHeight = 1080;
 // 太さスライダーの範囲(ペン/消しゴム共通)
 constexpr int kRadiusMin = 1;
 constexpr int kRadiusMax = 40;
+
+// 色指定リストのスウォッチアイコンの一辺サイズ
+constexpr int kColorSpecSwatchSize = 16;
 
 // 画像を、既存の絵の上にsrc-over合成する。画像はboardサイズ内へアスペクト維持で
 // 最大フィットするよう拡大縮小し、中央配置する。合成はboardの透明度も考慮した
@@ -140,6 +147,24 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     m_canvas->setTool(GLCanvas::Tool::Pen);
     rightLayout->addWidget(m_canvas, 1);
 
+    // 色指定(色指定書): キャンバスの下に「肌」「髪 影」などの名前付き色見本を並べる
+    rightLayout->addWidget(new QLabel(tr("色指定"), rightContainer));
+    m_colorSpecList = new QListWidget(rightContainer);
+    m_colorSpecList->setIconSize(QSize(kColorSpecSwatchSize, kColorSpecSwatchSize));
+    m_colorSpecList->setFixedHeight(120);
+    rightLayout->addWidget(m_colorSpecList);
+
+    auto* colorSpecButtonLayout = new QHBoxLayout();
+    auto* addColorSpecButton = new QPushButton(tr("色を追加"), rightContainer);
+    auto* renameColorSpecButton = new QPushButton(tr("名前変更"), rightContainer);
+    auto* changeColorSpecButton = new QPushButton(tr("色変更"), rightContainer);
+    auto* removeColorSpecButton = new QPushButton(tr("削除"), rightContainer);
+    colorSpecButtonLayout->addWidget(addColorSpecButton);
+    colorSpecButtonLayout->addWidget(renameColorSpecButton);
+    colorSpecButtonLayout->addWidget(changeColorSpecButton);
+    colorSpecButtonLayout->addWidget(removeColorSpecButton);
+    rightLayout->addLayout(colorSpecButtonLayout);
+
     mainLayout->addWidget(rightContainer, 3);
 
     setCentralWidget(central);
@@ -168,6 +193,12 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(removeButton, &QPushButton::clicked, this, &SettingBoardWindow::removeBoard);
     connect(renameButton, &QPushButton::clicked, this, &SettingBoardWindow::renameBoard);
 
+    connect(m_colorSpecList, &QListWidget::itemDoubleClicked, this, &SettingBoardWindow::onColorSpecActivated);
+    connect(addColorSpecButton, &QPushButton::clicked, this, &SettingBoardWindow::addColorSpec);
+    connect(renameColorSpecButton, &QPushButton::clicked, this, &SettingBoardWindow::renameColorSpec);
+    connect(changeColorSpecButton, &QPushButton::clicked, this, &SettingBoardWindow::changeColorSpecColor);
+    connect(removeColorSpecButton, &QPushButton::clicked, this, &SettingBoardWindow::removeColorSpec);
+
     applyToolSettingsToCanvas();
 
     QToolBar* toolBar = addToolBar(tr("設定ボード"));
@@ -190,6 +221,7 @@ void SettingBoardWindow::refresh() {
         m_selectedRow = -1;
         m_updating = false;
         bindCanvasToSelectedBoard();
+        refreshColorSpecList();
         return;
     }
 
@@ -211,6 +243,7 @@ void SettingBoardWindow::refresh() {
     // 構造変更後は古いテクスチャを破棄し、vectorの再配置に備えて必ず選択ボードへ再設定する
     m_canvas->clearTextureCache();
     bindCanvasToSelectedBoard();
+    refreshColorSpecList();
 }
 
 void SettingBoardWindow::onSelectionChanged() {
@@ -219,6 +252,7 @@ void SettingBoardWindow::onSelectionChanged() {
     if (row < 0) return;
     m_selectedRow = row;
     bindCanvasToSelectedBoard();
+    refreshColorSpecList();
 }
 
 int SettingBoardWindow::selectedBoardIndex() const {
@@ -343,4 +377,130 @@ void SettingBoardWindow::applyToolSettingsToCanvas() {
     m_canvas->setPenRadius(m_penRadius);
     m_canvas->setPenColor(m_penColor);
     m_canvas->setEraserRadius(m_eraserRadius);
+}
+
+int SettingBoardWindow::selectedColorSpecIndex() const {
+    return m_colorSpecList ? m_colorSpecList->currentRow() : -1;
+}
+
+// 選択中ボードのcolorSpecsから色指定リストを再構築する。ボード未選択時は空にする
+void SettingBoardWindow::refreshColorSpecList() {
+    if (!m_colorSpecList) return;
+    m_updating = true;
+    m_colorSpecList->clear();
+
+    if (m_project && m_selectedRow >= 0) {
+        auto& boards = m_project->settingBoards();
+        if (static_cast<size_t>(m_selectedRow) < boards.size()) {
+            for (const core::ColorSpec& spec : boards[static_cast<size_t>(m_selectedRow)].colorSpecs) {
+                QPixmap pixmap(kColorSpecSwatchSize, kColorSpecSwatchSize);
+                pixmap.fill(QColor(spec.color.r, spec.color.g, spec.color.b, spec.color.a));
+                auto* item = new QListWidgetItem(QIcon(pixmap), QString::fromStdString(spec.name));
+                m_colorSpecList->addItem(item);
+            }
+        }
+    }
+
+    m_updating = false;
+}
+
+// 色を選び、名前を付けて選択中ボードのcolorSpecsへ追加する
+void SettingBoardWindow::addColorSpec() {
+    if (!m_project) return;
+    auto& boards = m_project->settingBoards();
+    if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+
+    const QColor chosen = QColorDialog::getColor(Qt::white, this, tr("色指定の色"));
+    if (!chosen.isValid()) return;
+
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("色指定の名前"), tr("名前(例: 肌、髪 影):"),
+                                                QLineEdit::Normal, QString(), &ok);
+    if (!ok || name.isEmpty()) return;
+
+    core::ColorSpec spec;
+    spec.name = name.toStdString();
+    spec.color = {static_cast<uint8_t>(chosen.red()), static_cast<uint8_t>(chosen.green()),
+                  static_cast<uint8_t>(chosen.blue()), static_cast<uint8_t>(chosen.alpha())};
+    boards[static_cast<size_t>(m_selectedRow)].colorSpecs.push_back(spec);
+
+    refreshColorSpecList();
+    emit edited();
+}
+
+// 選択中の色指定の名前を変更する
+void SettingBoardWindow::renameColorSpec() {
+    if (!m_project) return;
+    auto& boards = m_project->settingBoards();
+    if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    auto& specs = boards[static_cast<size_t>(m_selectedRow)].colorSpecs;
+    const int row = selectedColorSpecIndex();
+    if (row < 0 || static_cast<size_t>(row) >= specs.size()) return;
+
+    bool ok = false;
+    const QString newName =
+        QInputDialog::getText(this, tr("名前を変更"), tr("名前:"), QLineEdit::Normal,
+                               QString::fromStdString(specs[static_cast<size_t>(row)].name), &ok);
+    if (!ok || newName.isEmpty()) return;
+    specs[static_cast<size_t>(row)].name = newName.toStdString();
+
+    refreshColorSpecList();
+    m_colorSpecList->setCurrentRow(row);
+    emit edited();
+}
+
+// 選択中の色指定の色を変更する
+void SettingBoardWindow::changeColorSpecColor() {
+    if (!m_project) return;
+    auto& boards = m_project->settingBoards();
+    if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    auto& specs = boards[static_cast<size_t>(m_selectedRow)].colorSpecs;
+    const int row = selectedColorSpecIndex();
+    if (row < 0 || static_cast<size_t>(row) >= specs.size()) return;
+
+    const core::Bitmap::Pixel& current = specs[static_cast<size_t>(row)].color;
+    const QColor chosen =
+        QColorDialog::getColor(QColor(current.r, current.g, current.b, current.a), this, tr("色指定の色"));
+    if (!chosen.isValid()) return;
+    specs[static_cast<size_t>(row)].color = {static_cast<uint8_t>(chosen.red()), static_cast<uint8_t>(chosen.green()),
+                                              static_cast<uint8_t>(chosen.blue()),
+                                              static_cast<uint8_t>(chosen.alpha())};
+
+    refreshColorSpecList();
+    m_colorSpecList->setCurrentRow(row);
+    emit edited();
+}
+
+// 選択中の色指定を削除する
+void SettingBoardWindow::removeColorSpec() {
+    if (!m_project) return;
+    auto& boards = m_project->settingBoards();
+    if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    auto& specs = boards[static_cast<size_t>(m_selectedRow)].colorSpecs;
+    const int row = selectedColorSpecIndex();
+    if (row < 0 || static_cast<size_t>(row) >= specs.size()) return;
+
+    specs.erase(specs.begin() + row);
+
+    refreshColorSpecList();
+    if (!specs.empty()) {
+        m_colorSpecList->setCurrentRow(std::min(row, static_cast<int>(specs.size()) - 1));
+    }
+    emit edited();
+}
+
+// 色指定リストの行をダブルクリック: その色を現在のペン色に設定し、全キャンバス(このウィンドウの
+// 描画エリア)へ適用、色ボタンのスウォッチも更新する
+void SettingBoardWindow::onColorSpecActivated(QListWidgetItem* item) {
+    if (!item || !m_project) return;
+    auto& boards = m_project->settingBoards();
+    if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    const auto& specs = boards[static_cast<size_t>(m_selectedRow)].colorSpecs;
+    const int row = m_colorSpecList->row(item);
+    if (row < 0 || static_cast<size_t>(row) >= specs.size()) return;
+
+    const core::Bitmap::Pixel& color = specs[static_cast<size_t>(row)].color;
+    m_penColor = QColor(color.r, color.g, color.b, color.a);
+    m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+    applyToolSettingsToCanvas();
 }

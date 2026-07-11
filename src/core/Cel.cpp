@@ -4,6 +4,26 @@
 
 namespace core {
 
+namespace {
+
+// srcを中央基準でdstへコピーする(dstはあらかじめ透明で初期化されている前提)。
+// dstの方が小さい方向ははみ出す部分を切り捨てる(同じ式で拡大・縮小の両方に対応する)
+void copyCentered(const Bitmap& src, Bitmap& dst) {
+    const int offsetX = (dst.width() - src.width()) / 2;
+    const int offsetY = (dst.height() - src.height()) / 2;
+    const int srcX0 = std::max(0, -offsetX);
+    const int srcY0 = std::max(0, -offsetY);
+    const int srcX1 = std::min(src.width(), dst.width() - offsetX);
+    const int srcY1 = std::min(src.height(), dst.height() - offsetY);
+    for (int y = srcY0; y < srcY1; ++y) {
+        for (int x = srcX0; x < srcX1; ++x) {
+            dst.setPixel(x + offsetX, y + offsetY, src.pixel(x, y));
+        }
+    }
+}
+
+}  // namespace
+
 Layer& Cel::addLayer(std::string name) {
     m_layers.push_back(std::make_unique<Layer>(std::move(name)));
     return *m_layers.back();
@@ -51,6 +71,23 @@ void Cel::moveLayer(size_t from, size_t to) {
     std::unique_ptr<Layer> moved = std::move(m_layers[from]);
     m_layers.erase(m_layers.begin() + static_cast<ptrdiff_t>(from));
     m_layers.insert(m_layers.begin() + static_cast<ptrdiff_t>(to), std::move(moved));
+}
+
+void Cel::resizePaper(int newW, int newH) {
+    if (newW <= 0 || newH <= 0) return;  // 不正値は無視する
+
+    for (auto& layer : m_layers) {
+        for (size_t fi = 0; fi < layer->frameCount(); ++fi) {
+            Bitmap& bitmap = layer->frame(fi).bitmap();
+            if (bitmap.isEmpty()) continue;  // 空コマ(未描画)はそのまま
+            Bitmap resized(newW, newH);
+            resized.fill({0, 0, 0, 0});
+            copyCentered(bitmap, resized);
+            bitmap = std::move(resized);
+        }
+    }
+    m_paperWidth = newW;
+    m_paperHeight = newH;
 }
 
 }  // namespace core

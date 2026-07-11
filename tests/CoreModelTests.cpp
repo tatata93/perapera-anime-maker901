@@ -218,6 +218,95 @@ TEST_CASE("renderCutFrame applies cel position offset", "[core][tap][compositor]
     REQUIRE(f2.pixel(6, 4).r == 0);  // (2+4, 2+2)
 }
 
+TEST_CASE("Cel paper size defaults to 0 (canvas size) and is settable", "[core][paper]") {
+    core::Cel cel("A");
+    REQUIRE(cel.paperWidth() == 0);
+    REQUIRE(cel.paperHeight() == 0);
+
+    cel.setPaperSize(1920 * 2, 1080);
+    REQUIRE(cel.paperWidth() == 3840);
+    REQUIRE(cel.paperHeight() == 1080);
+}
+
+TEST_CASE("Cel::resizePaper moves non-empty bitmaps to the new size (centered)", "[core][paper]") {
+    core::Cel cel("A");
+    core::Layer& layer = cel.addLayer("L1");
+
+    // 動画1: 8x8で(2,2)に目印(中心寄り)
+    {
+        core::Bitmap bitmap(8, 8);
+        bitmap.fill({0, 0, 0, 0});
+        bitmap.setPixel(2, 2, {255, 0, 0, 255});
+        layer.addFrame().bitmap() = std::move(bitmap);
+    }
+    // 動画2: 空コマ(未描画)。リサイズ後も空のまま維持されるはず
+    layer.addFrame();
+
+    SECTION("enlarging keeps the drawing centered and pads with transparency") {
+        cel.resizePaper(16, 16);
+        REQUIRE(cel.paperWidth() == 16);
+        REQUIRE(cel.paperHeight() == 16);
+
+        const core::Bitmap& b0 = layer.frame(0).bitmap();
+        REQUIRE(b0.width() == 16);
+        REQUIRE(b0.height() == 16);
+        // 8x8→16x16への中央寄せは+4オフセット: (2,2)→(6,6)
+        const auto marked = b0.pixel(6, 6);
+        REQUIRE(marked.r == 255);
+        REQUIRE(marked.a == 255);
+        // 余白は透明
+        REQUIRE(b0.pixel(0, 0).a == 0);
+
+        // 空コマはそのまま空(未描画)
+        REQUIRE(layer.frame(1).bitmap().isEmpty());
+    }
+
+    SECTION("shrinking clips content outside the new bounds") {
+        // 8x8→4x4: オフセット(4-8)/2=-2。 元(2,2)は(0,0)へ。元(6,6)ならクリップされる
+        core::Bitmap bitmap(8, 8);
+        bitmap.fill({0, 0, 0, 0});
+        bitmap.setPixel(6, 6, {0, 255, 0, 255});  // 端寄りの点(縮小でクリップされるはず)
+        layer.frame(0).bitmap() = std::move(bitmap);
+
+        cel.resizePaper(4, 4);
+        const core::Bitmap& b0 = layer.frame(0).bitmap();
+        REQUIRE(b0.width() == 4);
+        REQUIRE(b0.height() == 4);
+        // (6,6)は新しい4x4の範囲外になりクリップされる: 4x4全域が透明のまま
+        for (int y = 0; y < 4; ++y) {
+            for (int x = 0; x < 4; ++x) REQUIRE(b0.pixel(x, y).a == 0);
+        }
+    }
+}
+
+TEST_CASE("Cel paper size round trips through ppam", "[core][paper][io]") {
+    core::Project project("P");
+    core::Cut& cut = project.addScene("S").addCut("C");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L");
+    layer.addFrame().bitmap() = core::Bitmap(4, 4);
+    cel.resizePaper(3840, 1080);  // 横2倍の引きセル
+
+    core::Cel& celDefault = cut.addCel("B");  // 既定(0=キャンバスサイズ)のセルも往復確認する
+    celDefault.addLayer("L").addFrame();
+
+    const auto path = std::filesystem::temp_directory_path() / "ppam_paper_test.ppam";
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const core::Cel& loadedCel = loaded->scene(0).cut(0).cel(0);
+    REQUIRE(loadedCel.paperWidth() == 3840);
+    REQUIRE(loadedCel.paperHeight() == 1080);
+
+    const core::Cel& loadedDefault = loaded->scene(0).cut(0).cel(1);
+    REQUIRE(loadedDefault.paperWidth() == 0);
+    REQUIRE(loadedDefault.paperHeight() == 0);
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Cut::moveCel reorders cels", "[core]") {
     core::Cut cut("Cut 1");
     cut.addCel("Cel A");

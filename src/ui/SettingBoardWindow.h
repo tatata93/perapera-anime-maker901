@@ -4,6 +4,7 @@
 #include <QMainWindow>
 
 class QListWidget;
+class QListWidgetItem;
 class QPushButton;
 class QSlider;
 class QLabel;
@@ -52,6 +53,17 @@ private:
     void applyToolSettingsToCanvas();
     int selectedBoardIndex() const;
 
+    // 色指定(色指定書)操作: 選択中ボードのcolorSpecsを編集する
+    void addColorSpec();       // 色を選び、名前を付けて追加する
+    void renameColorSpec();    // 選択中の色指定の名前を変更する
+    void changeColorSpecColor();  // 選択中の色指定の色を変更する
+    void removeColorSpec();    // 選択中の色指定を削除する
+    // 色指定リストの行をダブルクリック: その色を現在のペン色に設定する
+    void onColorSpecActivated(QListWidgetItem* item);
+    // 選択中ボードのcolorSpecsから色指定リストを再構築する(m_updatingガード)
+    void refreshColorSpecList();
+    int selectedColorSpecIndex() const;
+
     core::Project* m_project = nullptr;
     QListWidget* m_list = nullptr;
     GLCanvas* m_canvas = nullptr;  // 選択中ボード1枚(1920x1080)を表示・編集するキャンバス
@@ -60,6 +72,7 @@ private:
     QSlider* m_radiusSlider = nullptr;
     QLabel* m_radiusValueLabel = nullptr;
     QPushButton* m_colorButton = nullptr;
+    QListWidget* m_colorSpecList = nullptr;  // 色指定(色指定書)一覧: スウォッチ+名前
     bool m_updating = false;
     int m_selectedRow = -1;  // 現在選択中のボード行(ボードが1枚もなければ-1)
 
