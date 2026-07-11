@@ -134,6 +134,7 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     m_mpFocalSpin->setDecimals(1);
     m_mpFocalSpin->setSuffix(tr(" mm"));
     m_mpFocalSpin->setFocusPolicy(Qt::ClickFocus);
+    m_mpFocalSpin->setKeyboardTracking(false);  // 入力途中で処理を走らせない(確定時のみ)
     mpForm->addRow(tr("焦点距離"), m_mpFocalSpin);
 
     m_mpSensorSpin = new QDoubleSpinBox(m_multiplaneGroup);
@@ -141,6 +142,7 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     m_mpSensorSpin->setDecimals(1);
     m_mpSensorSpin->setSuffix(tr(" mm"));
     m_mpSensorSpin->setFocusPolicy(Qt::ClickFocus);
+    m_mpSensorSpin->setKeyboardTracking(false);
     mpForm->addRow(tr("センサー幅"), m_mpSensorSpin);
 
     m_mpFStopSpin = new QDoubleSpinBox(m_multiplaneGroup);
@@ -148,6 +150,7 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     m_mpFStopSpin->setDecimals(1);
     m_mpFStopSpin->setSpecialValueText(tr("パンフォーカス"));
     m_mpFStopSpin->setFocusPolicy(Qt::ClickFocus);
+    m_mpFStopSpin->setKeyboardTracking(false);
     mpForm->addRow(tr("絞り(F値)"), m_mpFStopSpin);
 
     m_mpFocusSpin = new QDoubleSpinBox(m_multiplaneGroup);
@@ -155,11 +158,13 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     m_mpFocusSpin->setDecimals(1);
     m_mpFocusSpin->setSuffix(tr(" mm"));
     m_mpFocusSpin->setFocusPolicy(Qt::ClickFocus);
+    m_mpFocusSpin->setKeyboardTracking(false);
     mpForm->addRow(tr("フォーカス距離"), m_mpFocusSpin);
 
     m_mpSamplesSpin = new QSpinBox(m_multiplaneGroup);
     m_mpSamplesSpin->setRange(1, 64);
     m_mpSamplesSpin->setFocusPolicy(Qt::ClickFocus);
+    m_mpSamplesSpin->setKeyboardTracking(false);
     mpForm->addRow(tr("サンプル数"), m_mpSamplesSpin);
     mpLayout->addLayout(mpForm);
 
@@ -236,6 +241,12 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     m_playTimer->setInterval(1000 / 24);
     connect(m_playTimer, &QTimer::timeout, this, &ShootingWindow::onPlaybackTick);
 
+    // プレビュー更新のデバウンス: 値編集やスクラブが連続しても、止まってから1回だけ重い合成を走らせる
+    m_previewTimer = new QTimer(this);
+    m_previewTimer->setSingleShot(true);
+    m_previewTimer->setInterval(140);
+    connect(m_previewTimer, &QTimer::timeout, this, &ShootingWindow::renderPreviewNow);
+
     connect(m_timeline, &QTableWidget::cellClicked, this, &ShootingWindow::onTimelineCellClicked);
     connect(m_timeline, &QTableWidget::cellDoubleClicked, this, &ShootingWindow::onTimelineCellDoubleClicked);
     connect(m_timeline->horizontalHeader(), &QHeaderView::sectionClicked, this,
@@ -280,6 +291,7 @@ core::Cut* ShootingWindow::currentCut() const {
 void ShootingWindow::refresh() {
     if (m_playTimer->isActive()) {
         m_playTimer->stop();
+        m_playing = false;
         m_playButton->setText(tr("再生"));
     }
 
@@ -301,7 +313,7 @@ void ShootingWindow::refresh() {
     rebuildEffectControls();
     rebuildTimeline();
     rebuildMultiplanePanel();
-    updatePreview();
+    requestPreview();
     updateTransportLabel();
 }
 
@@ -373,6 +385,7 @@ QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringLis
         spin->setSingleStep(isDensityParam(key) ? 0.05 : 1.0);
         spin->setValue(value);
         spin->setFocusPolicy(Qt::ClickFocus);
+        spin->setKeyboardTracking(false);  // 入力途中で合成を走らせない(確定時のみ)
         connect(spin, &QDoubleSpinBox::valueChanged, this,
                 [this, effectIndex, keyCopy](double v) { onParamSpinChanged(effectIndex, keyCopy, v); });
         row->addWidget(spin, 1);
@@ -516,13 +529,28 @@ void ShootingWindow::refreshTimelineHighlight() {
     }
 }
 
-void ShootingWindow::updatePreview() {
+void ShootingWindow::requestPreview() {
+    // 再生中は各コマを間引かず即時に描く(デバウンスすると再生が飛ぶため)。
+    // それ以外(編集・スクラブ)はデバウンス: 連続変更が落ち着いてから1回だけ重い合成を走らせる
+    if (m_playing) {
+        renderPreviewNow();
+    } else {
+        m_previewTimer->start();
+    }
+}
+
+void ShootingWindow::renderPreviewNow() {
     core::Cut* cut = currentCut();
     if (!cut) {
         m_previewLabel->clear();
         return;
     }
-    const core::Bitmap bitmap = core::renderCutFrame(*cut, static_cast<size_t>(m_koma), m_canvasWidth, m_canvasHeight);
+    // 撮影ウィンドウのプレビューは応答性優先: クラシック撮影のサンプル数を上限4に抑える。
+    // 書き出し・編集ウィンドウの通しプレビューはこの上限を渡さないのでフル品質のまま
+    core::RenderOptions options;
+    options.multiplaneSampleCap = 4;
+    const core::Bitmap bitmap =
+        core::renderCutFrame(*cut, static_cast<size_t>(m_koma), m_canvasWidth, m_canvasHeight, options);
     const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
     QSize target = m_previewLabel->size();
     if (target.width() < 64 || target.height() < 64) target = QSize(640, 360);
@@ -548,7 +576,7 @@ void ShootingWindow::setKoma(int koma) {
     m_koma = std::clamp(koma, 0, std::max(0, maxKoma));
     refreshParamRowValues();
     refreshTimelineHighlight();
-    updatePreview();
+    requestPreview();
     updateTransportLabel();
 }
 
@@ -703,8 +731,10 @@ void ShootingWindow::togglePlayback() {
     if (!cut) return;
     if (m_playTimer->isActive()) {
         m_playTimer->stop();
+        m_playing = false;
         m_playButton->setText(tr("再生"));
     } else {
+        m_playing = true;
         m_playTimer->start();
         m_playButton->setText(tr("一時停止"));
     }
@@ -714,6 +744,7 @@ void ShootingWindow::onPlaybackTick() {
     core::Cut* cut = currentCut();
     if (!cut) {
         m_playTimer->stop();
+        m_playing = false;
         return;
     }
     int next = m_koma + 1;
@@ -724,7 +755,7 @@ void ShootingWindow::onPlaybackTick() {
 void ShootingWindow::debugSelectKoma(int koma) { setKoma(koma); }
 
 void ShootingWindow::markEdited() {
-    updatePreview();
+    requestPreview();
     emit edited();
 }
 
@@ -767,6 +798,7 @@ void ShootingWindow::rebuildMultiplanePanel() {
         distSpin->setDecimals(1);
         distSpin->setValue(plane.distanceMm);
         distSpin->setFocusPolicy(Qt::ClickFocus);
+        distSpin->setKeyboardTracking(false);
         connect(distSpin, &QDoubleSpinBox::valueChanged, this, [this, r](double value) {
             if (m_updating) return;
             core::Cut* c = currentCut();
@@ -781,6 +813,7 @@ void ShootingWindow::rebuildMultiplanePanel() {
         widthSpin->setDecimals(1);
         widthSpin->setValue(plane.widthMm);
         widthSpin->setFocusPolicy(Qt::ClickFocus);
+        widthSpin->setKeyboardTracking(false);
         connect(widthSpin, &QDoubleSpinBox::valueChanged, this, [this, r](double value) {
             if (m_updating) return;
             core::Cut* c = currentCut();

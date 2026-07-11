@@ -158,7 +158,9 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
         mplanes.push_back(mp);
     }
 
-    Bitmap out = renderMultiplane(mplanes, setup.camera, width, height, setup.samplesPerPixel, 1);
+    int samples = setup.samplesPerPixel;
+    if (options.multiplaneSampleCap > 0) samples = std::min(samples, options.multiplaneSampleCap);
+    Bitmap out = renderMultiplane(mplanes, setup.camera, width, height, samples, 1);
 
     // 全平面合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
     for (const Effect& effect : cut.effects()) {

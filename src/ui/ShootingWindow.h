@@ -71,7 +71,10 @@ private:
     void refreshParamRowValues();  // 構造は変えずスピン値/◆表示だけを現在コマに合わせて更新する(軽量、再生中用)
     void rebuildTimeline();        // 下段タイムライン(キー持ちプロパティのみ行を作る)を作り直す
     void refreshTimelineHighlight();  // 行の作り直し無しでCTI列のハイライトだけ更新する
-    void updatePreview();          // 現在コマをrenderCutFrameしてプレビューへ表示する
+    // プレビュー更新を要求する(デバウンス)。連続する変更は最後の1回だけ実描画されるため、
+    // スピン連打やスクラブでも重い合成が積み上がらない
+    void requestPreview();
+    void renderPreviewNow();       // 現在コマをrenderCutFrameしてプレビューへ即時表示する(実処理)
     void updateTransportLabel();   // 「コマ n / N (t s)」ラベルを更新する
 
     void setKoma(int koma);  // 現在コマ(CTI)を変更する。範囲外はクランプ。タイムライン/プレビュー同期
@@ -132,6 +135,8 @@ private:
     QPushButton* m_playButton = nullptr;
     QLabel* m_komaLabel = nullptr;
     QTimer* m_playTimer = nullptr;
+    QTimer* m_previewTimer = nullptr;  // プレビュー更新のデバウンス用(singleShot)
+    bool m_playing = false;            // 再生中はプレビューをデバウンスせず各コマ直接描く
 
     // 下段: タイムライン(行=キー持ちプロパティ、列=コマ)
     QTableWidget* m_timeline = nullptr;
