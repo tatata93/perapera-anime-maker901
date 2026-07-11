@@ -7,6 +7,7 @@
 #include "previz/PrevizViewport.h"
 #include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
+#include "ui/EditWindow.h"
 #include "ui/MainWindow.h"
 #include "ui/SettingBoardWindow.h"
 #include "ui/StoryboardWindow.h"
@@ -565,6 +566,21 @@ int main(int argc, char* argv[]) {
             window.debugOpenSettingBoard();
             QTimer::singleShot(400, &window, [&window, outputPath] {
                 window.settingBoardWindow()->grab().save(outputPath);
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
+    // 動作確認用: --edit-test <出力PNG> で編集(カッティング)デモ(カット3つ、尺12/24/12、
+    // 進捗: 原画/レイアウト/未着手、カット1に赤ストローク・カット2に青ストローク)を組み、
+    // 編集ウィンドウを開いてグローバルコマ18(カット2内)へシークした状態を保存して終了する
+    const int editIndex = args.indexOf("--edit-test");
+    if (editIndex >= 0 && editIndex + 1 < args.size()) {
+        const QString outputPath = args.at(editIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupEditDemo();
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                window.editWindow()->grab().save(outputPath);
                 QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
         });

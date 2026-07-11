@@ -191,6 +191,28 @@ TEST_CASE("Setting boards round trip through ppam", "[core][io][settingboard]") 
     std::filesystem::remove(path);
 }
 
+TEST_CASE("Cut status round trips through ppam", "[core][io][edit]") {
+    core::Project project("P");
+    core::Scene& scene = project.addScene("S");
+    core::Cut& cutA = scene.addCut("Cut A");
+    cutA.addCel("A").addLayer("L").addFrame();  // 最小構成
+    cutA.setStatus(core::CutStatus::Finishing);
+
+    core::Cut& cutB = scene.addCut("Cut B");  // 未設定(既定のNotStartedのまま)のカットも往復確認する
+    cutB.addCel("A").addLayer("L").addFrame();
+
+    const auto path = std::filesystem::temp_directory_path() / "ppam_cutstatus_test.ppam";
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    REQUIRE(loaded->scene(0).cut(0).status() == core::CutStatus::Finishing);
+    REQUIRE(loaded->scene(0).cut(1).status() == core::CutStatus::NotStarted);
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("ProjectIO load reports errors for invalid files", "[core][io]") {
     std::string error;
 

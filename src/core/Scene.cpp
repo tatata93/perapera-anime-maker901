@@ -11,4 +11,11 @@ void Scene::removeCut(size_t index) {
     m_cuts.erase(m_cuts.begin() + static_cast<ptrdiff_t>(index));
 }
 
+void Scene::moveCut(size_t from, size_t to) {
+    if (from >= m_cuts.size() || to >= m_cuts.size() || from == to) return;
+    std::unique_ptr<Cut> moved = std::move(m_cuts[from]);
+    m_cuts.erase(m_cuts.begin() + static_cast<ptrdiff_t>(from));
+    m_cuts.insert(m_cuts.begin() + static_cast<ptrdiff_t>(to), std::move(moved));
+}
+
 }  // namespace core

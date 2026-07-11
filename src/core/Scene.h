@@ -32,6 +32,8 @@ public:
 
     Cut& addCut(std::string name);
     void removeCut(size_t index);
+    // カットをfrom位置からto位置へ移動する(範囲外の場合は何もしない)
+    void moveCut(size_t from, size_t to);
 
     size_t cutCount() const { return m_cuts.size(); }
     Cut& cut(size_t index) { return *m_cuts.at(index); }

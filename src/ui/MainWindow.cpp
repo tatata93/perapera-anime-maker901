@@ -38,6 +38,7 @@
 #include "render/GLCanvas.h"
 #include "ui/CameraPanel.h"
 #include "ui/CelPanel.h"
+#include "ui/EditWindow.h"
 #include "ui/ExportDialog.h"
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
@@ -506,6 +507,7 @@ void MainWindow::addCut() {
     m_dirty = true;
     updateWindowTitle();
     setActiveCut(static_cast<int>(scene.cutCount() - 1));
+    refreshEditWindowIfOpen();
 }
 
 void MainWindow::removeActiveCut() {
@@ -516,6 +518,7 @@ void MainWindow::removeActiveCut() {
     m_dirty = true;
     updateWindowTitle();
     setActiveCut(static_cast<int>(std::min(m_activeCut, scene.cutCount() - 1)));
+    refreshEditWindowIfOpen();
 }
 
 void MainWindow::renameActiveCut() {
@@ -527,6 +530,7 @@ void MainWindow::renameActiveCut() {
     m_dirty = true;
     updateWindowTitle();
     updateCutBar();
+    refreshEditWindowIfOpen();
 }
 
 void MainWindow::setupPanels() {
@@ -1191,6 +1195,12 @@ void MainWindow::setupMenus() {
     settingBoardAction->setShortcut(QKeySequence(Qt::Key_F8));
     connect(settingBoardAction, &QAction::triggered, this, &MainWindow::openSettingBoardWindow);
 
+    // 編集(カッティング)メニュー(別ウィンドウ。カット並べ替え・尺調整・進捗管理・通しプレビュー)
+    QMenu* editWindowMenu = menuBar()->addMenu(tr("編集(カッティング)(&D)"));
+    QAction* editWindowAction = editWindowMenu->addAction(tr("編集ウィンドウ(&W)"));
+    editWindowAction->setShortcut(QKeySequence(Qt::Key_F9));
+    connect(editWindowAction, &QAction::triggered, this, &MainWindow::openEditWindow);
+
     // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
     viewMenu->addAction(m_framePanel->toggleViewAction());
@@ -1294,6 +1304,10 @@ void MainWindow::newDocument() {
         m_settingBoardWindow->setProject(m_project.get());  // プロジェクト差し替え
         m_settingBoardWindow->refresh();
     }
+    if (m_editWindow) {
+        m_editWindow->setProject(m_project.get());  // プロジェクト差し替え
+        m_editWindow->refresh();
+    }
     m_referenceBoardIndex = -1;
     updateReferencePanel();
     updateFrameLabel();
@@ -1347,6 +1361,10 @@ bool MainWindow::loadFromFile(const QString& path) {
     if (m_settingBoardWindow) {
         m_settingBoardWindow->setProject(m_project.get());  // プロジェクト差し替え
         m_settingBoardWindow->refresh();
+    }
+    if (m_editWindow) {
+        m_editWindow->setProject(m_project.get());  // プロジェクト差し替え
+        m_editWindow->refresh();
     }
     m_referenceBoardIndex = -1;
     updateReferencePanel();
@@ -1821,6 +1839,7 @@ void MainWindow::openStoryboardWindow() {
                     updateWindowTitle();
                     updateCutBar();
                     setActiveCut(static_cast<int>(scene.cutCount() - 1));
+                    refreshEditWindowIfOpen();
                 });
     }
     m_storyboardWindow->setProject(m_project.get());
@@ -1955,6 +1974,82 @@ void MainWindow::debugSetupSettingBoardDemo() {
 
     m_referenceBoardIndex = 0;
     updateReferencePanel();
+}
+
+void MainWindow::openEditWindow() {
+    if (!m_editWindow) {
+        m_editWindow = new EditWindow(this);  // QMainWindowなので独立ウィンドウになる
+        connect(m_editWindow, &EditWindow::edited, this, [this] {
+            m_dirty = true;
+            updateWindowTitle();
+            updateCutBar();  // カット名/構成が変わりうるためカットバーも追従させる
+        });
+        connect(m_editWindow, &EditWindow::cutActivated, this, [this](int index) { setActiveCut(index); });
+    }
+    m_editWindow->setCanvasSize(kCanvasWidth, kCanvasHeight);
+    m_editWindow->setProject(m_project.get());
+    m_editWindow->refresh();
+    m_editWindow->show();
+    m_editWindow->raise();
+    m_editWindow->activateWindow();
+}
+
+void MainWindow::refreshEditWindowIfOpen() {
+    if (m_editWindow) m_editWindow->refresh();
+}
+
+void MainWindow::debugSetupEditDemo() {
+    // 編集(カッティング)確認用: カット3つ(尺12/24/12、進捗: 原画/レイアウト/未着手)を組み、
+    // カット1に赤ストローク・カット2に青ストロークを描いてから編集ウィンドウを開き、
+    // グローバルコマ18(カット1=12コマの次、カット2内の6コマ目)へシークする
+    if (!m_project || m_project->sceneCount() == 0) return;
+    core::Scene& scene = m_project->scene(0);
+
+    // 既存カットを消して3カット作り直す(先頭カットは既存の最小構成をそのまま使う)
+    while (scene.cutCount() > 1) scene.removeCut(scene.cutCount() - 1);
+    scene.cut(0).setName("カット 1");
+    scene.cut(0).setFrameCount(12);
+    scene.cut(0).setStatus(core::CutStatus::KeyAnimation);  // 原画
+    // 動画1枚を全コマへ「止め」で割り付ける(尺を伸ばしても絵が消えないように)
+    for (size_t t = 0; t < scene.cut(0).frameCount(); ++t) scene.cut(0).cel(0).setExposure(t, 0);
+
+    core::Cut& cut2 = scene.addCut("カット 2");
+    initializeCut(cut2);
+    cut2.setFrameCount(24);
+    cut2.setStatus(core::CutStatus::Layout);  // レイアウト
+    for (size_t t = 0; t < cut2.frameCount(); ++t) cut2.cel(0).setExposure(t, 0);
+
+    core::Cut& cut3 = scene.addCut("カット 3");
+    initializeCut(cut3);
+    cut3.setFrameCount(12);
+    cut3.setStatus(core::CutStatus::NotStarted);  // 未着手
+    for (size_t t = 0; t < cut3.frameCount(); ++t) cut3.cel(0).setExposure(t, 0);
+
+    core::BrushEngine engine;
+    engine.settings().radius = 10.0f;
+
+    // カット1: 赤ストローク
+    engine.settings().color = {220, 30, 30, 255};
+    core::Bitmap& bmp1 = scene.cut(0).cel(0).layer(0).frame(0).bitmap();
+    engine.beginStroke(bmp1, kCanvasWidth * 0.2f, kCanvasHeight * 0.2f, 1.0f);
+    engine.continueStroke(bmp1, kCanvasWidth * 0.8f, kCanvasHeight * 0.8f, 1.0f);
+    engine.endStroke();
+
+    // カット2: 青ストローク(赤とは別の位置・向き)
+    engine.settings().color = {30, 30, 220, 255};
+    core::Bitmap& bmp2 = cut2.cel(0).layer(0).frame(0).bitmap();
+    engine.beginStroke(bmp2, kCanvasWidth * 0.8f, kCanvasHeight * 0.2f, 1.0f);
+    engine.continueStroke(bmp2, kCanvasWidth * 0.2f, kCanvasHeight * 0.8f, 1.0f);
+    engine.endStroke();
+
+    m_dirty = true;
+    updateWindowTitle();
+    updateCutBar();
+    setActiveCut(0);
+
+    openEditWindow();
+    // グローバルコマ18 = カット1(尺12)を過ぎた後のカット2内コマ6(0始まりなら6コマ目=index6)
+    m_editWindow->debugSeekToGlobalFrame(18);
 }
 
 void MainWindow::openExportDialog() {

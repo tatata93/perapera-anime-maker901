@@ -18,6 +18,8 @@ add_executable(perapera-anime-maker901
     ui/StoryboardWindow.h
     ui/SettingBoardWindow.cpp
     ui/SettingBoardWindow.h
+    ui/EditWindow.cpp
+    ui/EditWindow.h
     ui/ReferencePanel.cpp
     ui/ReferencePanel.h
     ui/PalettePanel.cpp

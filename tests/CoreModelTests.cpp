@@ -230,6 +230,37 @@ TEST_CASE("Cut::moveCel reorders cels", "[core]") {
     REQUIRE(cut.cel(2).name() == "Cel A");
 }
 
+TEST_CASE("Scene::moveCut reorders cuts", "[core]") {
+    core::Scene scene("Scene 1");
+    scene.addCut("Cut A");
+    scene.addCut("Cut B");
+    scene.addCut("Cut C");
+
+    SECTION("moves a cut to a later position") {
+        scene.moveCut(0, 2);
+        REQUIRE(scene.cut(0).name() == "Cut B");
+        REQUIRE(scene.cut(1).name() == "Cut C");
+        REQUIRE(scene.cut(2).name() == "Cut A");
+    }
+
+    SECTION("out-of-range indices are ignored") {
+        scene.moveCut(0, 5);
+        scene.moveCut(5, 0);
+        scene.moveCut(1, 1);
+        REQUIRE(scene.cut(0).name() == "Cut A");
+        REQUIRE(scene.cut(1).name() == "Cut B");
+        REQUIRE(scene.cut(2).name() == "Cut C");
+    }
+}
+
+TEST_CASE("Cut status defaults to NotStarted and is settable", "[core]") {
+    core::Cut cut("Cut 1");
+    REQUIRE(cut.status() == core::CutStatus::NotStarted);
+
+    cut.setStatus(core::CutStatus::KeyAnimation);
+    REQUIRE(cut.status() == core::CutStatus::KeyAnimation);
+}
+
 TEST_CASE("Previz model and camera keys interpolate", "[core][previz]") {
     core::PrevizModel model;
     model.transformKeys[0] = {{0, 0, 0}, {0, 0, 0}, {1, 1, 1}};

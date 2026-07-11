@@ -11,6 +11,7 @@
 
 class CameraPanel;
 class CelPanel;
+class EditWindow;
 class FramePanel;
 class GLCanvas;
 class LayerPanel;
@@ -114,6 +115,14 @@ public:
     // 1枚目に赤い線を描いて参照ドックで1枚目を選択する
     void debugSetupSettingBoardDemo();
     ReferencePanel* referencePanel() const { return m_referencePanel; }
+
+    // 編集(カッティング)ウィンドウ確認用
+    void debugOpenEditWindow() { openEditWindow(); }
+    EditWindow* editWindow() const { return m_editWindow; }
+    // 編集デモ確認用: カット3つ(尺12/24/12、進捗: 原画/レイアウト/未着手)を組み、
+    // カット1に赤ストローク・カット2に別ストロークを描いてから編集ウィンドウを開き、
+    // グローバルコマ18(カット2内)へシークする
+    void debugSetupEditDemo();
 
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
     // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる
@@ -227,6 +236,12 @@ private:
     // 参照ドック(ReferencePanel)の内容をプロジェクトの設定ボードから再構築する
     void updateReferencePanel();
 
+    // 編集(カッティング)
+    void openEditWindow();
+    // カット追加/削除/改名/入れ替えなど構成が変わる操作の後に呼ぶ。編集ウィンドウが
+    // 開いていれば一覧・プレビューを最新化する
+    void refreshEditWindowIfOpen();
+
     // 書き出し
     void openExportDialog();
     bool exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts);
@@ -260,6 +275,7 @@ private:
     PrevizWindow* m_previzWindow = nullptr;  // 別ウィンドウ(遅延生成)
     StoryboardWindow* m_storyboardWindow = nullptr;  // 絵コンテウィンドウ(別ウィンドウ、遅延生成)
     SettingBoardWindow* m_settingBoardWindow = nullptr;  // 設定ボードウィンドウ(別ウィンドウ、遅延生成)
+    EditWindow* m_editWindow = nullptr;  // 編集(カッティング)ウィンドウ(別ウィンドウ、遅延生成)
     ReferencePanel* m_referencePanel = nullptr;  // 設定ボード参照ドック
     int m_referenceBoardIndex = -1;  // 参照ドックで選択中の設定ボードインデックス(未選択-1)
     QString m_currentFilePath;

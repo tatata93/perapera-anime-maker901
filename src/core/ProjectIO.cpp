@@ -159,6 +159,7 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                          {"frameCount", cut.frameCount()},
                          {"action", cut.action()},
                          {"dialogue", cut.dialogue()},
+                         {"status", static_cast<int>(cut.status())},
                          {"cels", std::move(jCels)}};
             if (!cut.previz().isEmpty()) jCut["previz"] = previzToJson(cut.previz());
             // カメラフレーム(画面に写る範囲)のキー。キー無しなら省略する
@@ -411,6 +412,8 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                 // 絵コンテメモ(欠落時は空文字)
                 cut.setAction(jCut.value("action", std::string()));
                 cut.setDialogue(jCut.value("dialogue", std::string()));
+                // 制作進捗(欠落時は未着手)
+                cut.setStatus(static_cast<CutStatus>(jCut.value("status", 0)));
 
                 // プリビズシーン(任意)
                 if (jCut.contains("previz")) previzFromJson(jCut.at("previz"), cut.previz());

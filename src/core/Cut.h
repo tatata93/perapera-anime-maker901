@@ -18,6 +18,9 @@ struct CameraFrameState {
     double scale = 1.0;
 };
 
+// 制作進捗(編集/カッティング工程の進行管理用)
+enum class CutStatus { NotStarted, Layout, KeyAnimation, Inbetween, Finishing, Shooting, Done };
+
 // シーン内の1カット。セル(Aセル/Bセル等)を順序付き(下→上)で保持する。
 // 将来的にXsheet(タイムシート)情報もここに持たせる。
 class Cut {
@@ -32,6 +35,10 @@ public:
     void setAction(std::string action) { m_action = std::move(action); }
     const std::string& dialogue() const { return m_dialogue; }
     void setDialogue(std::string dialogue) { m_dialogue = std::move(dialogue); }
+
+    // 制作進捗(編集/カッティング工程の進行管理用)。既定は未着手
+    CutStatus status() const { return m_status; }
+    void setStatus(CutStatus status) { m_status = status; }
 
     // カットの尺(総コマ数)。タイムシートの行数に相当する
     size_t frameCount() const { return m_frameCount; }
@@ -69,6 +76,7 @@ private:
     std::string m_action;     // 絵コンテ: 内容(アクション)
     std::string m_dialogue;   // 絵コンテ: セリフ
     std::map<size_t, CameraFrameState> m_cameraKeys;
+    CutStatus m_status = CutStatus::NotStarted;  // 制作進捗(編集/カッティング工程の進行管理用)
 };
 
 }  // namespace core
