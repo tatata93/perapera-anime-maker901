@@ -26,6 +26,7 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <utility>
 
@@ -1808,6 +1809,305 @@ void MainWindow::debugSetupClassicDemo() {
     openShootingWindow();
 }
 
+void MainWindow::debugBuildFullDemo() {
+    // これまで実装した全機能を1本の作品として統合したデモを、newDocument()相当から
+    // プログラム的に構築する(作画は手描きできないためBrushEngineで幾何図形を描く)。
+    debugNewDocument();
+    core::Scene& scene = m_project->scene(0);
+
+    // --- 絵コンテ(データとして。動画には出ない) ---
+    auto& panels = scene.storyboard();
+    panels.clear();
+    {
+        constexpr int kSheetWidth = 1920;
+        constexpr int kSheetHeight = 600;
+        core::BrushEngine sbEngine;
+        sbEngine.settings().radius = 8.0f;
+        sbEngine.settings().color = {60, 60, 60, 255};
+
+        core::StoryboardPanel panel1;
+        panel1.drawing = core::Bitmap(kSheetWidth, kSheetHeight);
+        panel1.drawing.fill({0, 0, 0, 0});
+        panel1.cutLabel = "1";
+        panel1.action = "背景が左へパンしながらキャラが歩く。カメラがゆっくり寄る(T.U.)。";
+        panel1.dialogue = "行くぞ!";
+        panel1.durationFrames = 48;
+        sbEngine.beginStroke(panel1.drawing, 200.0f, 100.0f, 1.0f);
+        sbEngine.continueStroke(panel1.drawing, 800.0f, 500.0f, 1.0f);
+        sbEngine.endStroke();
+        panels.push_back(std::move(panel1));
+
+        core::StoryboardPanel panel2;
+        panel2.drawing = core::Bitmap(kSheetWidth, kSheetHeight);
+        panel2.drawing.fill({0, 0, 0, 0});
+        panel2.cutLabel = "2";
+        panel2.action = "クラシック撮影(マルチプレーン)。手前のキャラにピント、奥の背景がボケる。";
+        panel2.dialogue = "";
+        panel2.durationFrames = 36;
+        sbEngine.beginStroke(panel2.drawing, 300.0f, 150.0f, 1.0f);
+        sbEngine.continueStroke(panel2.drawing, 900.0f, 450.0f, 1.0f);
+        sbEngine.endStroke();
+        panels.push_back(std::move(panel2));
+    }
+
+    // --- 設定ボード(データとして) ---
+    auto& boards = m_project->settingBoards();
+    boards.clear();
+    {
+        core::SettingBoard board;
+        board.name = "キャラ設定";
+        board.image = core::Bitmap(kCanvasWidth, kCanvasHeight);
+        board.image.fill({0, 0, 0, 0});
+        core::BrushEngine boardEngine;
+        boardEngine.settings().radius = 8.0f;
+        boardEngine.settings().color = {90, 70, 60, 255};
+        boardEngine.beginStroke(board.image, kCanvasWidth * 0.3f, kCanvasHeight * 0.3f, 1.0f);
+        boardEngine.continueStroke(board.image, kCanvasWidth * 0.7f, kCanvasHeight * 0.7f, 1.0f);
+        boardEngine.endStroke();
+        board.colorSpecs.push_back({"肌", {255, 224, 196, 255}});
+        board.colorSpecs.push_back({"影", {200, 170, 150, 255}});
+        boards.push_back(std::move(board));
+    }
+
+    // ==================================================================
+    // カット1「PAN + T.U. + グロー」(尺48コマ)
+    // ==================================================================
+    core::Cut& cut1 = scene.cut(0);  // newDocument()で作られた最初のカット(セルA=空)を使う
+    cut1.setName("カット1 PAN+TU+グロー");
+    cut1.setAction("背景が左へパンしながらキャラが歩く。カメラがゆっくり寄る(T.U.)。");
+    cut1.setDialogue("行くぞ!");
+    cut1.setStatus(core::CutStatus::Done);
+    cut1.setFrameCount(48);
+
+    // 背景セル(引きセル): 横2倍にリサイズしてから地平線+縦グリッド線を描く
+    core::Cel& bgCel = cut1.cel(0);
+    bgCel.setName("背景");
+    bgCel.resizePaper(kCanvasWidth * 2, kCanvasHeight);
+    {
+        core::Bitmap& bgBitmap = bgCel.layer(0).frame(0).bitmap();
+        core::BrushEngine bgEngine;
+        bgEngine.settings().radius = 6.0f;
+        bgEngine.settings().color = {70, 70, 85, 255};
+        // 地平線
+        bgEngine.beginStroke(bgBitmap, 0.0f, kCanvasHeight * 0.6f, 1.0f);
+        bgEngine.continueStroke(bgBitmap, static_cast<float>(kCanvasWidth * 2), kCanvasHeight * 0.6f, 1.0f);
+        bgEngine.endStroke();
+        // 縦グリッド線(地面の遠近感)
+        for (int i = 0; i <= 16; ++i) {
+            const float x = static_cast<float>(kCanvasWidth * 2) * (static_cast<float>(i) / 16.0f);
+            bgEngine.beginStroke(bgBitmap, x, kCanvasHeight * 0.6f, 1.0f);
+            bgEngine.continueStroke(bgBitmap, x, static_cast<float>(kCanvasHeight), 1.0f);
+            bgEngine.endStroke();
+        }
+    }
+    for (size_t t = 0; t < 48; ++t) bgCel.setExposure(t, 0);  // 止め(1枚絵をPANで動かす)
+    bgCel.setPositionKey(0, {0.0f, 0.0f});
+    bgCel.setPositionKey(47, {-static_cast<float>(kCanvasWidth), 0.0f});  // 左へPAN
+
+    // キャラセル(通常サイズ): 3枚の動画で歩きのパラパラ(2コマ打ち、明るいハイライト付き=グロー確認用)
+    core::Cel& charCel = cut1.addCel("キャラ");
+    core::Layer& charLayer = charCel.addLayer("レイヤー 1");
+    constexpr int kCharDrawings = 3;
+    for (int i = 0; i < kCharDrawings; ++i) {
+        core::Bitmap& bmp = charLayer.addFrame().bitmap();
+        bmp = makeTransparentCel();
+        core::BrushEngine charEngine;
+        const float cx = kCanvasWidth * 0.5f;
+        const float cy = kCanvasHeight * 0.55f + (i == 1 ? -20.0f : 0.0f);  // 中割りだけ跳ねる
+
+        // 頭(円)
+        charEngine.settings().radius = 60.0f;
+        charEngine.settings().color = {230, 90, 60, 255};
+        charEngine.beginStroke(bmp, cx, cy - 150.0f, 1.0f);
+        charEngine.endStroke();
+        // 胴体
+        charEngine.settings().radius = 20.0f;
+        charEngine.beginStroke(bmp, cx, cy - 90.0f, 1.0f);
+        charEngine.continueStroke(bmp, cx, cy + 60.0f, 1.0f);
+        charEngine.endStroke();
+        // 脚(コマごとに開閉させて歩行に見せる)
+        const float legOffset = 40.0f + static_cast<float>(i) * 15.0f;
+        charEngine.settings().radius = 16.0f;
+        charEngine.beginStroke(bmp, cx, cy + 60.0f, 1.0f);
+        charEngine.continueStroke(bmp, cx - legOffset, cy + 160.0f, 1.0f);
+        charEngine.endStroke();
+        charEngine.beginStroke(bmp, cx, cy + 60.0f, 1.0f);
+        charEngine.continueStroke(bmp, cx + legOffset, cy + 160.0f, 1.0f);
+        charEngine.endStroke();
+        // グロー確認用ハイライト(輝度200以上の明るい点)
+        charEngine.settings().radius = 10.0f;
+        charEngine.settings().color = {255, 255, 210, 255};
+        charEngine.beginStroke(bmp, cx + 15.0f, cy - 165.0f, 1.0f);
+        charEngine.endStroke();
+    }
+    for (size_t t = 0; t < 48; ++t) {
+        charCel.setExposure(t, static_cast<int>((t / 2) % static_cast<size_t>(kCharDrawings)));  // 2コマ打ちで循環
+    }
+
+    // カメラフレームキー: コマ0=中心100%、コマ47=やや上へ寄って60%(T.U.=画面が寄っていく)
+    cut1.setCameraKey(0, core::CameraFrameState{{kCanvasWidth / 2.0f, kCanvasHeight / 2.0f}, 1.0});
+    cut1.setCameraKey(47, core::CameraFrameState{{kCanvasWidth * 0.5f, kCanvasHeight * 0.4f}, 0.6});
+
+    // エフェクト: グロー(だんだん発光)
+    {
+        core::Effect glow;
+        glow.type = core::EffectType::Glow;
+        glow.enabled = true;
+        glow.targetCel = -1;
+        glow.params = core::effectDefaultParams(core::EffectType::Glow);
+        glow.setKey("strength", 0, 0.0);
+        glow.setKey("strength", 47, 0.9);
+        cut1.effects().push_back(glow);
+    }
+
+    // ==================================================================
+    // カット2「クラシック撮影(マルチプレーン)DoF」(尺36コマ)
+    // ==================================================================
+    core::Cut& cut2 = scene.addCut("カット2 クラシック撮影DoF");
+    initializeCut(cut2);
+    cut2.setAction("マルチプレーン撮影(クラシック)。手前のキャラにピントを合わせ、奥の背景をぼかす。");
+    cut2.setDialogue("");
+    cut2.setStatus(core::CutStatus::Shooting);
+    cut2.setFrameCount(36);
+
+    // セルA(手前・キャラ)
+    core::Cel& celA2 = cut2.cel(0);
+    celA2.setName("キャラ");
+    {
+        core::Bitmap& bitmapA2 = celA2.layer(0).frame(0).bitmap();
+        core::BrushEngine engineA2;
+        engineA2.settings().radius = 120.0f;
+        engineA2.settings().color = {230, 90, 60, 255};
+        engineA2.beginStroke(bitmapA2, kCanvasWidth * 0.5f, kCanvasHeight * 0.5f, 1.0f);
+        engineA2.endStroke();
+    }
+    for (size_t t = 0; t < 36; ++t) celA2.setExposure(t, 0);
+
+    // セルB(奥・背景): グリッド模様
+    core::Cel& celB2 = cut2.addCel("背景");
+    core::Layer& layerB2 = celB2.addLayer("レイヤー 1");
+    {
+        core::Bitmap& bitmapB2 = layerB2.addFrame().bitmap();
+        bitmapB2 = makeTransparentCel();
+        core::BrushEngine engineB2;
+        engineB2.settings().radius = 8.0f;
+        engineB2.settings().color = {120, 150, 190, 255};
+        for (int i = 0; i <= 8; ++i) {
+            const float x = kCanvasWidth * (static_cast<float>(i) / 8.0f);
+            engineB2.beginStroke(bitmapB2, x, 0.0f, 1.0f);
+            engineB2.continueStroke(bitmapB2, x, static_cast<float>(kCanvasHeight), 1.0f);
+            engineB2.endStroke();
+        }
+        for (int j = 0; j <= 4; ++j) {
+            const float y = kCanvasHeight * (static_cast<float>(j) / 4.0f);
+            engineB2.beginStroke(bitmapB2, 0.0f, y, 1.0f);
+            engineB2.continueStroke(bitmapB2, static_cast<float>(kCanvasWidth), y, 1.0f);
+            engineB2.endStroke();
+        }
+    }
+    for (size_t t = 0; t < 36; ++t) celB2.setExposure(t, 0);
+
+    // マルチプレーン(クラシック撮影)を有効化: 手前A(300mm)にピント→奥B(1000mm)がボケる
+    {
+        core::MultiplaneSetup& mp = cut2.multiplane();
+        mp.enabled = true;
+        mp.camera.focalLengthMm = 50.0;
+        mp.camera.sensorWidthMm = 36.0;
+        mp.camera.apertureFStop = 2.8;
+        mp.camera.focusDistanceMm = 300.0;
+        mp.samplesPerPixel = 8;
+        mp.planes.clear();
+        core::MultiplaneCelPlane planeA;
+        planeA.celIndex = 0;
+        planeA.distanceMm = 300.0;
+        planeA.widthMm = 300.0;
+        mp.planes.push_back(planeA);
+        core::MultiplaneCelPlane planeB;
+        planeB.celIndex = 1;
+        planeB.distanceMm = 1000.0;
+        planeB.widthMm = 800.0;
+        mp.planes.push_back(planeB);
+    }
+
+    // エフェクト: 黒パラ(上を暗く)
+    {
+        core::Effect para2;
+        para2.type = core::EffectType::Para;
+        para2.enabled = true;
+        para2.targetCel = -1;
+        para2.params = core::effectDefaultParams(core::EffectType::Para);
+        para2.params["top"] = 0.3;
+        para2.params["r"] = 0.0;
+        para2.params["g"] = 0.0;
+        para2.params["b"] = 0.0;
+        cut2.effects().push_back(para2);
+    }
+
+    // ==================================================================
+    // カット3「シェイク + カラーパラ」(尺24コマ)
+    // ==================================================================
+    core::Cut& cut3 = scene.addCut("カット3 シェイク+カラーパラ");
+    initializeCut(cut3);
+    cut3.setAction("爆発の衝撃でカメラが激しく揺れ、徐々に収まる。オレンジのパラで画面を焼く。");
+    cut3.setDialogue("うわあっ!");
+    cut3.setStatus(core::CutStatus::Finishing);
+    cut3.setFrameCount(24);
+
+    // 爆発風の放射状ストローク
+    core::Cel& cel3 = cut3.cel(0);
+    cel3.setName("爆発");
+    {
+        core::Bitmap& bitmap3 = cel3.layer(0).frame(0).bitmap();
+        core::BrushEngine engine3;
+        engine3.settings().radius = 14.0f;
+        engine3.settings().color = {255, 200, 40, 255};
+        constexpr double kTau = 6.283185307179586;
+        constexpr int kRays = 12;
+        const float cx3 = kCanvasWidth * 0.5f;
+        const float cy3 = kCanvasHeight * 0.5f;
+        for (int i = 0; i < kRays; ++i) {
+            const double angle = kTau * static_cast<double>(i) / static_cast<double>(kRays);
+            const float ex = cx3 + static_cast<float>(std::cos(angle)) * kCanvasWidth * 0.4f;
+            const float ey = cy3 + static_cast<float>(std::sin(angle)) * kCanvasWidth * 0.4f;
+            engine3.beginStroke(bitmap3, cx3, cy3, 1.0f);
+            engine3.continueStroke(bitmap3, ex, ey, 1.0f);
+            engine3.endStroke();
+        }
+    }
+    for (size_t t = 0; t < 24; ++t) cel3.setExposure(t, 0);
+
+    // エフェクト: シェイク(序盤大きく→末尾0に収束)
+    {
+        core::Effect shake;
+        shake.type = core::EffectType::Shake;
+        shake.enabled = true;
+        shake.targetCel = -1;
+        shake.params = core::effectDefaultParams(core::EffectType::Shake);
+        shake.setKey("amplitudeX", 0, 40.0);
+        shake.setKey("amplitudeX", 23, 0.0);
+        shake.setKey("amplitudeY", 0, 40.0);
+        shake.setKey("amplitudeY", 23, 0.0);
+        cut3.effects().push_back(shake);
+    }
+
+    // エフェクト: オレンジ寄りパラ
+    {
+        core::Effect para3;
+        para3.type = core::EffectType::Para;
+        para3.enabled = true;
+        para3.targetCel = -1;
+        para3.params = core::effectDefaultParams(core::EffectType::Para);
+        para3.params["top"] = 0.4;
+        para3.params["r"] = 255.0;
+        para3.params["g"] = 120.0;
+        para3.params["b"] = 0.0;
+        cut3.effects().push_back(para3);
+    }
+
+    // 構築完了: アクティブカットをカット1に揃えて各パネルの整合を取る
+    setActiveCut(0);
+}
+
 void MainWindow::debugSetupFillDemo() {
     // 閉じた矩形枠(黒)を現在フレームのアクティブレイヤーに描く
     core::Bitmap& bitmap = activeLayer().frame(m_currentFrame).bitmap();
@@ -2381,6 +2681,82 @@ bool MainWindow::exportMovie(const QString& mp4Path, int from, int to, int fps, 
         }
     }
     return true;
+}
+
+bool MainWindow::exportAllCutsMovie(const QString& mp4Path, int fps) {
+    if (!m_project || m_project->sceneCount() == 0) return false;
+    core::Scene& scene = m_project->scene(0);
+    if (scene.cutCount() == 0) return false;
+
+    const QFileInfo mp4Info(mp4Path);
+    const QString outDir = mp4Info.absolutePath();
+    QDir().mkpath(outDir);
+
+    // 連番PNGの書き出し先(固定フォルダ: mp4と同じ場所の"<ベース名>_frames")。
+    // ffmpegが無い/失敗した場合でも中身を残し、目視確認に使えるようにする
+    const QString framesDir = QDir(outDir).filePath(mp4Info.completeBaseName() + QStringLiteral("_frames"));
+    QDir().mkpath(framesDir);
+    {
+        // 再実行時に古いコマが混在しないよう、既存の連番PNGを先に削除する
+        QDir dir(framesDir);
+        for (const QString& name : dir.entryList(QStringList() << QStringLiteral("frame_*.png"), QDir::Files)) {
+            dir.remove(name);
+        }
+    }
+
+    const core::RenderOptions opts;  // 既定=最終画(色トレス線/作監修正は含めない)
+
+    int globalFrame = 0;
+    for (size_t ci = 0; ci < scene.cutCount(); ++ci) {
+        core::Cut& cut = scene.cut(ci);
+        const size_t frameCount = cut.frameCount();
+        if (frameCount == 0) continue;
+        const size_t midFrame = (frameCount - 1) / 2;  // 代表フレーム(カットの中間コマ)
+
+        for (size_t f = 0; f < frameCount; ++f) {
+            const core::Bitmap bitmap = core::renderCutFrame(cut, f, kCanvasWidth, kCanvasHeight, opts);
+            const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
+
+            ++globalFrame;
+            const QString framePath =
+                QDir(framesDir).filePath(QStringLiteral("frame_%1.png").arg(globalFrame, 4, 10, QChar('0')));
+            image.save(framePath);
+
+            if (f == midFrame) {
+                // 代表フレームはmp4の成否によらず必ず保存する(目視確認用)
+                const QString repPath =
+                    QDir(outDir).filePath(QStringLiteral("fulldemo_cut%1.png").arg(ci + 1));
+                image.save(repPath);
+            }
+        }
+    }
+    if (globalFrame == 0) return false;
+
+    // ffmpegでframe_%04d.png連番→mp4へエンコード(exportMovieと同じ規則、ダイアログは出さない)
+    const QString framePattern = QDir(framesDir).filePath(QStringLiteral("frame_%04d.png"));
+    const auto runFfmpeg = [&](const QStringList& codecArgs) -> bool {
+        QStringList args;
+        args << QStringLiteral("-y") << QStringLiteral("-framerate") << QString::number(fps) << QStringLiteral("-i")
+             << framePattern;
+        args += codecArgs;
+        args << mp4Path;
+
+        QProcess process;
+        process.start(QStringLiteral("ffmpeg"), args);
+        // 全カット分(尺108コマ)をエンコードするため、単体エクスポートより長めのタイムアウトにする
+        if (!process.waitForFinished(300000)) {
+            process.kill();
+            return false;
+        }
+        return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    };
+
+    if (runFfmpeg({QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-pix_fmt"),
+                    QStringLiteral("yuv420p")})) {
+        return true;
+    }
+    // libx264が無いLGPLビルドの可能性があるため、mpeg4で再試行する
+    return runFfmpeg({QStringLiteral("-c:v"), QStringLiteral("mpeg4"), QStringLiteral("-q:v"), QStringLiteral("3")});
 }
 
 int MainWindow::debugExportSequence(const QString& dir) {

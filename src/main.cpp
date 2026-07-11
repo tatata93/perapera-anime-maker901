@@ -749,5 +749,22 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --fulldemo <出力mp4パス> でこれまで実装した全機能を統合した3カットデモ
+    // (PAN+T.U.+グロー / クラシック撮影DoF+黒パラ / シェイク+オレンジパラ)を組み、
+    // 全カットを連結した通しmp4へ書き出す。マルチプレーンのレイトレース+ffmpegエンコードで
+    // 時間がかかるため、待ち時間は長めに取る。mp4の成否によらず代表PNG(fulldemo_cut1/2/3.png)は
+    // 保存されるので、mp4が失敗してもPNGで目視確認できる
+    const int fullDemoIndex = args.indexOf("--fulldemo");
+    if (fullDemoIndex >= 0 && fullDemoIndex + 1 < args.size()) {
+        const QString outputPath = args.at(fullDemoIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugBuildFullDemo();
+            QTimer::singleShot(1000, &window, [&window, outputPath] {
+                const bool ok = window.exportAllCutsMovie(outputPath, 24);
+                QApplication::exit(ok ? 0 : 1);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
     return app.exec();
 }
