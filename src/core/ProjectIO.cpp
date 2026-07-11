@@ -201,6 +201,22 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                 }
                 jCut["effects"] = std::move(jEffects);
             }
+            // クラシック撮影(マルチプレーン撮影台)設定。無効かつ段が空なら省略する
+            if (cut.multiplane().enabled || !cut.multiplane().planes.empty()) {
+                const MultiplaneSetup& mp = cut.multiplane();
+                json jPlanes = json::array();
+                for (const MultiplaneCelPlane& p : mp.planes) {
+                    jPlanes.push_back({{"cel", p.celIndex}, {"distance", p.distanceMm}, {"width", p.widthMm}});
+                }
+                jCut["multiplane"] = {{"enabled", mp.enabled},
+                                      {"camera",
+                                       {{"focal", mp.camera.focalLengthMm},
+                                        {"sensor", mp.camera.sensorWidthMm},
+                                        {"fstop", mp.camera.apertureFStop},
+                                        {"focus", mp.camera.focusDistanceMm}}},
+                                      {"samples", mp.samplesPerPixel},
+                                      {"planes", std::move(jPlanes)}};
+            }
             jCuts.push_back(std::move(jCut));
         }
         // 絵コンテ(パネル列)。絵はフレームと同じblob方式で圧縮する
@@ -495,6 +511,30 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                             }
                         }
                         cut.effects().push_back(std::move(effect));
+                    }
+                }
+
+                // クラシック撮影(マルチプレーン撮影台)設定(任意、欠落時は既定=無効のまま)
+                if (jCut.contains("multiplane")) {
+                    const json& jMp = jCut.at("multiplane");
+                    MultiplaneSetup& mp = cut.multiplane();
+                    mp.enabled = jMp.value("enabled", false);
+                    if (jMp.contains("camera")) {
+                        const json& jCam = jMp.at("camera");
+                        mp.camera.focalLengthMm = jCam.value("focal", 50.0);
+                        mp.camera.sensorWidthMm = jCam.value("sensor", 36.0);
+                        mp.camera.apertureFStop = jCam.value("fstop", 0.0);
+                        mp.camera.focusDistanceMm = jCam.value("focus", 500.0);
+                    }
+                    mp.samplesPerPixel = jMp.value("samples", 8);
+                    if (jMp.contains("planes")) {
+                        for (const json& jPlane : jMp.at("planes")) {
+                            MultiplaneCelPlane plane;
+                            plane.celIndex = jPlane.value("cel", 0);
+                            plane.distanceMm = jPlane.value("distance", 500.0);
+                            plane.widthMm = jPlane.value("width", 400.0);
+                            mp.planes.push_back(plane);
+                        }
                     }
                 }
 

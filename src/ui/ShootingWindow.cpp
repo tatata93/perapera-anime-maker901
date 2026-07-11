@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QImage>
@@ -12,6 +13,7 @@
 #include <QMenu>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTableWidget>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -154,6 +156,67 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     rightLayout->addWidget(m_previewLabel);
     m_komaLabel = new QLabel(rightContainer);
     rightLayout->addWidget(m_komaLabel);
+
+    // クラシック撮影(マルチプレーン撮影台)パネル。チェックOFF=デジタル合成(従来動作)
+    m_multiplaneGroup = new QGroupBox(tr("クラシック撮影(マルチプレーン)"), rightContainer);
+    m_multiplaneGroup->setCheckable(true);
+    m_multiplaneGroup->setChecked(false);
+    auto* mpLayout = new QVBoxLayout(m_multiplaneGroup);
+
+    auto* mpForm = new QFormLayout();
+    m_mpFocalSpin = new QDoubleSpinBox(m_multiplaneGroup);
+    m_mpFocalSpin->setRange(1.0, 300.0);
+    m_mpFocalSpin->setDecimals(1);
+    m_mpFocalSpin->setSuffix(tr(" mm"));
+    m_mpFocalSpin->setFocusPolicy(Qt::ClickFocus);
+    mpForm->addRow(tr("焦点距離"), m_mpFocalSpin);
+
+    m_mpSensorSpin = new QDoubleSpinBox(m_multiplaneGroup);
+    m_mpSensorSpin->setRange(1.0, 100.0);
+    m_mpSensorSpin->setDecimals(1);
+    m_mpSensorSpin->setSuffix(tr(" mm"));
+    m_mpSensorSpin->setFocusPolicy(Qt::ClickFocus);
+    mpForm->addRow(tr("センサー幅"), m_mpSensorSpin);
+
+    m_mpFStopSpin = new QDoubleSpinBox(m_multiplaneGroup);
+    m_mpFStopSpin->setRange(0.0, 32.0);
+    m_mpFStopSpin->setDecimals(1);
+    m_mpFStopSpin->setSpecialValueText(tr("パンフォーカス"));
+    m_mpFStopSpin->setFocusPolicy(Qt::ClickFocus);
+    mpForm->addRow(tr("絞り(F値)"), m_mpFStopSpin);
+
+    m_mpFocusSpin = new QDoubleSpinBox(m_multiplaneGroup);
+    m_mpFocusSpin->setRange(10.0, 10000.0);
+    m_mpFocusSpin->setDecimals(1);
+    m_mpFocusSpin->setSuffix(tr(" mm"));
+    m_mpFocusSpin->setFocusPolicy(Qt::ClickFocus);
+    mpForm->addRow(tr("フォーカス距離"), m_mpFocusSpin);
+
+    m_mpSamplesSpin = new QSpinBox(m_multiplaneGroup);
+    m_mpSamplesSpin->setRange(1, 64);
+    m_mpSamplesSpin->setFocusPolicy(Qt::ClickFocus);
+    mpForm->addRow(tr("サンプル数"), m_mpSamplesSpin);
+    mpLayout->addLayout(mpForm);
+
+    m_mpTable = new QTableWidget(m_multiplaneGroup);
+    m_mpTable->setColumnCount(3);
+    m_mpTable->setHorizontalHeaderLabels({tr("セル"), tr("距離mm"), tr("幅mm")});
+    m_mpTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    m_mpTable->verticalHeader()->setVisible(false);
+    m_mpTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_mpTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_mpTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_mpTable->setMaximumHeight(140);
+    mpLayout->addWidget(m_mpTable);
+
+    auto* mpButtonRow = new QHBoxLayout();
+    m_mpAddButton = new QPushButton(tr("段を追加"), m_multiplaneGroup);
+    m_mpRemoveButton = new QPushButton(tr("段を削除"), m_multiplaneGroup);
+    mpButtonRow->addWidget(m_mpAddButton);
+    mpButtonRow->addWidget(m_mpRemoveButton);
+    mpLayout->addLayout(mpButtonRow);
+
+    rightLayout->addWidget(m_multiplaneGroup);
     rightLayout->addStretch(1);
     mainLayout->addWidget(rightContainer);
 
@@ -180,6 +243,16 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_sheet, &QTableWidget::currentCellChanged, this,
             [this](int row, int column, int, int) { onSheetCellChanged(row, column); });
     connect(m_sheet, &QTableWidget::cellDoubleClicked, this, &ShootingWindow::onSheetCellDoubleClicked);
+
+    connect(m_multiplaneGroup, &QGroupBox::toggled, this, &ShootingWindow::onMultiplaneToggled);
+    connect(m_mpFocalSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onMultiplaneCameraChanged(); });
+    connect(m_mpSensorSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onMultiplaneCameraChanged(); });
+    connect(m_mpFStopSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onMultiplaneCameraChanged(); });
+    connect(m_mpFocusSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onMultiplaneCameraChanged(); });
+    connect(m_mpSamplesSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int) { onMultiplaneCameraChanged(); });
+    connect(m_mpAddButton, &QPushButton::clicked, this, &ShootingWindow::addMultiplanePlaneRow);
+    connect(m_mpRemoveButton, &QPushButton::clicked, this, &ShootingWindow::removeMultiplanePlaneRow);
 }
 
 void ShootingWindow::setProject(core::Project* project) {
@@ -236,6 +309,7 @@ void ShootingWindow::refresh() {
     rebuildEffectList();
     rebuildSheet();
     syncSelectionUI();
+    rebuildMultiplanePanel();
 }
 
 void ShootingWindow::rebuildEffectList() {
@@ -544,4 +618,141 @@ void ShootingWindow::debugSelectKoma(int koma) {
         m_updating = false;
     }
     syncSelectionUI();
+}
+
+void ShootingWindow::rebuildMultiplanePanel() {
+    m_updating = true;
+    core::Cut* cut = currentCut();
+    const core::MultiplaneSetup setup = cut ? cut->multiplane() : core::MultiplaneSetup{};
+
+    m_multiplaneGroup->setEnabled(cut != nullptr);
+    m_multiplaneGroup->setChecked(setup.enabled);
+    m_mpFocalSpin->setValue(setup.camera.focalLengthMm);
+    m_mpSensorSpin->setValue(setup.camera.sensorWidthMm);
+    m_mpFStopSpin->setValue(setup.camera.apertureFStop);
+    m_mpFocusSpin->setValue(setup.camera.focusDistanceMm);
+    m_mpSamplesSpin->setValue(setup.samplesPerPixel);
+
+    QStringList celNames;
+    if (cut) {
+        for (size_t ci = 0; ci < cut->celCount(); ++ci) celNames.append(QString::fromStdString(cut->cel(ci).name()));
+    }
+
+    m_mpTable->setRowCount(static_cast<int>(setup.planes.size()));
+    for (int r = 0; r < static_cast<int>(setup.planes.size()); ++r) {
+        const core::MultiplaneCelPlane& plane = setup.planes[static_cast<size_t>(r)];
+
+        auto* combo = new QComboBox(m_mpTable);
+        combo->addItems(celNames);
+        if (plane.celIndex >= 0 && plane.celIndex < celNames.size()) combo->setCurrentIndex(plane.celIndex);
+        connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, r](int index) {
+            if (m_updating) return;
+            core::Cut* c = currentCut();
+            if (!c || r >= static_cast<int>(c->multiplane().planes.size())) return;
+            c->multiplane().planes[static_cast<size_t>(r)].celIndex = index;
+            updatePreview();
+            emit edited();
+        });
+        m_mpTable->setCellWidget(r, 0, combo);
+
+        auto* distSpin = new QDoubleSpinBox(m_mpTable);
+        distSpin->setRange(1.0, 100000.0);
+        distSpin->setDecimals(1);
+        distSpin->setValue(plane.distanceMm);
+        distSpin->setFocusPolicy(Qt::ClickFocus);
+        connect(distSpin, &QDoubleSpinBox::valueChanged, this, [this, r](double value) {
+            if (m_updating) return;
+            core::Cut* c = currentCut();
+            if (!c || r >= static_cast<int>(c->multiplane().planes.size())) return;
+            c->multiplane().planes[static_cast<size_t>(r)].distanceMm = value;
+            updatePreview();
+            emit edited();
+        });
+        m_mpTable->setCellWidget(r, 1, distSpin);
+
+        auto* widthSpin = new QDoubleSpinBox(m_mpTable);
+        widthSpin->setRange(1.0, 100000.0);
+        widthSpin->setDecimals(1);
+        widthSpin->setValue(plane.widthMm);
+        widthSpin->setFocusPolicy(Qt::ClickFocus);
+        connect(widthSpin, &QDoubleSpinBox::valueChanged, this, [this, r](double value) {
+            if (m_updating) return;
+            core::Cut* c = currentCut();
+            if (!c || r >= static_cast<int>(c->multiplane().planes.size())) return;
+            c->multiplane().planes[static_cast<size_t>(r)].widthMm = value;
+            updatePreview();
+            emit edited();
+        });
+        m_mpTable->setCellWidget(r, 2, widthSpin);
+    }
+
+    m_mpAddButton->setEnabled(cut != nullptr);
+    m_mpRemoveButton->setEnabled(!setup.planes.empty());
+    m_updating = false;
+}
+
+void ShootingWindow::onMultiplaneToggled(bool checked) {
+    if (m_updating) return;
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    cut->multiplane().enabled = checked;
+    updatePreview();
+    emit edited();
+}
+
+void ShootingWindow::onMultiplaneCameraChanged() {
+    if (m_updating) return;
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    core::MultiplaneSetup& setup = cut->multiplane();
+    setup.camera.focalLengthMm = m_mpFocalSpin->value();
+    setup.camera.sensorWidthMm = m_mpSensorSpin->value();
+    setup.camera.apertureFStop = m_mpFStopSpin->value();
+    setup.camera.focusDistanceMm = m_mpFocusSpin->value();
+    setup.samplesPerPixel = m_mpSamplesSpin->value();
+    updatePreview();
+    emit edited();
+}
+
+void ShootingWindow::addMultiplanePlaneRow() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    core::MultiplaneSetup& setup = cut->multiplane();
+
+    // 未割付(planesに無い)の先頭セルを既定対象にする。全セル割付済みならセル0のまま
+    int celIndex = 0;
+    for (size_t ci = 0; ci < cut->celCount(); ++ci) {
+        const bool assigned =
+            std::any_of(setup.planes.begin(), setup.planes.end(),
+                        [ci](const core::MultiplaneCelPlane& p) { return p.celIndex == static_cast<int>(ci); });
+        if (!assigned) {
+            celIndex = static_cast<int>(ci);
+            break;
+        }
+    }
+    core::MultiplaneCelPlane plane;
+    plane.celIndex = celIndex;
+    plane.distanceMm = 500.0;
+    plane.widthMm = 400.0;
+    setup.planes.push_back(plane);
+
+    rebuildMultiplanePanel();
+    updatePreview();
+    emit edited();
+}
+
+void ShootingWindow::removeMultiplanePlaneRow() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    core::MultiplaneSetup& setup = cut->multiplane();
+    if (setup.planes.empty()) return;
+
+    const int row = m_mpTable->currentRow();
+    const int target =
+        (row >= 0 && row < static_cast<int>(setup.planes.size())) ? row : static_cast<int>(setup.planes.size()) - 1;
+    setup.planes.erase(setup.planes.begin() + target);
+
+    rebuildMultiplanePanel();
+    updatePreview();
+    emit edited();
 }

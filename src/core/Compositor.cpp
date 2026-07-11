@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "EffectProcessor.h"
+#include "Multiplane.h"
 
 namespace core {
 
@@ -86,9 +87,99 @@ Bitmap applyCameraFrame(const Bitmap& src, const CameraFrameState& cam, int widt
     return out;
 }
 
+// セルの可視レイヤーを重ねた透明合成ビットマップ(セルローカル座標、0,0起点)を作る。
+// レイヤーが1枚も無ければ空のBitmapを返す。デジタル合成(セル別エフェクト適用)と
+// クラシック撮影(マルチプレーンのアートワーク)の両方から使う共通処理
+Bitmap buildCelComposite(const Cel& cel, int drawing, const RenderOptions& options) {
+    std::vector<const Bitmap*> visibleLayers;
+    int celW = 0;
+    int celH = 0;
+    for (size_t li = 0; li < cel.layerCount(); ++li) {
+        const Layer& layer = cel.layer(li);
+        if (!layer.visible()) continue;
+        if (layer.role() == LayerRole::ColorTrace && !options.includeColorTrace) continue;
+        if (layer.role() == LayerRole::Correction && !options.includeCorrection) continue;
+        if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
+
+        const Bitmap& src = layer.frame(static_cast<size_t>(drawing)).bitmap();
+        if (src.isEmpty()) continue;
+        visibleLayers.push_back(&src);
+        celW = std::max(celW, src.width());
+        celH = std::max(celH, src.height());
+    }
+    if (celW == 0 || celH == 0) return Bitmap();
+
+    Bitmap celImage(celW, celH);
+    celImage.fill({0, 0, 0, 0});
+    for (const Bitmap* src : visibleLayers) blendOver(celImage, *src, 0, 0);
+    return celImage;
+}
+
+// クラシック撮影(マルチプレーン撮影台)経路。割付(planes)にあるセルごとに
+// セル単独の透明合成ビットマップを作り、マルチプレーンのレイトレースで撮影する。
+// その後は従来経路と同じく全体エフェクト→カメラフレームクロップを適用する
+Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height, const RenderOptions& options) {
+    const MultiplaneSetup& setup = cut.multiplane();
+
+    // artwork(Bitmap)は差し替え中もポインタが有効である必要があるため、
+    // plane数ぶんreserveしてから push_back する(再確保でポインタが無効化しないように)
+    std::vector<Bitmap> composites;
+    std::vector<MultiplanePlane> mplanes;
+    composites.reserve(setup.planes.size());
+    mplanes.reserve(setup.planes.size());
+
+    for (const MultiplaneCelPlane& p : setup.planes) {
+        if (options.onlyCel >= 0 && options.onlyCel != p.celIndex) continue;
+        if (p.celIndex < 0 || static_cast<size_t>(p.celIndex) >= cut.celCount()) continue;
+        const Cel& cel = cut.cel(static_cast<size_t>(p.celIndex));
+        if (!cel.visible()) continue;
+        const int drawing = cel.exposure(frame);
+        if (drawing < 0) continue;  // このコマにセルなし
+
+        Bitmap celImage = buildCelComposite(cel, drawing, options);
+        if (celImage.isEmpty()) continue;
+
+        // このセルをtargetCelとする有効な撮影エフェクトをスタック順で適用する(従来経路と同じ規則)
+        for (const Effect& effect : cut.effects()) {
+            if (effect.enabled && effect.targetCel == p.celIndex) applyEffect(celImage, effect, frame);
+        }
+
+        // タップ/ペグ移動(px)を平面内オフセット(mm)へ変換する
+        const Vec2 position = cel.positionAt(frame);
+        const double mmPerPx = p.widthMm / celImage.width();
+
+        composites.push_back(std::move(celImage));
+        MultiplanePlane mp;
+        mp.artwork = &composites.back();
+        mp.distanceMm = p.distanceMm;
+        mp.widthMm = p.widthMm;
+        mp.offsetXMm = position.x * mmPerPx;
+        mp.offsetYMm = position.y * mmPerPx;
+        mplanes.push_back(mp);
+    }
+
+    Bitmap out = renderMultiplane(mplanes, setup.camera, width, height, setup.samplesPerPixel, 1);
+
+    // 全平面合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
+    for (const Effect& effect : cut.effects()) {
+        if (effect.enabled && effect.targetCel == -1) applyEffect(out, effect, frame);
+    }
+
+    if (const auto cam = cut.cameraFrameAt(frame)) {
+        out = applyCameraFrame(out, *cam, width, height);
+    }
+    return out;
+}
+
 }  // namespace
 
 Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const RenderOptions& options) {
+    // クラシック撮影(マルチプレーン撮影台)が有効なら専用経路へ。無効時は完全に従来動作
+    // (バイト単位で同一)を保証する
+    if (cut.multiplane().enabled) {
+        return renderCutFrameClassic(cut, frame, width, height, options);
+    }
+
     Bitmap out(width, height);
     out.fill({255, 255, 255, 255});  // 紙(白)
 
@@ -126,26 +217,8 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
         } else {
             // エフェクトあり: セルのレイヤーをまずセル自身の座標系(0,0起点)の透明キャンバスへ合成し、
             // そのコピーへエフェクトを適用してから画面へ合成する(他セル・紙には影響しない)
-            std::vector<const Bitmap*> visibleLayers;
-            int celW = 0;
-            int celH = 0;
-            for (size_t li = 0; li < cel.layerCount(); ++li) {
-                const Layer& layer = cel.layer(li);
-                if (!layer.visible()) continue;
-                if (layer.role() == LayerRole::ColorTrace && !options.includeColorTrace) continue;
-                if (layer.role() == LayerRole::Correction && !options.includeCorrection) continue;
-                if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
-
-                const Bitmap& src = layer.frame(static_cast<size_t>(drawing)).bitmap();
-                if (src.isEmpty()) continue;
-                visibleLayers.push_back(&src);
-                celW = std::max(celW, src.width());
-                celH = std::max(celH, src.height());
-            }
-            if (celW > 0 && celH > 0) {
-                Bitmap celImage(celW, celH);
-                celImage.fill({0, 0, 0, 0});
-                for (const Bitmap* src : visibleLayers) blendOver(celImage, *src, 0, 0);
+            Bitmap celImage = buildCelComposite(cel, drawing, options);
+            if (!celImage.isEmpty()) {
                 for (const Effect* effect : celEffects) applyEffect(celImage, *effect, frame);
                 blendOver(out, celImage, offsetX, offsetY);
             }

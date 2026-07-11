@@ -8,6 +8,7 @@
 
 #include "Cel.h"
 #include "Effect.h"
+#include "Multiplane.h"
 #include "Previz.h"
 
 namespace core {
@@ -17,6 +18,21 @@ namespace core {
 struct CameraFrameState {
     Vec2 center;
     double scale = 1.0;
+};
+
+// クラシック撮影(マルチプレーン撮影台)のセル1枚分の段割付
+struct MultiplaneCelPlane {
+    int celIndex = 0;          // 対象セル(インデックス)
+    double distanceMm = 500.0;  // レンズから平面までの距離
+    double widthMm = 400.0;     // アートワークの物理幅
+};
+
+// カット単位のクラシック撮影設定。enabled=falseなら従来のデジタル合成
+struct MultiplaneSetup {
+    bool enabled = false;
+    MultiplaneCamera camera;
+    std::vector<MultiplaneCelPlane> planes;  // 割付の無いセルは撮影されない
+    int samplesPerPixel = 8;                 // プレビュー/書き出しのサンプル数
 };
 
 // 制作進捗(編集/カッティング工程の進行管理用)
@@ -75,6 +91,12 @@ public:
     std::vector<Effect>& effects() { return m_effects; }
     const std::vector<Effect>& effects() const { return m_effects; }
 
+    // --- クラシック撮影(マルチプレーン撮影台) ---
+    // enabled=falseなら従来のデジタル合成(renderCutFrameはバイト同一を保証する)
+
+    MultiplaneSetup& multiplane() { return m_multiplane; }
+    const MultiplaneSetup& multiplane() const { return m_multiplane; }
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Cel>> m_cels;
@@ -85,6 +107,7 @@ private:
     std::map<size_t, CameraFrameState> m_cameraKeys;
     CutStatus m_status = CutStatus::NotStarted;  // 制作進捗(編集/カッティング工程の進行管理用)
     std::vector<Effect> m_effects;               // 撮影エフェクトのスタック(カット単位)
+    MultiplaneSetup m_multiplane;                 // クラシック撮影(マルチプレーン撮影台)設定
 };
 
 }  // namespace core

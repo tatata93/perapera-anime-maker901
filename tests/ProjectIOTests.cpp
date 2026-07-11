@@ -114,6 +114,56 @@ TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
     std::filesystem::remove(path);
 }
 
+TEST_CASE("Multiplane setup round trips through ppam", "[core][io][multiplane]") {
+    const auto path = tempFile("ppam_multiplane_roundtrip_test.ppam");
+
+    core::Project project("MP");
+    core::Scene& scene = project.addScene("Scene 1");
+    core::Cut& cut = scene.addCut("Cut A");
+    cut.addCel("A");
+    cut.addCel("B");
+
+    core::MultiplaneSetup& mp = cut.multiplane();
+    mp.enabled = true;
+    mp.camera.focalLengthMm = 35.0;
+    mp.camera.sensorWidthMm = 24.0;
+    mp.camera.apertureFStop = 2.8;
+    mp.camera.focusDistanceMm = 600.0;
+    mp.samplesPerPixel = 16;
+    mp.planes.push_back({0, 500.0, 400.0});
+    mp.planes.push_back({1, 300.0, 300.0});
+
+    // 比較用: マルチプレーンを持たないカット(既定値のまま)も一緒に往復させ、省略時の既定を確認する
+    scene.addCut("Cut B");
+
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const core::MultiplaneSetup& loadedMp = loaded->scene(0).cut(0).multiplane();
+    REQUIRE(loadedMp.enabled == true);
+    REQUIRE(loadedMp.camera.focalLengthMm == 35.0);
+    REQUIRE(loadedMp.camera.sensorWidthMm == 24.0);
+    REQUIRE(loadedMp.camera.apertureFStop == 2.8);
+    REQUIRE(loadedMp.camera.focusDistanceMm == 600.0);
+    REQUIRE(loadedMp.samplesPerPixel == 16);
+    REQUIRE(loadedMp.planes.size() == 2);
+    REQUIRE(loadedMp.planes[0].celIndex == 0);
+    REQUIRE(loadedMp.planes[0].distanceMm == 500.0);
+    REQUIRE(loadedMp.planes[0].widthMm == 400.0);
+    REQUIRE(loadedMp.planes[1].celIndex == 1);
+    REQUIRE(loadedMp.planes[1].distanceMm == 300.0);
+    REQUIRE(loadedMp.planes[1].widthMm == 300.0);
+
+    // マルチプレーン設定を持たないカットは既定(無効・段なし)のまま
+    const core::MultiplaneSetup& defaultMp = loaded->scene(0).cut(1).multiplane();
+    REQUIRE_FALSE(defaultMp.enabled);
+    REQUIRE(defaultMp.planes.empty());
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Storyboard panels round trip through ppam", "[core][io][storyboard]") {
     core::Project project("P");
     core::Scene& scene = project.addScene("S");

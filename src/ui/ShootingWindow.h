@@ -7,11 +7,14 @@
 #include <vector>
 
 class QComboBox;
+class QDoubleSpinBox;
 class QFormLayout;
+class QGroupBox;
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
 class QPushButton;
+class QSpinBox;
 class QTableWidget;
 class QWidget;
 
@@ -68,6 +71,13 @@ private:
     void onSheetCellDoubleClicked(int row, int column);
     void markEdited();  // m_dirty相当の通知+シート/プレビューの追従
 
+    // --- クラシック撮影(マルチプレーン)パネル ---
+    void rebuildMultiplanePanel();    // カメラ値+段テーブルを選択中カットの内容で作り直す
+    void onMultiplaneToggled(bool checked);
+    void onMultiplaneCameraChanged();  // カメラ/サンプル数スピンのいずれかが変わった
+    void addMultiplanePlaneRow();
+    void removeMultiplanePlaneRow();
+
     core::Project* m_project = nullptr;
     int m_cutIndex = 0;   // 表示対象カット
     int m_effectRow = -1;  // 選択中エフェクト(-1=なし)
@@ -87,6 +97,17 @@ private:
     QTableWidget* m_sheet = nullptr;
     QLabel* m_previewLabel = nullptr;
     QLabel* m_komaLabel = nullptr;
+
+    // クラシック撮影(マルチプレーン撮影台)パネル
+    QGroupBox* m_multiplaneGroup = nullptr;
+    QDoubleSpinBox* m_mpFocalSpin = nullptr;
+    QDoubleSpinBox* m_mpSensorSpin = nullptr;
+    QDoubleSpinBox* m_mpFStopSpin = nullptr;
+    QDoubleSpinBox* m_mpFocusSpin = nullptr;
+    QSpinBox* m_mpSamplesSpin = nullptr;
+    QTableWidget* m_mpTable = nullptr;
+    QPushButton* m_mpAddButton = nullptr;
+    QPushButton* m_mpRemoveButton = nullptr;
 
     // キー持ちエフェクトのスピン編集は即データへ書かず、「キー追加」で確定する(プリビズのキー規則)。
     // その保留値。エフェクト/コマ選択が変わるたびに破棄される

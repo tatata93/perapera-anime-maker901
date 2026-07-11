@@ -2,6 +2,8 @@
 #include <cmath>
 #include <cstring>
 
+#include "core/Compositor.h"
+#include "core/Cut.h"
 #include "core/Multiplane.h"
 
 namespace {
@@ -276,4 +278,76 @@ TEST_CASE("renderMultiplane pinhole is nearly identical with samples=1 and sampl
     REQUIRE(std::abs(cx1 - cx16) <= 2.0);
     REQUIRE(std::abs(cx1 - 50.0) <= 2.0);
     REQUIRE(std::abs(cx16 - 50.0) <= 2.0);
+}
+
+// --- ここから: Cut/Compositor統合(Phase 17クラシック撮影) ---
+
+TEST_CASE("renderCutFrame with multiplane disabled matches legacy digital compositing", "[core][compositor][multiplane]") {
+    core::Cut cut("Cut 1");
+    core::Cel& celA = cut.addCel("A");
+    core::Layer& lineA = celA.addLayer("線画");
+    core::Bitmap bmpA(8, 8);
+    bmpA.fill({0, 0, 0, 0});
+    bmpA.setPixel(2, 2, {0, 0, 0, 255});
+    lineA.addFrame().bitmap() = bmpA;
+
+    core::Cel& celB = cut.addCel("B");
+    core::Layer& lineB = celB.addLayer("線画");
+    core::Bitmap bmpB(8, 8);
+    bmpB.fill({0, 0, 0, 0});
+    bmpB.setPixel(5, 5, {255, 0, 0, 255});
+    lineB.addFrame().bitmap() = bmpB;
+
+    cut.setFrameCount(1);
+    celA.setExposure(0, 0);
+    celB.setExposure(0, 0);
+
+    // 既定はデジタル合成(従来経路)。マルチプレーンを持たせても無効なら影響しない
+    REQUIRE_FALSE(cut.multiplane().enabled);
+    cut.multiplane().planes.push_back({0, 500.0, 400.0});  // 無効時は割付が残っていても無視される
+
+    const core::Bitmap out = core::renderCutFrame(cut, 0, 8, 8);
+
+    REQUIRE(out.pixel(0, 0).r == 255);  // 紙は白
+    REQUIRE(out.pixel(0, 0).a == 255);
+    REQUIRE(out.pixel(2, 2).r == 0);    // セルAの黒点
+    REQUIRE(out.pixel(5, 5).r == 255);  // セルBの赤点
+    REQUIRE(out.pixel(5, 5).g == 0);
+}
+
+TEST_CASE("renderCutFrame classic multiplane draws a farther plane's marker closer to center (parallax)",
+          "[core][compositor][multiplane]") {
+    // 同じ目印位置(セル内テクセル位置は同じ)を持つ2つのカットを、距離違いの単一段として撮影し、
+    // 画面上の目印位置(中心からの距離)を比較する。ピンホール投影では距離が遠いほど中心寄りになる
+    const auto renderAtDistance = [](double distanceMm) {
+        core::Cut cut("Cut");
+        core::Cel& cel = cut.addCel("A");
+        core::Layer& layer = cel.addLayer("線画");
+        core::Bitmap art(40, 40);
+        art.fill({0, 0, 0, 0});
+        art.setPixel(30, 20, {255, 0, 0, 255});  // 中心からずれた目印
+        layer.addFrame().bitmap() = art;
+        cut.setFrameCount(1);
+        cel.setExposure(0, 0);
+
+        core::MultiplaneSetup& mp = cut.multiplane();
+        mp.enabled = true;
+        mp.camera.focalLengthMm = 50.0;
+        mp.camera.sensorWidthMm = 36.0;
+        mp.camera.apertureFStop = 0.0;  // ピンホール(決定論的)
+        mp.camera.focusDistanceMm = 500.0;
+        mp.samplesPerPixel = 1;
+        mp.planes.push_back({0, distanceMm, 400.0});
+
+        return core::renderCutFrame(cut, 0, 100, 100);
+    };
+
+    const core::Bitmap outNear = renderAtDistance(500.0);
+    const core::Bitmap outFar = renderAtDistance(1000.0);
+
+    const double cxNear = weightedCentroidX(outNear);
+    const double cxFar = weightedCentroidX(outFar);
+
+    // 中心(50px)からの距離: 遠い段のほうが小さい(中央寄り=縮小して写る)
+    REQUIRE(std::abs(cxFar - 50.0) < std::abs(cxNear - 50.0));
 }

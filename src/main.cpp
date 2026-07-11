@@ -733,5 +733,21 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --classic-test <出力PNG> でクラシック撮影(マルチプレーン撮影台)デモ
+    // (セルA=赤い矩形枠[距離500mm]・セルB=左寄り緑丸[距離300mm]、f/2.0・フォーカス500mm・
+    // samples=8)を組み、撮影ウィンドウ(クラシック撮影グループON+プレビュー)を保存して終了する
+    const int classicIndex = args.indexOf("--classic-test");
+    if (classicIndex >= 0 && classicIndex + 1 < args.size()) {
+        const QString outputPath = args.at(classicIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupClassicDemo();
+            // マルチプレーンのレイトレースはプレビュー描画に時間がかかりうるため、grabまでの待ちを長めに取る
+            QTimer::singleShot(800, &window, [&window, outputPath] {
+                window.shootingWindow()->grab().save(outputPath);
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
     return app.exec();
 }

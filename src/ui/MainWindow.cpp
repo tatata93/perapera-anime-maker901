@@ -1750,6 +1750,64 @@ void MainWindow::debugSetupShootingDemo() {
     m_shootingWindow->debugSelectKoma(12);
 }
 
+void MainWindow::debugSetupClassicDemo() {
+    // クラシック撮影(マルチプレーン撮影台)確認用: セルA=赤い矩形枠(遠景、距離500mm/幅400mm)、
+    // セルB=左寄り緑丸(近景、距離300mm/幅300mm)を作り、f/2.0・フォーカス500mm・samples=8で
+    // マルチプレーン撮影を有効化して撮影ウィンドウを開く(Bはピントが合わずボケる想定)
+    core::Cut& cut = activeCut();
+
+    // セルA: 赤い矩形枠(既定のアクティブセルに描く)
+    core::Bitmap& bitmapA = activeLayer().frame(m_currentFrame).bitmap();
+    core::BrushEngine engineA;
+    engineA.settings().radius = 10.0f;
+    engineA.settings().color = {210, 30, 30, 255};
+    const float ax0 = kCanvasWidth * 0.30f, ax1 = kCanvasWidth * 0.70f;
+    const float ay0 = kCanvasHeight * 0.30f, ay1 = kCanvasHeight * 0.70f;
+    engineA.beginStroke(bitmapA, ax0, ay0, 1.0f);
+    engineA.continueStroke(bitmapA, ax1, ay0, 1.0f);
+    engineA.continueStroke(bitmapA, ax1, ay1, 1.0f);
+    engineA.continueStroke(bitmapA, ax0, ay1, 1.0f);
+    engineA.continueStroke(bitmapA, ax0, ay0, 1.0f);
+    engineA.endStroke();
+
+    // セルB: 左寄り緑丸(1スタンプの円ダブ)
+    addCel();  // セルB追加(アクティブになる。現在コマに動画1が自動で割り付く)
+    core::Cel& celB = cut.cel(1);
+    core::Bitmap& bitmapB = celB.layer(0).frame(0).bitmap();
+    core::BrushEngine engineB;
+    engineB.settings().radius = 80.0f;
+    engineB.settings().color = {30, 180, 60, 255};
+    engineB.beginStroke(bitmapB, kCanvasWidth * 0.25f, kCanvasHeight * 0.5f, 1.0f);
+    engineB.endStroke();
+
+    // クラシック撮影(マルチプレーン)を有効化
+    core::MultiplaneSetup& mp = cut.multiplane();
+    mp.enabled = true;
+    mp.camera.focalLengthMm = 50.0;
+    mp.camera.sensorWidthMm = 36.0;
+    mp.camera.apertureFStop = 2.0;
+    mp.camera.focusDistanceMm = 500.0;
+    mp.samplesPerPixel = 8;
+    mp.planes.clear();
+    core::MultiplaneCelPlane planeA;
+    planeA.celIndex = 0;
+    planeA.distanceMm = 500.0;
+    planeA.widthMm = 400.0;
+    mp.planes.push_back(planeA);
+    core::MultiplaneCelPlane planeB;
+    planeB.celIndex = 1;
+    planeB.distanceMm = 300.0;
+    planeB.widthMm = 300.0;
+    mp.planes.push_back(planeB);
+
+    m_canvas->clearTextureCache();
+    updateCanvasLayers();
+    m_dirty = true;
+    updateWindowTitle();
+
+    openShootingWindow();
+}
+
 void MainWindow::debugSetupFillDemo() {
     // 閉じた矩形枠(黒)を現在フレームのアクティブレイヤーに描く
     core::Bitmap& bitmap = activeLayer().frame(m_currentFrame).bitmap();
