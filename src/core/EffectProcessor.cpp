@@ -238,10 +238,10 @@ void applyShake(Bitmap& image, const Effect& effect, size_t frame) {
 void applyEffect(Bitmap& image, const Effect& effect, size_t frame) {
     if (!effect.enabled || image.isEmpty()) return;
 
-    // 撮影シートのキー(コマ間の線形補間)を反映したパラメータ一式に解決してから適用する
+    // キーフレーム曲線(コマ間の線形補間)を反映したパラメータ一式に解決してから適用する
     Effect resolved = effect;
     resolved.params = effect.paramsAt(frame);
-    resolved.paramKeys.clear();
+    resolved.paramCurves.clear();
 
     switch (resolved.type) {
         case EffectType::Blur:

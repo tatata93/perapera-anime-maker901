@@ -1,21 +1,28 @@
 #include "ShootingWindow.h"
 
+#include <QAbstractItemView>
 #include <QAction>
+#include <QBrush>
+#include <QColor>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFont>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QImage>
 #include <QLabel>
-#include <QListWidget>
 #include <QMenu>
 #include <QPixmap>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QTableWidget>
+#include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <utility>
@@ -25,7 +32,7 @@
 
 namespace {
 
-// パラメータ名(core::Effect::params のキー)の日本語表示名(旧撮影パネルから引き継ぎ)
+// パラメータ名(core::Effect::params のキー)の日本語表示名
 QString paramLabel(const std::string& key) {
     static const std::map<std::string, QString> kLabels = {
         {"radius", QObject::tr("半径")},     {"threshold", QObject::tr("しきい値")},
@@ -43,22 +50,24 @@ QString paramLabel(const std::string& key) {
 // 濃度系パラメータ(0〜1程度の細かい調整が必要)はステップ0.05、それ以外(半径系)は1.0
 bool isDensityParam(const std::string& key) { return key == "top" || key == "bottom" || key == "strength"; }
 
-// エフェクト行の表示名(「ブラー (全体)」「グロー (A)」等)
+bool isRgbParam(const std::string& key) { return key == "r" || key == "g" || key == "b"; }
+
+// エフェクトGroupBoxのタイトル(「ブラー (全体)」「グロー (A)」等)
 QString effectRowLabel(const core::Effect& effect, const QStringList& celNames) {
     QString target = QObject::tr("全体");
     if (effect.targetCel >= 0 && effect.targetCel < celNames.size()) target = celNames.at(effect.targetCel);
     return QObject::tr("%1 (%2)").arg(QString::fromUtf8(core::effectTypeName(effect.type)), target);
 }
 
-// プレビューの表示解像度
-constexpr int kPreviewWidth = 480;
-constexpr int kPreviewHeight = 270;
+// CTI(現在コマ)列のハイライト色
+const QColor kCtiColumnColor(70, 110, 170);
+const QColor kCtiHeaderColor(90, 140, 210);
 
 }  // namespace
 
 ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(tr("撮影 - perapera-anime-maker901"));
-    resize(1280, 640);
+    resize(1400, 900);
 
     // ツールバー: カット選択+更新
     QToolBar* toolBar = addToolBar(tr("撮影"));
@@ -72,93 +81,49 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_cutCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         if (m_updating || index < 0) return;
         m_cutIndex = index;
-        m_effectRow = -1;
         m_koma = 0;
         refresh();
     });
 
     auto* central = new QWidget(this);
-    auto* mainLayout = new QHBoxLayout(central);
+    auto* rootLayout = new QVBoxLayout(central);
+    rootLayout->setContentsMargins(4, 4, 4, 4);
 
-    // 左: エフェクト一覧+対象+パラメータ+キー操作
-    auto* leftContainer = new QWidget(central);
-    leftContainer->setFixedWidth(280);
-    auto* leftLayout = new QVBoxLayout(leftContainer);
-    leftLayout->setContentsMargins(0, 0, 0, 0);
+    auto* vSplit = new QSplitter(Qt::Vertical, central);
 
-    m_list = new QListWidget(leftContainer);
-    leftLayout->addWidget(m_list, 1);
+    // ==== 上段: 左「エフェクトコントロール」/ 右「プレビュー」 ====
+    auto* topSplit = new QSplitter(Qt::Horizontal, vSplit);
 
-    auto* addButton = new QPushButton(tr("追加"), leftContainer);
-    auto* menu = new QMenu(addButton);
-    const struct { core::EffectType type; const char* label; } kTypes[] = {
+    // --- 左: エフェクトコントロールパネル(スクロール) ---
+    m_effectScroll = new QScrollArea(topSplit);
+    m_effectScroll->setWidgetResizable(true);
+    m_effectScroll->setMinimumWidth(340);
+    m_effectContainer = new QWidget();
+    m_effectContainerLayout = new QVBoxLayout(m_effectContainer);
+    m_effectContainerLayout->setAlignment(Qt::AlignTop);
+
+    // 「エフェクトを追加」ボタン(エフェクトGroupBox群の下、常にレイアウトの固定位置に残す)
+    m_addEffectButton = new QPushButton(tr("エフェクトを追加"), m_effectContainer);
+    auto* addMenu = new QMenu(m_addEffectButton);
+    const struct {
+        core::EffectType type;
+        const char* label;
+    } kTypes[] = {
         {core::EffectType::Blur, "ブラー"},
         {core::EffectType::Glow, "グロー"},
         {core::EffectType::Para, "パラ"},
         {core::EffectType::Shake, "シェイク"},
     };
     for (const auto& entry : kTypes) {
-        QAction* action = menu->addAction(QString::fromUtf8(entry.label));
+        QAction* action = addMenu->addAction(QString::fromUtf8(entry.label));
         const int typeInt = static_cast<int>(entry.type);
         connect(action, &QAction::triggered, this, [this, typeInt] { addEffectOfType(typeInt); });
     }
-    addButton->setMenu(menu);
-    m_removeButton = new QPushButton(tr("削除"), leftContainer);
-    m_upButton = new QPushButton(tr("上へ"), leftContainer);
-    m_downButton = new QPushButton(tr("下へ"), leftContainer);
-    auto* buttonRow = new QHBoxLayout();
-    buttonRow->addWidget(addButton);
-    buttonRow->addWidget(m_removeButton);
-    buttonRow->addWidget(m_upButton);
-    buttonRow->addWidget(m_downButton);
-    leftLayout->addLayout(buttonRow);
+    m_addEffectButton->setMenu(addMenu);
+    m_effectContainerLayout->addWidget(m_addEffectButton);
 
-    auto* targetRow = new QHBoxLayout();
-    targetRow->addWidget(new QLabel(tr("対象:"), leftContainer));
-    m_targetCombo = new QComboBox(leftContainer);
-    m_targetCombo->setEnabled(false);
-    targetRow->addWidget(m_targetCombo, 1);
-    leftLayout->addLayout(targetRow);
-
-    m_paramContainer = new QWidget(leftContainer);
-    m_paramForm = new QFormLayout(m_paramContainer);
-    m_paramForm->setContentsMargins(0, 0, 0, 0);
-    leftLayout->addWidget(m_paramContainer);
-
-    m_keyStateLabel = new QLabel(tr("キー: なし"), leftContainer);
-    leftLayout->addWidget(m_keyStateLabel);
-    m_addKeyButton = new QPushButton(tr("キー追加"), leftContainer);
-    m_removeKeyButton = new QPushButton(tr("キー削除"), leftContainer);
-    auto* keyRow = new QHBoxLayout();
-    keyRow->addWidget(m_addKeyButton);
-    keyRow->addWidget(m_removeKeyButton);
-    leftLayout->addLayout(keyRow);
-
-    mainLayout->addWidget(leftContainer);
-
-    // 中央: 撮影シート(行=エフェクト、列=コマ)。キーのあるセルに●を表示する
-    m_sheet = new QTableWidget(central);
-    m_sheet->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_sheet->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_sheet->horizontalHeader()->setDefaultSectionSize(28);
-    m_sheet->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
-    mainLayout->addWidget(m_sheet, 1);
-
-    // 右: 選択コマのエフェクト適用済みプレビュー
-    auto* rightContainer = new QWidget(central);
-    rightContainer->setFixedWidth(kPreviewWidth + 8);
-    auto* rightLayout = new QVBoxLayout(rightContainer);
-    rightLayout->setContentsMargins(0, 0, 0, 0);
-    m_previewLabel = new QLabel(rightContainer);
-    m_previewLabel->setFixedSize(kPreviewWidth, kPreviewHeight);
-    m_previewLabel->setAlignment(Qt::AlignCenter);
-    m_previewLabel->setStyleSheet(QStringLiteral("background-color: black;"));
-    rightLayout->addWidget(m_previewLabel);
-    m_komaLabel = new QLabel(rightContainer);
-    rightLayout->addWidget(m_komaLabel);
-
-    // クラシック撮影(マルチプレーン撮影台)パネル。チェックOFF=デジタル合成(従来動作)
-    m_multiplaneGroup = new QGroupBox(tr("クラシック撮影(マルチプレーン)"), rightContainer);
+    // クラシック撮影(マルチプレーン撮影台)パネル。追加ボタンのさらに下に配置する
+    m_multiplaneGroup = new QGroupBox(tr("クラシック撮影(マルチプレーン)"), m_effectContainer);
     m_multiplaneGroup->setCheckable(true);
     m_multiplaneGroup->setChecked(false);
     auto* mpLayout = new QVBoxLayout(m_multiplaneGroup);
@@ -216,33 +181,65 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     mpButtonRow->addWidget(m_mpRemoveButton);
     mpLayout->addLayout(mpButtonRow);
 
-    rightLayout->addWidget(m_multiplaneGroup);
-    rightLayout->addStretch(1);
-    mainLayout->addWidget(rightContainer);
+    m_effectContainerLayout->addWidget(m_multiplaneGroup);
 
+    m_effectScroll->setWidget(m_effectContainer);
+    topSplit->addWidget(m_effectScroll);
+
+    // --- 右: プレビュー+トランスポート ---
+    auto* rightContainer = new QWidget(topSplit);
+    auto* rightLayout = new QVBoxLayout(rightContainer);
+    rightLayout->setContentsMargins(4, 0, 0, 0);
+
+    m_previewLabel = new QLabel(rightContainer);
+    m_previewLabel->setMinimumSize(640, 360);
+    m_previewLabel->setAlignment(Qt::AlignCenter);
+    m_previewLabel->setStyleSheet(QStringLiteral("background-color: black;"));
+    rightLayout->addWidget(m_previewLabel, 1);
+
+    auto* transportRow = new QHBoxLayout();
+    m_playButton = new QPushButton(tr("再生"), rightContainer);
+    transportRow->addWidget(m_playButton);
+    m_komaLabel = new QLabel(rightContainer);
+    transportRow->addWidget(m_komaLabel);
+    transportRow->addStretch(1);
+    rightLayout->addLayout(transportRow);
+
+    topSplit->addWidget(rightContainer);
+    topSplit->setStretchFactor(0, 0);
+    topSplit->setStretchFactor(1, 1);
+    topSplit->setSizes({380, 1000});
+
+    vSplit->addWidget(topSplit);
+
+    // ==== 下段: タイムライン ====
+    auto* timelinePanel = new QWidget(vSplit);
+    auto* timelineLayout = new QVBoxLayout(timelinePanel);
+    timelineLayout->setContentsMargins(0, 4, 0, 0);
+    timelineLayout->addWidget(new QLabel(tr("タイムライン"), timelinePanel));
+    m_timeline = new QTableWidget(timelinePanel);
+    m_timeline->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_timeline->setSelectionMode(QAbstractItemView::NoSelection);
+    m_timeline->horizontalHeader()->setDefaultSectionSize(28);
+    m_timeline->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    timelineLayout->addWidget(m_timeline);
+    vSplit->addWidget(timelinePanel);
+    vSplit->setStretchFactor(0, 3);
+    vSplit->setStretchFactor(1, 1);
+    vSplit->setSizes({640, 220});
+
+    rootLayout->addWidget(vSplit);
     setCentralWidget(central);
 
-    connect(m_list, &QListWidget::itemChanged, this, &ShootingWindow::onListCheckChanged);
-    connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
-        if (m_updating) return;
-        m_effectRow = row;
-        m_pendingParams.clear();
-        // シートの選択セルも追従させる(currentCellChangedの再入はm_updatingで抑止)
-        m_updating = true;
-        if (row >= 0 && m_sheet->rowCount() > row) m_sheet->setCurrentCell(row, m_koma);
-        m_updating = false;
-        syncSelectionUI();
-    });
-    connect(m_removeButton, &QPushButton::clicked, this, &ShootingWindow::removeSelected);
-    connect(m_upButton, &QPushButton::clicked, this, [this] { moveSelected(-1); });
-    connect(m_downButton, &QPushButton::clicked, this, [this] { moveSelected(+1); });
-    connect(m_targetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            &ShootingWindow::onTargetIndexChanged);
-    connect(m_addKeyButton, &QPushButton::clicked, this, &ShootingWindow::addKeyAtCurrentKoma);
-    connect(m_removeKeyButton, &QPushButton::clicked, this, &ShootingWindow::removeKeyAtCurrentKoma);
-    connect(m_sheet, &QTableWidget::currentCellChanged, this,
-            [this](int row, int column, int, int) { onSheetCellChanged(row, column); });
-    connect(m_sheet, &QTableWidget::cellDoubleClicked, this, &ShootingWindow::onSheetCellDoubleClicked);
+    connect(m_playButton, &QPushButton::clicked, this, &ShootingWindow::togglePlayback);
+    m_playTimer = new QTimer(this);
+    m_playTimer->setInterval(1000 / 24);
+    connect(m_playTimer, &QTimer::timeout, this, &ShootingWindow::onPlaybackTick);
+
+    connect(m_timeline, &QTableWidget::cellClicked, this, &ShootingWindow::onTimelineCellClicked);
+    connect(m_timeline, &QTableWidget::cellDoubleClicked, this, &ShootingWindow::onTimelineCellDoubleClicked);
+    connect(m_timeline->horizontalHeader(), &QHeaderView::sectionClicked, this,
+            &ShootingWindow::onTimelineHeaderClicked);
 
     connect(m_multiplaneGroup, &QGroupBox::toggled, this, &ShootingWindow::onMultiplaneToggled);
     connect(m_mpFocalSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onMultiplaneCameraChanged(); });
@@ -258,9 +255,7 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
 void ShootingWindow::setProject(core::Project* project) {
     m_project = project;
     m_cutIndex = 0;
-    m_effectRow = -1;
     m_koma = 0;
-    m_pendingParams.clear();
 }
 
 void ShootingWindow::setCanvasSize(int width, int height) {
@@ -271,7 +266,6 @@ void ShootingWindow::setCanvasSize(int width, int height) {
 void ShootingWindow::setCutIndex(int index) {
     if (index == m_cutIndex) return;
     m_cutIndex = index;
-    m_effectRow = -1;
     m_koma = 0;
     refresh();
 }
@@ -284,6 +278,11 @@ core::Cut* ShootingWindow::currentCut() const {
 }
 
 void ShootingWindow::refresh() {
+    if (m_playTimer->isActive()) {
+        m_playTimer->stop();
+        m_playButton->setText(tr("再生"));
+    }
+
     m_updating = true;
     m_cutCombo->clear();
     if (m_project && m_project->sceneCount() > 0) {
@@ -297,160 +296,223 @@ void ShootingWindow::refresh() {
     m_updating = false;
 
     core::Cut* cut = currentCut();
-    if (cut) {
-        m_koma = std::clamp(m_koma, 0, static_cast<int>(cut->frameCount()) - 1);
-        m_effectRow = std::min(m_effectRow, static_cast<int>(cut->effects().size()) - 1);
-    } else {
-        m_koma = 0;
-        m_effectRow = -1;
-    }
-    m_pendingParams.clear();
+    m_koma = cut ? std::clamp(m_koma, 0, static_cast<int>(cut->frameCount()) - 1) : 0;
 
-    rebuildEffectList();
-    rebuildSheet();
-    syncSelectionUI();
+    rebuildEffectControls();
+    rebuildTimeline();
     rebuildMultiplanePanel();
+    updatePreview();
+    updateTransportLabel();
 }
 
-void ShootingWindow::rebuildEffectList() {
+QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringList& celNames) {
+    core::Cut* cut = currentCut();
+    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
+
+    auto* box = new QGroupBox(effectRowLabel(effect, celNames));
+    box->setCheckable(true);
+    box->setChecked(effect.enabled);
+    connect(box, &QGroupBox::toggled, this,
+            [this, effectIndex](bool checked) { onEffectEnabledChanged(effectIndex, checked); });
+
+    auto* vlayout = new QVBoxLayout(box);
+
+    // ヘッダ行: 対象コンボ + 上へ/下へ/削除の小ボタン
+    auto* headerRow = new QHBoxLayout();
+    headerRow->addWidget(new QLabel(tr("対象:"), box));
+    auto* targetCombo = new QComboBox(box);
+    targetCombo->addItem(tr("全体"));
+    for (const QString& name : celNames) targetCombo->addItem(name);
+    int comboIndex = 0;
+    if (effect.targetCel >= 0 && effect.targetCel < celNames.size()) comboIndex = effect.targetCel + 1;
+    targetCombo->setCurrentIndex(comboIndex);
+    connect(targetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this, effectIndex](int index) { onEffectTargetChanged(effectIndex, index); });
+    headerRow->addWidget(targetCombo, 1);
+
+    auto* upButton = new QToolButton(box);
+    upButton->setText(tr("上へ"));
+    upButton->setEnabled(effectIndex > 0);
+    connect(upButton, &QToolButton::clicked, this, [this, effectIndex] { moveEffect(effectIndex, -1); });
+    headerRow->addWidget(upButton);
+
+    auto* downButton = new QToolButton(box);
+    downButton->setText(tr("下へ"));
+    downButton->setEnabled(effectIndex + 1 < static_cast<int>(cut->effects().size()));
+    connect(downButton, &QToolButton::clicked, this, [this, effectIndex] { moveEffect(effectIndex, +1); });
+    headerRow->addWidget(downButton);
+
+    auto* removeButton = new QToolButton(box);
+    removeButton->setText(tr("削除"));
+    connect(removeButton, &QToolButton::clicked, this, [this, effectIndex] { removeEffect(effectIndex); });
+    headerRow->addWidget(removeButton);
+
+    vlayout->addLayout(headerRow);
+
+    // パラメータ行: [ストップウォッチ] [パラメータ名] [スピン] [◆キー有無/移動]
+    const std::map<std::string, double> shown = effect.paramsAt(static_cast<size_t>(m_koma));
+    for (const auto& [key, value] : shown) {
+        auto* row = new QHBoxLayout();
+        const std::string keyCopy = key;
+        const bool hasCurve = effect.hasCurve(key);
+
+        auto* stopwatch = new QToolButton(box);
+        stopwatch->setCheckable(true);
+        stopwatch->setChecked(hasCurve);
+        stopwatch->setText(QStringLiteral("⏱"));  // ⏱
+        stopwatch->setToolTip(tr("キーフレーム有効化"));
+        connect(stopwatch, &QToolButton::toggled, this,
+                [this, effectIndex, keyCopy](bool checked) { onStopwatchToggled(effectIndex, keyCopy, checked); });
+        row->addWidget(stopwatch);
+
+        row->addWidget(new QLabel(paramLabel(key), box));
+
+        auto* spin = new QDoubleSpinBox(box);
+        spin->setRange(0.0, isRgbParam(key) ? 255.0 : 4096.0);
+        spin->setDecimals(2);
+        spin->setSingleStep(isDensityParam(key) ? 0.05 : 1.0);
+        spin->setValue(value);
+        spin->setFocusPolicy(Qt::ClickFocus);
+        connect(spin, &QDoubleSpinBox::valueChanged, this,
+                [this, effectIndex, keyCopy](double v) { onParamSpinChanged(effectIndex, keyCopy, v); });
+        row->addWidget(spin, 1);
+
+        auto* diamond = new QToolButton(box);
+        const bool hasKeyHere = effect.hasKeyAt(key, static_cast<size_t>(m_koma));
+        diamond->setText(hasKeyHere ? QStringLiteral("◆") : (hasCurve ? QStringLiteral("◇") : QString()));
+        diamond->setEnabled(hasCurve);
+        diamond->setToolTip(tr("現在コマのキーをトグル"));
+        connect(diamond, &QToolButton::clicked, this,
+                [this, effectIndex, keyCopy] { onKeyDiamondClicked(effectIndex, keyCopy); });
+        row->addWidget(diamond);
+
+        vlayout->addLayout(row);
+
+        ParamRowWidgets rw;
+        rw.effectIndex = effectIndex;
+        rw.key = key;
+        rw.stopwatch = stopwatch;
+        rw.spin = spin;
+        rw.diamond = diamond;
+        m_paramRows.push_back(rw);
+    }
+
+    return box;
+}
+
+void ShootingWindow::rebuildEffectControls() {
     m_updating = true;
-    m_list->clear();
+    m_paramRows.clear();
+
+    // 既存のエフェクトGroupBoxを全て破棄する(「エフェクトを追加」ボタン以降は維持する)
+    while (m_effectContainerLayout->count() > 0) {
+        QLayoutItem* item = m_effectContainerLayout->itemAt(0);
+        if (item->widget() == m_addEffectButton) break;
+        m_effectContainerLayout->removeItem(item);
+        delete item->widget();
+        delete item;
+    }
+
     core::Cut* cut = currentCut();
     if (cut) {
         QStringList celNames;
-        for (size_t ci = 0; ci < cut->celCount(); ++ci) {
-            celNames.append(QString::fromStdString(cut->cel(ci).name()));
+        for (size_t ci = 0; ci < cut->celCount(); ++ci) celNames.append(QString::fromStdString(cut->cel(ci).name()));
+        for (int i = 0; i < static_cast<int>(cut->effects().size()); ++i) {
+            m_effectContainerLayout->insertWidget(i, buildEffectGroupBox(i, celNames));
         }
-        for (const core::Effect& effect : cut->effects()) {
-            auto* item = new QListWidgetItem(effectRowLabel(effect, celNames));
-            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
-            item->setCheckState(effect.enabled ? Qt::Checked : Qt::Unchecked);
-            m_list->addItem(item);
+    }
+    m_addEffectButton->setEnabled(cut != nullptr);
+    m_updating = false;
+}
+
+void ShootingWindow::refreshParamRowValues() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    m_updating = true;
+    for (const ParamRowWidgets& rw : m_paramRows) {
+        if (rw.effectIndex < 0 || rw.effectIndex >= static_cast<int>(cut->effects().size())) continue;
+        const core::Effect& effect = cut->effects()[static_cast<size_t>(rw.effectIndex)];
+        const double fallback = effect.params.count(rw.key) ? effect.params.at(rw.key) : 0.0;
+        if (rw.spin) rw.spin->setValue(effect.valueAt(rw.key, static_cast<size_t>(m_koma), fallback));
+        if (rw.diamond) {
+            const bool hasCurve = effect.hasCurve(rw.key);
+            const bool hasKeyHere = effect.hasKeyAt(rw.key, static_cast<size_t>(m_koma));
+            rw.diamond->setText(hasKeyHere ? QStringLiteral("◆")
+                                            : (hasCurve ? QStringLiteral("◇") : QString()));
+            rw.diamond->setEnabled(hasCurve);
         }
-        m_list->setCurrentRow(m_effectRow);
     }
     m_updating = false;
 }
 
-void ShootingWindow::rebuildSheet() {
+void ShootingWindow::rebuildTimeline() {
     m_updating = true;
+    m_timelineRows.clear();
     core::Cut* cut = currentCut();
     if (!cut) {
-        m_sheet->setRowCount(0);
-        m_sheet->setColumnCount(0);
+        m_timeline->setRowCount(0);
+        m_timeline->setColumnCount(0);
         m_updating = false;
         return;
     }
 
-    const int rows = static_cast<int>(cut->effects().size());
-    const int cols = static_cast<int>(cut->frameCount());
-    m_sheet->setRowCount(rows);
-    m_sheet->setColumnCount(cols);
-
     QStringList celNames;
-    for (size_t ci = 0; ci < cut->celCount(); ++ci) {
-        celNames.append(QString::fromStdString(cut->cel(ci).name()));
-    }
+    for (size_t ci = 0; ci < cut->celCount(); ++ci) celNames.append(QString::fromStdString(cut->cel(ci).name()));
+
     QStringList rowLabels;
-    for (const core::Effect& effect : cut->effects()) rowLabels.append(effectRowLabel(effect, celNames));
-    m_sheet->setVerticalHeaderLabels(rowLabels);
+    for (int i = 0; i < static_cast<int>(cut->effects().size()); ++i) {
+        const core::Effect& effect = cut->effects()[static_cast<size_t>(i)];
+        // hasCurveなパラメータ(paramCurvesに空でない曲線を持つもの)だけを行にする
+        for (const auto& [key, curve] : effect.paramCurves) {
+            if (curve.empty()) continue;
+            m_timelineRows.emplace_back(i, key);
+            rowLabels.append(QStringLiteral("%1 / %2").arg(effectRowLabel(effect, celNames), paramLabel(key)));
+        }
+    }
+
+    const int rows = static_cast<int>(m_timelineRows.size());
+    const int cols = static_cast<int>(cut->frameCount());
+    m_timeline->setRowCount(rows);
+    m_timeline->setColumnCount(cols);
+    m_timeline->setVerticalHeaderLabels(rowLabels);
 
     QStringList colLabels;
     for (int c = 0; c < cols; ++c) colLabels.append(QString::number(c + 1));
-    m_sheet->setHorizontalHeaderLabels(colLabels);
+    m_timeline->setHorizontalHeaderLabels(colLabels);
 
     for (int r = 0; r < rows; ++r) {
-        const core::Effect& effect = cut->effects()[static_cast<size_t>(r)];
+        const core::Effect& effect = cut->effects()[static_cast<size_t>(m_timelineRows[static_cast<size_t>(r)].first)];
+        const std::string& key = m_timelineRows[static_cast<size_t>(r)].second;
         for (int c = 0; c < cols; ++c) {
-            const bool hasKey = effect.paramKeys.count(static_cast<size_t>(c)) > 0;
-            auto* item = new QTableWidgetItem(hasKey ? QStringLiteral("●") : QString());
+            const bool hasKey = effect.hasKeyAt(key, static_cast<size_t>(c));
+            auto* item = new QTableWidgetItem(hasKey ? QStringLiteral("◆") : QString());
             item->setTextAlignment(Qt::AlignCenter);
-            m_sheet->setItem(r, c, item);
+            m_timeline->setItem(r, c, item);
         }
     }
 
-    if (m_effectRow >= 0 && m_effectRow < rows && m_koma < cols) {
-        m_sheet->setCurrentCell(m_effectRow, m_koma);
-    }
     m_updating = false;
+    refreshTimelineHighlight();
 }
 
-void ShootingWindow::syncSelectionUI() {
-    m_updating = true;
-    core::Cut* cut = currentCut();
-    const bool hasSelection =
-        cut && m_effectRow >= 0 && m_effectRow < static_cast<int>(cut->effects().size());
-
-    m_targetCombo->clear();
-    m_targetCombo->addItem(tr("全体"));
-    if (cut) {
-        for (size_t ci = 0; ci < cut->celCount(); ++ci) {
-            m_targetCombo->addItem(QString::fromStdString(cut->cel(ci).name()));
+void ShootingWindow::refreshTimelineHighlight() {
+    if (!m_timeline) return;
+    const int cols = m_timeline->columnCount();
+    const int rows = m_timeline->rowCount();
+    for (int c = 0; c < cols; ++c) {
+        const bool isCurrent = (c == m_koma);
+        QTableWidgetItem* headerItem = m_timeline->horizontalHeaderItem(c);
+        if (headerItem) {
+            QFont f = headerItem->font();
+            f.setBold(isCurrent);
+            headerItem->setFont(f);
+            headerItem->setBackground(isCurrent ? QBrush(kCtiHeaderColor) : QBrush());
         }
-    }
-    m_targetCombo->setEnabled(hasSelection);
-    if (hasSelection) {
-        const core::Effect& effect = cut->effects()[static_cast<size_t>(m_effectRow)];
-        int comboIndex = 0;
-        if (effect.targetCel >= 0 && effect.targetCel < static_cast<int>(cut->celCount())) {
-            comboIndex = effect.targetCel + 1;
+        for (int r = 0; r < rows; ++r) {
+            QTableWidgetItem* item = m_timeline->item(r, c);
+            if (!item) continue;
+            item->setBackground(isCurrent ? QBrush(kCtiColumnColor) : QBrush());
         }
-        m_targetCombo->setCurrentIndex(comboIndex);
-    }
-
-    m_removeButton->setEnabled(hasSelection);
-    m_upButton->setEnabled(hasSelection && m_effectRow > 0);
-    m_downButton->setEnabled(hasSelection &&
-                             m_effectRow + 1 < static_cast<int>(cut ? cut->effects().size() : 0));
-    m_addKeyButton->setEnabled(hasSelection);
-    m_removeKeyButton->setEnabled(hasSelection);
-
-    m_updating = false;
-
-    rebuildParamForm();
-    updateKeyStateLabel();
-    updatePreview();
-}
-
-void ShootingWindow::rebuildParamForm() {
-    while (m_paramForm->rowCount() > 0) m_paramForm->removeRow(0);
-    core::Cut* cut = currentCut();
-    if (!cut || m_effectRow < 0 || m_effectRow >= static_cast<int>(cut->effects().size())) return;
-
-    // 選択中コマで有効なパラメータ(キー補間込み)を表示する。保留値があればそれを優先
-    const core::Effect& effect = cut->effects()[static_cast<size_t>(m_effectRow)];
-    std::map<std::string, double> shown = effect.paramsAt(static_cast<size_t>(m_koma));
-    for (const auto& [key, value] : m_pendingParams) shown[key] = value;
-
-    m_updating = true;
-    for (const auto& [key, value] : shown) {
-        auto* spin = new QDoubleSpinBox(m_paramContainer);
-        spin->setRange(0.0, 4096.0);
-        spin->setDecimals(1);
-        spin->setSingleStep(isDensityParam(key) ? 0.05 : 1.0);
-        spin->setValue(value);
-        spin->setFocusPolicy(Qt::ClickFocus);
-        const std::string keyCopy = key;
-        connect(spin, &QDoubleSpinBox::valueChanged, this,
-                [this, keyCopy](double v) { onParamValueChanged(keyCopy, v); });
-        m_paramForm->addRow(paramLabel(key), spin);
-    }
-    m_updating = false;
-}
-
-void ShootingWindow::updateKeyStateLabel() {
-    core::Cut* cut = currentCut();
-    if (!cut || m_effectRow < 0 || m_effectRow >= static_cast<int>(cut->effects().size())) {
-        m_keyStateLabel->setText(tr("キー: -"));
-        return;
-    }
-    const core::Effect& effect = cut->effects()[static_cast<size_t>(m_effectRow)];
-    if (effect.paramKeys.empty()) {
-        m_keyStateLabel->setText(tr("キー: なし(スピンで基本値を直接編集)"));
-    } else if (effect.paramKeys.count(static_cast<size_t>(m_koma)) > 0) {
-        m_keyStateLabel->setText(tr("キー: あり(コマ%1)").arg(m_koma + 1));
-    } else {
-        m_keyStateLabel->setText(tr("キー: なし(補間中。キー追加で確定)"));
     }
 }
 
@@ -458,16 +520,36 @@ void ShootingWindow::updatePreview() {
     core::Cut* cut = currentCut();
     if (!cut) {
         m_previewLabel->clear();
+        return;
+    }
+    const core::Bitmap bitmap = core::renderCutFrame(*cut, static_cast<size_t>(m_koma), m_canvasWidth, m_canvasHeight);
+    const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
+    QSize target = m_previewLabel->size();
+    if (target.width() < 64 || target.height() < 64) target = QSize(640, 360);
+    // scaled()は新しいQImageを作る(元のピクセルへの参照が切れる)ため、bitmapの寿命外でも安全
+    m_previewLabel->setPixmap(
+        QPixmap::fromImage(image.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+}
+
+void ShootingWindow::updateTransportLabel() {
+    core::Cut* cut = currentCut();
+    if (!cut) {
         m_komaLabel->clear();
         return;
     }
-    const core::Bitmap bitmap =
-        core::renderCutFrame(*cut, static_cast<size_t>(m_koma), m_canvasWidth, m_canvasHeight);
-    const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
-    // scaled()は新しいQImageを作る(元のピクセルへの参照が切れる)ため、bitmapの寿命外でも安全
-    m_previewLabel->setPixmap(QPixmap::fromImage(
-        image.scaled(kPreviewWidth, kPreviewHeight, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
-    m_komaLabel->setText(tr("コマ %1 / %2").arg(m_koma + 1).arg(cut->frameCount()));
+    const double seconds = static_cast<double>(m_koma) / 24.0;
+    m_komaLabel->setText(
+        tr("コマ %1 / %2 (%3s)").arg(m_koma + 1).arg(cut->frameCount()).arg(seconds, 0, 'f', 2));
+}
+
+void ShootingWindow::setKoma(int koma) {
+    core::Cut* cut = currentCut();
+    const int maxKoma = cut ? static_cast<int>(cut->frameCount()) - 1 : 0;
+    m_koma = std::clamp(koma, 0, std::max(0, maxKoma));
+    refreshParamRowValues();
+    refreshTimelineHighlight();
+    updatePreview();
+    updateTransportLabel();
 }
 
 void ShootingWindow::addEffectOfType(int typeInt) {
@@ -479,145 +561,171 @@ void ShootingWindow::addEffectOfType(int typeInt) {
     effect.targetCel = -1;  // 既定は全体
     effect.params = core::effectDefaultParams(effect.type);
     cut->effects().push_back(std::move(effect));
-    m_effectRow = static_cast<int>(cut->effects().size()) - 1;
-    m_pendingParams.clear();
-    rebuildEffectList();
-    rebuildSheet();
-    syncSelectionUI();
-    emit edited();
+    rebuildEffectControls();
+    rebuildTimeline();
+    markEdited();
 }
 
-void ShootingWindow::removeSelected() {
+void ShootingWindow::removeEffect(int effectIndex) {
     core::Cut* cut = currentCut();
-    if (!cut || m_effectRow < 0 || m_effectRow >= static_cast<int>(cut->effects().size())) return;
-    cut->effects().erase(cut->effects().begin() + m_effectRow);
-    m_effectRow = cut->effects().empty()
-                      ? -1
-                      : std::min(m_effectRow, static_cast<int>(cut->effects().size()) - 1);
-    m_pendingParams.clear();
-    rebuildEffectList();
-    rebuildSheet();
-    syncSelectionUI();
-    emit edited();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    cut->effects().erase(cut->effects().begin() + effectIndex);
+    rebuildEffectControls();
+    rebuildTimeline();
+    markEdited();
 }
 
-void ShootingWindow::moveSelected(int delta) {
+void ShootingWindow::moveEffect(int effectIndex, int delta) {
     core::Cut* cut = currentCut();
     if (!cut) return;
-    const int newRow = m_effectRow + delta;
-    if (m_effectRow < 0 || newRow < 0 || newRow >= static_cast<int>(cut->effects().size())) return;
-    std::swap(cut->effects()[static_cast<size_t>(m_effectRow)], cut->effects()[static_cast<size_t>(newRow)]);
-    m_effectRow = newRow;
-    rebuildEffectList();
-    rebuildSheet();
-    syncSelectionUI();
-    emit edited();
+    const int newIndex = effectIndex + delta;
+    if (effectIndex < 0 || newIndex < 0 || newIndex >= static_cast<int>(cut->effects().size())) return;
+    std::swap(cut->effects()[static_cast<size_t>(effectIndex)], cut->effects()[static_cast<size_t>(newIndex)]);
+    rebuildEffectControls();
+    rebuildTimeline();
+    markEdited();
 }
 
-void ShootingWindow::onListCheckChanged(QListWidgetItem* item) {
+void ShootingWindow::onEffectEnabledChanged(int effectIndex, bool enabled) {
     if (m_updating) return;
     core::Cut* cut = currentCut();
-    const int row = m_list->row(item);
-    if (!cut || row < 0 || row >= static_cast<int>(cut->effects().size())) return;
-    cut->effects()[static_cast<size_t>(row)].enabled = (item->checkState() == Qt::Checked);
-    updatePreview();
-    emit edited();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    cut->effects()[static_cast<size_t>(effectIndex)].enabled = enabled;
+    markEdited();
 }
 
-void ShootingWindow::onTargetIndexChanged(int index) {
+void ShootingWindow::onEffectTargetChanged(int effectIndex, int comboIndex) {
     if (m_updating) return;
     core::Cut* cut = currentCut();
-    if (!cut || m_effectRow < 0 || m_effectRow >= static_cast<int>(cut->effects().size())) return;
-    cut->effects()[static_cast<size_t>(m_effectRow)].targetCel = index <= 0 ? -1 : index - 1;
-    rebuildEffectList();  // 対象表示テキストが変わるので一覧・シート行ヘッダを作り直す
-    rebuildSheet();
-    updatePreview();
-    emit edited();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    cut->effects()[static_cast<size_t>(effectIndex)].targetCel = comboIndex <= 0 ? -1 : comboIndex - 1;
+    rebuildEffectControls();  // タイトルの対象表示が変わるので作り直す
+    rebuildTimeline();        // タイムライン行ラベルの対象表示も追従させる
+    markEdited();
 }
 
-void ShootingWindow::onParamValueChanged(const std::string& key, double value) {
+void ShootingWindow::onStopwatchToggled(int effectIndex, const std::string& key, bool checked) {
     if (m_updating) return;
     core::Cut* cut = currentCut();
-    if (!cut || m_effectRow < 0 || m_effectRow >= static_cast<int>(cut->effects().size())) return;
-    core::Effect& effect = cut->effects()[static_cast<size_t>(m_effectRow)];
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
+    if (checked) {
+        // 現在コマに現在値でキーを1個打つ(キーフレーム化)
+        const double fallback = effect.params.count(key) ? effect.params.at(key) : 0.0;
+        const double current = effect.valueAt(key, static_cast<size_t>(m_koma), fallback);
+        effect.setKey(key, static_cast<size_t>(m_koma), current);
+    } else {
+        // 全キーを消す(以後は基本値=paramsを使う)
+        effect.paramCurves[key].clear();
+    }
+    rebuildEffectControls();
+    rebuildTimeline();
+    markEdited();
+}
 
-    if (effect.paramKeys.empty()) {
-        // キーが無いエフェクトは基本値を直接編集する(従来動作)
+void ShootingWindow::onParamSpinChanged(int effectIndex, const std::string& key, double value) {
+    if (m_updating) return;
+    core::Cut* cut = currentCut();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
+    if (effect.hasCurve(key)) {
+        // AE同様、キー持ちパラメータはスピン編集のたびに現在コマへ自動でキーを打つ
+        effect.setKey(key, static_cast<size_t>(m_koma), value);
+    } else {
         effect.params[key] = value;
-        updatePreview();
-        emit edited();
-    } else {
-        // キー持ちエフェクトはスピンだけではデータを変えず、「キー追加」で確定する
-        m_pendingParams[key] = value;
-        updateKeyStateLabel();
     }
-}
 
-void ShootingWindow::addKeyAtCurrentKoma() {
-    core::Cut* cut = currentCut();
-    if (!cut || m_effectRow < 0 || m_effectRow >= static_cast<int>(cut->effects().size())) return;
-    core::Effect& effect = cut->effects()[static_cast<size_t>(m_effectRow)];
-
-    // 現在の補間値に保留中のスピン編集を重ねたものをキーとして確定する
-    std::map<std::string, double> keyParams = effect.paramsAt(static_cast<size_t>(m_koma));
-    for (const auto& [key, value] : m_pendingParams) keyParams[key] = value;
-    effect.paramKeys[static_cast<size_t>(m_koma)] = std::move(keyParams);
-    m_pendingParams.clear();
-
-    rebuildSheet();
-    syncSelectionUI();
-    emit edited();
-}
-
-void ShootingWindow::removeKeyAtCurrentKoma() {
-    core::Cut* cut = currentCut();
-    if (!cut || m_effectRow < 0 || m_effectRow >= static_cast<int>(cut->effects().size())) return;
-    core::Effect& effect = cut->effects()[static_cast<size_t>(m_effectRow)];
-    if (effect.paramKeys.erase(static_cast<size_t>(m_koma)) == 0) return;
-    m_pendingParams.clear();
-
-    rebuildSheet();
-    syncSelectionUI();
-    emit edited();
-}
-
-void ShootingWindow::onSheetCellChanged(int row, int column) {
-    if (m_updating || row < 0 || column < 0) return;
-    m_effectRow = row;
-    m_koma = column;
-    m_pendingParams.clear();
-    // エフェクト一覧の選択も追従させる(再入はm_updatingで抑止)
-    m_updating = true;
-    m_list->setCurrentRow(row);
-    m_updating = false;
-    syncSelectionUI();
-}
-
-void ShootingWindow::onSheetCellDoubleClicked(int row, int column) {
-    core::Cut* cut = currentCut();
-    if (!cut || row < 0 || row >= static_cast<int>(cut->effects().size())) return;
-    m_effectRow = row;
-    m_koma = column;
-    core::Effect& effect = cut->effects()[static_cast<size_t>(row)];
-    if (effect.paramKeys.count(static_cast<size_t>(column)) > 0) {
-        removeKeyAtCurrentKoma();  // キーがあればトグルで削除
-    } else {
-        addKeyAtCurrentKoma();  // 無ければ現在の補間値でキーを打つ
+    // 対応する◆ボタンだけを軽量更新する(パネル全体は作り直さず、編集中のフォーカスを保つ)
+    for (const ParamRowWidgets& rw : m_paramRows) {
+        if (rw.effectIndex == effectIndex && rw.key == key && rw.diamond) {
+            const bool hasCurve = effect.hasCurve(key);
+            const bool hasKeyHere = effect.hasKeyAt(key, static_cast<size_t>(m_koma));
+            rw.diamond->setText(hasKeyHere ? QStringLiteral("◆")
+                                            : (hasCurve ? QStringLiteral("◇") : QString()));
+            rw.diamond->setEnabled(hasCurve);
+            break;
+        }
     }
+
+    rebuildTimeline();
+    markEdited();
 }
 
-void ShootingWindow::debugSelectKoma(int koma) {
+void ShootingWindow::onKeyDiamondClicked(int effectIndex, const std::string& key) {
+    core::Cut* cut = currentCut();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
+    if (!effect.hasCurve(key)) return;  // キーフレーム化されていないパラメータは対象外
+    const size_t frame = static_cast<size_t>(m_koma);
+    if (effect.hasKeyAt(key, frame)) {
+        effect.removeKey(key, frame);  // 最後の1個ならストップウォッチも自動でOFFになる(hasCurve==false)
+    } else {
+        effect.setKey(key, frame, effect.valueAt(key, frame));
+    }
+    rebuildEffectControls();
+    rebuildTimeline();
+    markEdited();
+}
+
+void ShootingWindow::onTimelineCellClicked(int row, int column) {
+    if (m_updating || column < 0) return;
+    Q_UNUSED(row);
+    setKoma(column);
+}
+
+void ShootingWindow::onTimelineCellDoubleClicked(int row, int column) {
+    if (row < 0 || row >= static_cast<int>(m_timelineRows.size()) || column < 0) return;
     core::Cut* cut = currentCut();
     if (!cut) return;
-    m_koma = std::clamp(koma, 0, static_cast<int>(cut->frameCount()) - 1);
-    if (m_effectRow < 0 && !cut->effects().empty()) m_effectRow = 0;
-    if (m_effectRow >= 0) {
-        m_updating = true;
-        m_sheet->setCurrentCell(m_effectRow, m_koma);
-        m_list->setCurrentRow(m_effectRow);
-        m_updating = false;
+    const auto [effectIndex, key] = m_timelineRows[static_cast<size_t>(row)];
+    if (effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
+    const size_t frame = static_cast<size_t>(column);
+
+    setKoma(column);  // ダブルクリックでもCTIを移動させておく(見た目の一貫性)
+    if (effect.hasKeyAt(key, frame)) {
+        effect.removeKey(key, frame);
+    } else {
+        effect.setKey(key, frame, effect.valueAt(key, frame));
     }
-    syncSelectionUI();
+    rebuildEffectControls();
+    rebuildTimeline();
+    markEdited();
+}
+
+void ShootingWindow::onTimelineHeaderClicked(int column) {
+    if (m_updating || column < 0) return;
+    setKoma(column);
+}
+
+void ShootingWindow::togglePlayback() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    if (m_playTimer->isActive()) {
+        m_playTimer->stop();
+        m_playButton->setText(tr("再生"));
+    } else {
+        m_playTimer->start();
+        m_playButton->setText(tr("一時停止"));
+    }
+}
+
+void ShootingWindow::onPlaybackTick() {
+    core::Cut* cut = currentCut();
+    if (!cut) {
+        m_playTimer->stop();
+        return;
+    }
+    int next = m_koma + 1;
+    if (next >= static_cast<int>(cut->frameCount())) next = 0;  // 末尾でループ
+    setKoma(next);
+}
+
+void ShootingWindow::debugSelectKoma(int koma) { setKoma(koma); }
+
+void ShootingWindow::markEdited() {
+    updatePreview();
+    emit edited();
 }
 
 void ShootingWindow::rebuildMultiplanePanel() {
@@ -650,8 +758,7 @@ void ShootingWindow::rebuildMultiplanePanel() {
             core::Cut* c = currentCut();
             if (!c || r >= static_cast<int>(c->multiplane().planes.size())) return;
             c->multiplane().planes[static_cast<size_t>(r)].celIndex = index;
-            updatePreview();
-            emit edited();
+            markEdited();
         });
         m_mpTable->setCellWidget(r, 0, combo);
 
@@ -665,8 +772,7 @@ void ShootingWindow::rebuildMultiplanePanel() {
             core::Cut* c = currentCut();
             if (!c || r >= static_cast<int>(c->multiplane().planes.size())) return;
             c->multiplane().planes[static_cast<size_t>(r)].distanceMm = value;
-            updatePreview();
-            emit edited();
+            markEdited();
         });
         m_mpTable->setCellWidget(r, 1, distSpin);
 
@@ -680,8 +786,7 @@ void ShootingWindow::rebuildMultiplanePanel() {
             core::Cut* c = currentCut();
             if (!c || r >= static_cast<int>(c->multiplane().planes.size())) return;
             c->multiplane().planes[static_cast<size_t>(r)].widthMm = value;
-            updatePreview();
-            emit edited();
+            markEdited();
         });
         m_mpTable->setCellWidget(r, 2, widthSpin);
     }
@@ -696,8 +801,7 @@ void ShootingWindow::onMultiplaneToggled(bool checked) {
     core::Cut* cut = currentCut();
     if (!cut) return;
     cut->multiplane().enabled = checked;
-    updatePreview();
-    emit edited();
+    markEdited();
 }
 
 void ShootingWindow::onMultiplaneCameraChanged() {
@@ -710,8 +814,7 @@ void ShootingWindow::onMultiplaneCameraChanged() {
     setup.camera.apertureFStop = m_mpFStopSpin->value();
     setup.camera.focusDistanceMm = m_mpFocusSpin->value();
     setup.samplesPerPixel = m_mpSamplesSpin->value();
-    updatePreview();
-    emit edited();
+    markEdited();
 }
 
 void ShootingWindow::addMultiplanePlaneRow() {
@@ -737,8 +840,7 @@ void ShootingWindow::addMultiplanePlaneRow() {
     setup.planes.push_back(plane);
 
     rebuildMultiplanePanel();
-    updatePreview();
-    emit edited();
+    markEdited();
 }
 
 void ShootingWindow::removeMultiplanePlaneRow() {
@@ -753,6 +855,5 @@ void ShootingWindow::removeMultiplanePlaneRow() {
     setup.planes.erase(setup.planes.begin() + target);
 
     rebuildMultiplanePanel();
-    updatePreview();
-    emit edited();
+    markEdited();
 }

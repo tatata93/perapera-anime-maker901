@@ -187,15 +187,18 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                                     {"enabled", effect.enabled},
                                     {"targetCel", effect.targetCel},
                                     {"params", std::move(jParams)}};
-                    // 撮影シートのパラメータキー(コマ→パラメータ一式)。空なら省略する
-                    if (!effect.paramKeys.empty()) {
-                        json jParamKeys = json::array();
-                        for (const auto& [keyFrame, keyParams] : effect.paramKeys) {
-                            json jKeyParams = json::object();
-                            for (const auto& [key, value] : keyParams) jKeyParams[key] = value;
-                            jParamKeys.push_back({{"frame", keyFrame}, {"params", std::move(jKeyParams)}});
+                    // パラメータ単位のキーフレーム曲線(パラメータ名→[{コマ,値}])。空なら省略する
+                    if (!effect.paramCurves.empty()) {
+                        json jCurves = json::object();
+                        for (const auto& [key, curve] : effect.paramCurves) {
+                            if (curve.empty()) continue;
+                            json jKeys = json::array();
+                            for (const auto& [keyFrame, value] : curve) {
+                                jKeys.push_back({{"frame", keyFrame}, {"value", value}});
+                            }
+                            jCurves[key] = std::move(jKeys);
                         }
-                        jEffect["paramKeys"] = std::move(jParamKeys);
+                        if (!jCurves.empty()) jEffect["paramCurves"] = std::move(jCurves);
                     }
                     jEffects.push_back(std::move(jEffect));
                 }
@@ -498,16 +501,14 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                                 effect.params[it.key()] = it.value().get<double>();
                             }
                         }
-                        // 撮影シートのパラメータキー(任意、欠落時は空のまま)
-                        if (jEffect.contains("paramKeys")) {
-                            for (const json& jKey : jEffect.at("paramKeys")) {
-                                std::map<std::string, double> keyParams;
-                                if (jKey.contains("params")) {
-                                    for (auto it = jKey.at("params").begin(); it != jKey.at("params").end(); ++it) {
-                                        keyParams[it.key()] = it.value().get<double>();
-                                    }
+                        // パラメータ単位のキーフレーム曲線(任意、欠落時は空のまま)
+                        if (jEffect.contains("paramCurves")) {
+                            const json& jCurves = jEffect.at("paramCurves");
+                            for (auto it = jCurves.begin(); it != jCurves.end(); ++it) {
+                                for (const json& jKey : it.value()) {
+                                    effect.paramCurves[it.key()][jKey.at("frame").get<size_t>()] =
+                                        jKey.at("value").get<double>();
                                 }
-                                effect.paramKeys[jKey.at("frame").get<size_t>()] = std::move(keyParams);
                             }
                         }
                         cut.effects().push_back(std::move(effect));

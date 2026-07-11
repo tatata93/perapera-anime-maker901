@@ -4,40 +4,55 @@
 
 namespace core {
 
-namespace {
+double Effect::valueAt(const std::string& key, size_t frame, double fallback) const {
+    const auto curveIt = paramCurves.find(key);
+    if (curveIt == paramCurves.end() || curveIt->second.empty()) {
+        // キーフレームが無いパラメータは基本値(params)を静的に使う
+        const auto paramIt = params.find(key);
+        return paramIt != params.end() ? paramIt->second : fallback;
+    }
 
-// baseにoverrideを上書きマージしたものを返す(overrideに無いパラメータ名はbaseの値を使う)
-std::map<std::string, double> mergeOverride(const std::map<std::string, double>& base,
-                                             const std::map<std::string, double>& override) {
-    std::map<std::string, double> result = base;
-    for (const auto& [key, value] : override) result[key] = value;
+    const auto& curve = curveIt->second;
+    // frame以上の最初のキーを探す(Cut::cameraFrameAtと同じクランプ規則)
+    const auto upper = curve.lower_bound(frame);
+    if (upper == curve.begin()) return upper->second;                 // 最初のキーより前
+    if (upper == curve.end()) return std::prev(upper)->second;         // 最後のキーより後
+    if (upper->first == frame) return upper->second;                   // キー上
+
+    // 前後のキーで線形補間する
+    const auto lower = std::prev(upper);
+    const double t = static_cast<double>(frame - lower->first) / static_cast<double>(upper->first - lower->first);
+    return lower->second + (upper->second - lower->second) * t;
+}
+
+std::map<std::string, double> Effect::paramsAt(size_t frame) const {
+    std::map<std::string, double> result = params;
+    // キーフレームを持つパラメータはvalueAtで解決した値で上書きする
+    for (const auto& [key, curve] : paramCurves) {
+        if (!curve.empty()) result[key] = valueAt(key, frame);
+    }
     return result;
 }
 
-}  // namespace
+bool Effect::hasCurve(const std::string& key) const {
+    const auto it = paramCurves.find(key);
+    return it != paramCurves.end() && !it->second.empty();
+}
 
-std::map<std::string, double> Effect::paramsAt(size_t frame) const {
-    if (paramKeys.empty()) return params;
+bool Effect::hasKeyAt(const std::string& key, size_t frame) const {
+    const auto it = paramCurves.find(key);
+    return it != paramCurves.end() && it->second.count(frame) > 0;
+}
 
-    // frame以上の最初のキーを探す(Cut::cameraFrameAtと同じ規則)
-    const auto upper = paramKeys.lower_bound(frame);
-    if (upper == paramKeys.begin()) return mergeOverride(params, upper->second);          // 最初のキーより前
-    if (upper == paramKeys.end()) return mergeOverride(params, std::prev(upper)->second);  // 最後のキーより後
-    if (upper->first == frame) return mergeOverride(params, upper->second);                // キー上
+void Effect::setKey(const std::string& key, size_t frame, double value) {
+    paramCurves[key][frame] = value;
+}
 
-    // 前後のキーで、パラメータ名ごとに線形補間する
-    const auto lower = std::prev(upper);
-    const float t = static_cast<float>(frame - lower->first) / static_cast<float>(upper->first - lower->first);
-    const std::map<std::string, double> a = mergeOverride(params, lower->second);
-    const std::map<std::string, double> b = mergeOverride(params, upper->second);
-
-    std::map<std::string, double> result = a;
-    for (const auto& [key, bValue] : b) {
-        const auto it = result.find(key);
-        const double aValue = it != result.end() ? it->second : bValue;
-        result[key] = aValue + (bValue - aValue) * static_cast<double>(t);
-    }
-    return result;
+void Effect::removeKey(const std::string& key, size_t frame) {
+    const auto it = paramCurves.find(key);
+    if (it == paramCurves.end()) return;
+    it->second.erase(frame);
+    if (it->second.empty()) paramCurves.erase(it);  // 最後のキーを消したら曲線ごと削除
 }
 
 std::map<std::string, double> effectDefaultParams(EffectType type) {

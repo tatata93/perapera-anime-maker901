@@ -1731,8 +1731,8 @@ void MainWindow::debugSetupShootingDemo() {
     blur.enabled = true;
     blur.targetCel = -1;  // 全体
     blur.params = core::effectDefaultParams(core::EffectType::Blur);
-    blur.paramKeys[0] = {{"radius", 0.0}};    // 冒頭はボケなし
-    blur.paramKeys[23] = {{"radius", 10.0}};  // 末尾へ向けてボケていく(フォーカスアウト)
+    blur.setKey("radius", 0, 0.0);    // 冒頭はボケなし
+    blur.setKey("radius", 23, 10.0);  // 末尾へ向けてボケていく(フォーカスアウト)
     cut.effects().push_back(blur);
 
     core::Effect para;

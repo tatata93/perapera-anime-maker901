@@ -4,29 +4,32 @@
 #include <QStringList>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 class QComboBox;
 class QDoubleSpinBox;
-class QFormLayout;
 class QGroupBox;
 class QLabel;
-class QListWidget;
-class QListWidgetItem;
 class QPushButton;
+class QScrollArea;
 class QSpinBox;
 class QTableWidget;
+class QTimer;
+class QToolButton;
+class QVBoxLayout;
 class QWidget;
 
 namespace core {
 class Cut;
+class Effect;
 class Project;
 }
 
-// 撮影ウィンドウ(別ウィンドウ)。カット単位のエフェクトスタックを「撮影シート」
-// (行=エフェクト、列=コマ)で管理する。エフェクトのパラメータはコマ単位のキーで
-// 時間変化させられる(キー間は線形補間、キーが無ければ基本値)。
-// 右側に選択コマのエフェクト適用済みプレビューを常時表示する
+// 撮影ウィンドウ(別ウィンドウ)。After Effects風の上下2段レイアウト:
+// 上段=左「エフェクトコントロール」パネル+右「プレビュー」、下段=「タイムライン」パネル。
+// パラメータはストップウォッチでキーフレーム化でき(AE同様、キー持ちパラメータはスピン編集の
+// たびに現在コマへ自動でキーを打つ)、キー間は線形補間される(core::Effectのparamsに従う)。
 class ShootingWindow : public QMainWindow {
     Q_OBJECT
 
@@ -35,7 +38,7 @@ public:
 
     // プロジェクトの差し替え(新規/読込後)。所有権は持たない
     void setProject(core::Project* project);
-    // カット一覧・エフェクト一覧・シート・プレビューを作り直す
+    // カット一覧・エフェクトコントロール・タイムライン・プレビューを作り直す
     void refresh();
     // プレビュー合成に使うキャンバスサイズ(MainWindowの作画キャンバスと同じ寸法を渡す)
     void setCanvasSize(int width, int height);
@@ -43,33 +46,54 @@ public:
     // 表示対象カットを指定する(メインのアクティブカットに合わせる用)
     void setCutIndex(int index);
 
-    // 動作確認用: シートの選択コマを直接指定する
+    // 動作確認用: 現在コマ(CTI)を直接指定する
     void debugSelectKoma(int koma);
 
 signals:
     void edited();  // エフェクトの構成/有効/対象/パラメータ/キーのいずれかが変更された
 
 private:
-    core::Cut* currentCut() const;  // 選択中カット(無ければnullptr)
+    // エフェクトコントロールパネルの1パラメータ行のウィジェット参照(コマ移動時の軽量更新用)
+    struct ParamRowWidgets {
+        int effectIndex = -1;
+        std::string key;
+        QToolButton* stopwatch = nullptr;
+        QDoubleSpinBox* spin = nullptr;
+        QToolButton* diamond = nullptr;
+    };
 
-    void rebuildEffectList();  // エフェクト一覧を作り直す(選択は維持を試みる)
-    void rebuildSheet();       // 撮影シート(行=エフェクト、列=コマ)を作り直す
-    void syncSelectionUI();    // 選択中エフェクト×選択中コマに合わせてパラメータ編集・キー表示を更新
-    void rebuildParamForm();   // 選択中エフェクトのparamsAt(選択コマ)でスピン群を作り直す
-    void updateKeyStateLabel();
-    void updatePreview();      // 選択コマをrenderCutFrameしてプレビューへ表示する
+    core::Cut* currentCut() const;
+
+    // エフェクト1個分のGroupBoxを作る(対象コンボ・上下/削除ボタン・パラメータ行群)
+    QGroupBox* buildEffectGroupBox(int effectIndex, const QStringList& celNames);
+
+    void rebuildEffectControls();  // 左「エフェクトコントロール」パネルをカットの内容で作り直す(構造が変わる時)
+    void refreshParamRowValues();  // 構造は変えずスピン値/◆表示だけを現在コマに合わせて更新する(軽量、再生中用)
+    void rebuildTimeline();        // 下段タイムライン(キー持ちプロパティのみ行を作る)を作り直す
+    void refreshTimelineHighlight();  // 行の作り直し無しでCTI列のハイライトだけ更新する
+    void updatePreview();          // 現在コマをrenderCutFrameしてプレビューへ表示する
+    void updateTransportLabel();   // 「コマ n / N (t s)」ラベルを更新する
+
+    void setKoma(int koma);  // 現在コマ(CTI)を変更する。範囲外はクランプ。タイムライン/プレビュー同期
 
     void addEffectOfType(int typeInt);
-    void removeSelected();
-    void moveSelected(int delta);
-    void onListCheckChanged(QListWidgetItem* item);
-    void onTargetIndexChanged(int index);
-    void onParamValueChanged(const std::string& key, double value);
-    void addKeyAtCurrentKoma();
-    void removeKeyAtCurrentKoma();
-    void onSheetCellChanged(int row, int column);
-    void onSheetCellDoubleClicked(int row, int column);
-    void markEdited();  // m_dirty相当の通知+シート/プレビューの追従
+    void removeEffect(int effectIndex);
+    void moveEffect(int effectIndex, int delta);
+    void onEffectEnabledChanged(int effectIndex, bool enabled);
+    void onEffectTargetChanged(int effectIndex, int comboIndex);
+    // ストップウォッチのON/OFF。ONで現在コマに現在値のキーを1個打つ、OFFで全キーを消す
+    void onStopwatchToggled(int effectIndex, const std::string& key, bool checked);
+    // スピンの値変更。hasCurveなら現在コマへ自動でキーを打つ、そうでなければ基本値を直接更新
+    void onParamSpinChanged(int effectIndex, const std::string& key, double value);
+    // 効果コントロール上の◆ボタン: 現在コマのキーをトグルする(タイムラインのダブルクリックと同じ)
+    void onKeyDiamondClicked(int effectIndex, const std::string& key);
+
+    void onTimelineCellClicked(int row, int column);
+    void onTimelineCellDoubleClicked(int row, int column);
+    void onTimelineHeaderClicked(int column);
+
+    void togglePlayback();
+    void onPlaybackTick();
 
     // --- クラシック撮影(マルチプレーン)パネル ---
     void rebuildMultiplanePanel();    // カメラ値+段テーブルを選択中カットの内容で作り直す
@@ -78,27 +102,21 @@ private:
     void addMultiplanePlaneRow();
     void removeMultiplanePlaneRow();
 
+    void markEdited();  // 現在コマのプレビュー更新+シグナル送出(データ変更の共通後処理)
+
     core::Project* m_project = nullptr;
     int m_cutIndex = 0;   // 表示対象カット
-    int m_effectRow = -1;  // 選択中エフェクト(-1=なし)
-    int m_koma = 0;        // 選択中コマ(0始まり)
+    int m_koma = 0;        // 現在コマ(CTI、0始まり)
 
     QComboBox* m_cutCombo = nullptr;
-    QListWidget* m_list = nullptr;
-    QPushButton* m_removeButton = nullptr;
-    QPushButton* m_upButton = nullptr;
-    QPushButton* m_downButton = nullptr;
-    QComboBox* m_targetCombo = nullptr;
-    QWidget* m_paramContainer = nullptr;
-    QFormLayout* m_paramForm = nullptr;
-    QPushButton* m_addKeyButton = nullptr;
-    QPushButton* m_removeKeyButton = nullptr;
-    QLabel* m_keyStateLabel = nullptr;
-    QTableWidget* m_sheet = nullptr;
-    QLabel* m_previewLabel = nullptr;
-    QLabel* m_komaLabel = nullptr;
 
-    // クラシック撮影(マルチプレーン撮影台)パネル
+    // 左: エフェクトコントロールパネル
+    QScrollArea* m_effectScroll = nullptr;
+    QWidget* m_effectContainer = nullptr;
+    QVBoxLayout* m_effectContainerLayout = nullptr;
+    QPushButton* m_addEffectButton = nullptr;
+
+    // クラシック撮影(マルチプレーン撮影台)パネル(左パネル最下部)
     QGroupBox* m_multiplaneGroup = nullptr;
     QDoubleSpinBox* m_mpFocalSpin = nullptr;
     QDoubleSpinBox* m_mpSensorSpin = nullptr;
@@ -109,9 +127,19 @@ private:
     QPushButton* m_mpAddButton = nullptr;
     QPushButton* m_mpRemoveButton = nullptr;
 
-    // キー持ちエフェクトのスピン編集は即データへ書かず、「キー追加」で確定する(プリビズのキー規則)。
-    // その保留値。エフェクト/コマ選択が変わるたびに破棄される
-    std::map<std::string, double> m_pendingParams;
+    // 右: プレビュー+トランスポート
+    QLabel* m_previewLabel = nullptr;
+    QPushButton* m_playButton = nullptr;
+    QLabel* m_komaLabel = nullptr;
+    QTimer* m_playTimer = nullptr;
+
+    // 下段: タイムライン(行=キー持ちプロパティ、列=コマ)
+    QTableWidget* m_timeline = nullptr;
+    // タイムライン行 → (エフェクトindex, パラメータキー)。hasCurveな行のみ生成される
+    std::vector<std::pair<int, std::string>> m_timelineRows;
+
+    // エフェクトコントロールパネルの現在のパラメータ行(コマ移動時の軽量更新に使う)
+    std::vector<ParamRowWidgets> m_paramRows;
 
     int m_canvasWidth = 1920;
     int m_canvasHeight = 1080;

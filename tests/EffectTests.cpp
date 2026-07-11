@@ -337,9 +337,9 @@ TEST_CASE("Cut with no effects omits the effects field and round trips as empty"
     std::filesystem::remove(path);
 }
 
-// --- 撮影シートのパラメータキー(コマ補間) ---
+// --- プロパティ単位のキーフレーム曲線(AE式、コマ補間) ---
 
-TEST_CASE("Effect::paramsAt interpolates parameter keys", "[core][effect][keys]") {
+TEST_CASE("Effect::paramsAt interpolates per-property keyframes", "[core][effect][keys]") {
     core::Effect blur;
     blur.type = core::EffectType::Blur;
     blur.params = {{"radius", 4.0}};
@@ -347,45 +347,63 @@ TEST_CASE("Effect::paramsAt interpolates parameter keys", "[core][effect][keys]"
     SECTION("キーが無ければ基本値を返す") {
         REQUIRE(blur.paramsAt(0).at("radius") == 4.0);
         REQUIRE(blur.paramsAt(100).at("radius") == 4.0);
+        REQUIRE_FALSE(blur.hasCurve("radius"));
     }
 
     SECTION("1キーなら常にそのキー値") {
-        blur.paramKeys[10] = {{"radius", 8.0}};
+        blur.setKey("radius", 10, 8.0);
+        REQUIRE(blur.hasCurve("radius"));
         REQUIRE(blur.paramsAt(0).at("radius") == 8.0);
         REQUIRE(blur.paramsAt(10).at("radius") == 8.0);
         REQUIRE(blur.paramsAt(99).at("radius") == 8.0);
     }
 
     SECTION("2キー間は線形補間、範囲外はクランプ") {
-        blur.paramKeys[0] = {{"radius", 0.0}};
-        blur.paramKeys[10] = {{"radius", 10.0}};
-        REQUIRE(blur.paramsAt(5).at("radius") == 5.0);
-        REQUIRE(blur.paramsAt(0).at("radius") == 0.0);
-        REQUIRE(blur.paramsAt(10).at("radius") == 10.0);
-        REQUIRE(blur.paramsAt(50).at("radius") == 10.0);  // 最後のキー以後はクランプ
+        blur.setKey("radius", 0, 0.0);
+        blur.setKey("radius", 10, 10.0);
+        REQUIRE(blur.valueAt("radius", 5) == 5.0);
+        REQUIRE(blur.valueAt("radius", 0) == 0.0);
+        REQUIRE(blur.valueAt("radius", 10) == 10.0);
+        REQUIRE(blur.valueAt("radius", 50) == 10.0);  // 最後のキー以後はクランプ
     }
 
-    SECTION("キーに無いパラメータ名は基本値で補完される") {
+    SECTION("キーを打ったパラメータだけが変化し、他は基本値のまま") {
         core::Effect glow;
         glow.type = core::EffectType::Glow;
         glow.params = {{"threshold", 200.0}, {"radius", 8.0}, {"strength", 0.6}};
-        glow.paramKeys[0] = {{"strength", 0.0}};
-        glow.paramKeys[10] = {{"strength", 1.0}};
+        glow.setKey("strength", 0, 0.0);
+        glow.setKey("strength", 10, 1.0);
         const auto mid = glow.paramsAt(5);
         REQUIRE(mid.at("strength") == 0.5);
-        REQUIRE(mid.at("threshold") == 200.0);  // キーに無い名前は基本値
+        REQUIRE(mid.at("threshold") == 200.0);  // キーの無いパラメータは基本値
         REQUIRE(mid.at("radius") == 8.0);
+        REQUIRE(glow.hasCurve("strength"));
+        REQUIRE_FALSE(glow.hasCurve("radius"));
+    }
+
+    SECTION("setKey/removeKey/hasKeyAt") {
+        blur.setKey("radius", 5, 3.0);
+        blur.setKey("radius", 15, 7.0);
+        REQUIRE(blur.hasKeyAt("radius", 5));
+        REQUIRE(blur.hasKeyAt("radius", 15));
+        REQUIRE_FALSE(blur.hasKeyAt("radius", 10));
+        blur.removeKey("radius", 5);
+        REQUIRE_FALSE(blur.hasKeyAt("radius", 5));
+        REQUIRE(blur.hasCurve("radius"));  // まだ1個残る
+        blur.removeKey("radius", 15);
+        REQUIRE_FALSE(blur.hasCurve("radius"));  // 最後の1個を消したら曲線ごと消える
+        REQUIRE(blur.paramsAt(0).at("radius") == 4.0);  // 基本値に戻る
     }
 }
 
-TEST_CASE("applyEffect uses interpolated key parameters (Blur radius 0 -> 4)", "[core][effect][keys]") {
+TEST_CASE("applyEffect uses interpolated keyframe values (Blur radius 0 -> 4)", "[core][effect][keys]") {
     // 半径キーはコマ0=0(ボケなし)→コマ10=4。半径を大きくしすぎると1点のアルファが
     // 8bit量子化で0に潰れるため、既定と同じ半径4で検証する
     core::Effect blur;
     blur.type = core::EffectType::Blur;
     blur.params = core::effectDefaultParams(core::EffectType::Blur);
-    blur.paramKeys[0] = {{"radius", 0.0}};
-    blur.paramKeys[10] = {{"radius", 4.0}};
+    blur.setKey("radius", 0, 0.0);
+    blur.setKey("radius", 10, 4.0);
 
     // コマ0: 半径0なのでボケない(目印ピクセルがそのまま)
     core::Bitmap at0 = makeTransparentDot(41, 41, 20, 20, {200, 50, 50, 255});
@@ -400,7 +418,7 @@ TEST_CASE("applyEffect uses interpolated key parameters (Blur radius 0 -> 4)", "
     REQUIRE(at10.pixel(21, 20).a > 0);
 }
 
-TEST_CASE("Effect paramKeys round trip through ppam", "[core][io][effect][keys]") {
+TEST_CASE("Effect paramCurves round trip through ppam", "[core][io][effect][keys]") {
     core::Project project("P");
     core::Scene& scene = project.addScene("S");
     core::Cut& cut = scene.addCut("Cut A");
@@ -409,20 +427,21 @@ TEST_CASE("Effect paramKeys round trip through ppam", "[core][io][effect][keys]"
     core::Effect blur;
     blur.type = core::EffectType::Blur;
     blur.params = {{"radius", 4.0}};
-    blur.paramKeys[0] = {{"radius", 0.0}};
-    blur.paramKeys[23] = {{"radius", 10.0}};
+    blur.setKey("radius", 0, 0.0);
+    blur.setKey("radius", 23, 10.0);
     cut.effects().push_back(blur);
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_keys_test.ppam";
+    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_curves_test.ppam";
     std::string error;
     REQUIRE(core::ProjectIO::save(project, path, &error));
     const auto loaded = core::ProjectIO::load(path, &error);
     REQUIRE(loaded != nullptr);
 
     const auto& effect = loaded->scene(0).cut(0).effects().at(0);
-    REQUIRE(effect.paramKeys.size() == 2);
-    REQUIRE(effect.paramKeys.at(0).at("radius") == 0.0);
-    REQUIRE(effect.paramKeys.at(23).at("radius") == 10.0);
+    REQUIRE(effect.paramCurves.size() == 1);
+    REQUIRE(effect.paramCurves.at("radius").size() == 2);
+    REQUIRE(effect.paramCurves.at("radius").at(0) == 0.0);
+    REQUIRE(effect.paramCurves.at("radius").at(23) == 10.0);
 
     std::filesystem::remove(path);
 }
