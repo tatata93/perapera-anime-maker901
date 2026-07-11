@@ -237,18 +237,24 @@ void applyShake(Bitmap& image, const Effect& effect, size_t frame) {
 
 void applyEffect(Bitmap& image, const Effect& effect, size_t frame) {
     if (!effect.enabled || image.isEmpty()) return;
-    switch (effect.type) {
+
+    // 撮影シートのキー(コマ間の線形補間)を反映したパラメータ一式に解決してから適用する
+    Effect resolved = effect;
+    resolved.params = effect.paramsAt(frame);
+    resolved.paramKeys.clear();
+
+    switch (resolved.type) {
         case EffectType::Blur:
-            applyBlur(image, effect);
+            applyBlur(image, resolved);
             break;
         case EffectType::Glow:
-            applyGlow(image, effect);
+            applyGlow(image, resolved);
             break;
         case EffectType::Para:
-            applyPara(image, effect);
+            applyPara(image, resolved);
             break;
         case EffectType::Shake:
-            applyShake(image, effect, frame);
+            applyShake(image, resolved, frame);
             break;
     }
 }

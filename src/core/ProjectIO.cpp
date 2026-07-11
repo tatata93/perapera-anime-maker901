@@ -183,10 +183,21 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                 for (const Effect& effect : cut.effects()) {
                     json jParams = json::object();
                     for (const auto& [key, value] : effect.params) jParams[key] = value;
-                    jEffects.push_back({{"type", static_cast<int>(effect.type)},
-                                        {"enabled", effect.enabled},
-                                        {"targetCel", effect.targetCel},
-                                        {"params", std::move(jParams)}});
+                    json jEffect = {{"type", static_cast<int>(effect.type)},
+                                    {"enabled", effect.enabled},
+                                    {"targetCel", effect.targetCel},
+                                    {"params", std::move(jParams)}};
+                    // 撮影シートのパラメータキー(コマ→パラメータ一式)。空なら省略する
+                    if (!effect.paramKeys.empty()) {
+                        json jParamKeys = json::array();
+                        for (const auto& [keyFrame, keyParams] : effect.paramKeys) {
+                            json jKeyParams = json::object();
+                            for (const auto& [key, value] : keyParams) jKeyParams[key] = value;
+                            jParamKeys.push_back({{"frame", keyFrame}, {"params", std::move(jKeyParams)}});
+                        }
+                        jEffect["paramKeys"] = std::move(jParamKeys);
+                    }
+                    jEffects.push_back(std::move(jEffect));
                 }
                 jCut["effects"] = std::move(jEffects);
             }
@@ -469,6 +480,18 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                         if (jEffect.contains("params")) {
                             for (auto it = jEffect.at("params").begin(); it != jEffect.at("params").end(); ++it) {
                                 effect.params[it.key()] = it.value().get<double>();
+                            }
+                        }
+                        // 撮影シートのパラメータキー(任意、欠落時は空のまま)
+                        if (jEffect.contains("paramKeys")) {
+                            for (const json& jKey : jEffect.at("paramKeys")) {
+                                std::map<std::string, double> keyParams;
+                                if (jKey.contains("params")) {
+                                    for (auto it = jKey.at("params").begin(); it != jKey.at("params").end(); ++it) {
+                                        keyParams[it.key()] = it.value().get<double>();
+                                    }
+                                }
+                                effect.paramKeys[jKey.at("frame").get<size_t>()] = std::move(keyParams);
                             }
                         }
                         cut.effects().push_back(std::move(effect));

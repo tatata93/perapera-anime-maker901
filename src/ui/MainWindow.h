@@ -12,7 +12,6 @@
 class CameraPanel;
 class CelPanel;
 class EditWindow;
-class EffectPanel;
 class FramePanel;
 class GLCanvas;
 class LayerPanel;
@@ -20,6 +19,7 @@ class PalettePanel;
 class PrevizWindow;
 class ReferencePanel;
 class SettingBoardWindow;
+class ShootingWindow;
 class StoryboardWindow;
 class TapPanel;
 class XsheetPanel;
@@ -130,11 +130,11 @@ public:
     // グローバルコマ18(カット2内)へシークする
     void debugSetupEditDemo();
 
-    // 撮影パネル確認用
-    EffectPanel* effectPanel() const { return m_effectPanel; }
-    // 撮影デモ確認用: ストローク1本を描き、全体ブラー(半径6)・全体パラ(既定)・
-    // セル0対象グローの3エフェクトを追加してから撮影プレビューダイアログを開く
-    void debugSetupEffectsDemo();
+    // 撮影ウィンドウ確認用
+    ShootingWindow* shootingWindow() const { return m_shootingWindow; }
+    // 撮影デモ確認用: ストローク1本を描いて尺24の止めにし、全体ブラー(コマ0=半径0→
+    // コマ23=半径10のキー)+全体パラ(キー無し)を組んで撮影ウィンドウを開き、コマ12を選択する
+    void debugSetupShootingDemo();
 
     // クラッシュリカバリ: 自動保存ファイルが残っていれば復元するか確認する。
     // ヘッドレステスト実行時にダイアログを出さないようmain.cppから条件付きで呼ばれる
@@ -204,11 +204,10 @@ private:
     // カメラパネルの現在の表示値からキャンバスのオーバーレイ矩形を更新する
     void updateCameraOverlay();
 
-    // 撮影パネル操作(カットのエフェクトスタック)
-    void updateEffectPanel();
-    // 「現在コマをプレビュー」要求: activeCut()の現在コマをrenderCutFrameで描画し、
-    // 撮影パネルのプレビューダイアログへ渡す
-    void showEffectPreview();
+    // 撮影ウィンドウ(カットのエフェクトスタック+撮影シート)
+    void openShootingWindow();
+    // エフェクトやカット構成が変わった後に呼ぶ。撮影ウィンドウが開いていれば最新化する
+    void refreshShootingWindowIfOpen();
 
     // カット管理操作(カットバー)
     void setupCutBar();
@@ -292,11 +291,11 @@ private:
     CelPanel* m_celPanel = nullptr;
     TapPanel* m_tapPanel = nullptr;
     CameraPanel* m_cameraPanel = nullptr;
-    EffectPanel* m_effectPanel = nullptr;
     PrevizWindow* m_previzWindow = nullptr;  // 別ウィンドウ(遅延生成)
     StoryboardWindow* m_storyboardWindow = nullptr;  // 絵コンテウィンドウ(別ウィンドウ、遅延生成)
     SettingBoardWindow* m_settingBoardWindow = nullptr;  // 設定ボードウィンドウ(別ウィンドウ、遅延生成)
     EditWindow* m_editWindow = nullptr;  // 編集(カッティング)ウィンドウ(別ウィンドウ、遅延生成)
+    ShootingWindow* m_shootingWindow = nullptr;  // 撮影ウィンドウ(別ウィンドウ、遅延生成)
     ReferencePanel* m_referencePanel = nullptr;  // 設定ボード参照ドック
     int m_referenceBoardIndex = -1;  // 参照ドックで選択中の設定ボードインデックス(未選択-1)
     QString m_currentFilePath;

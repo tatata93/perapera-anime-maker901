@@ -8,9 +8,9 @@
 #include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/EditWindow.h"
-#include "ui/EffectPanel.h"
 #include "ui/MainWindow.h"
 #include "ui/SettingBoardWindow.h"
+#include "ui/ShootingWindow.h"
 #include "ui/StoryboardWindow.h"
 
 int main(int argc, char* argv[]) {
@@ -611,22 +611,16 @@ int main(int argc, char* argv[]) {
         });
     }
 
-    // 動作確認用: --effects-ui-test <出力PNG> で撮影デモ(ストローク1本+全体ブラー/全体パラ/
-    // セル0対象グローの3エフェクト)を組み、撮影パネル(一覧3件)込みのメインウィンドウ全体を保存、
-    // 続けて撮影プレビューダイアログ(エフェクト適用済みの絵)を「ベース名_preview.png」で保存して終了する
-    const int effectsUiIndex = args.indexOf("--effects-ui-test");
-    if (effectsUiIndex >= 0 && effectsUiIndex + 1 < args.size()) {
-        const QString outputPath = args.at(effectsUiIndex + 1);
-        const int dotIndex = outputPath.lastIndexOf('.');
-        const QString previewOutputPath = dotIndex >= 0 ? outputPath.left(dotIndex) + "_preview" + outputPath.mid(dotIndex)
-                                                          : outputPath + "_preview";
-        QTimer::singleShot(500, &window, [&window, outputPath, previewOutputPath] {
-            window.debugSetupEffectsDemo();
-            QTimer::singleShot(400, &window, [&window, outputPath, previewOutputPath] {
-                window.grab().save(outputPath);
-                if (QDialog* dialog = window.effectPanel()->previewDialog()) {
-                    dialog->grab().save(previewOutputPath);
-                }
+    // 動作確認用: --shooting-test <出力PNG> で撮影デモ(ストローク1本+尺24の止め+
+    // 全体ブラーのコマキー(コマ0=半径0→コマ23=半径10)+全体パラ)を組み、撮影ウィンドウ
+    // (シートに●2つ、コマ12選択=中間ボケのプレビュー)を保存して終了する
+    const int shootingIndex = args.indexOf("--shooting-test");
+    if (shootingIndex >= 0 && shootingIndex + 1 < args.size()) {
+        const QString outputPath = args.at(shootingIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupShootingDemo();
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                window.shootingWindow()->grab().save(outputPath);
                 QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
         });

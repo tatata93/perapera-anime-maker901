@@ -40,13 +40,13 @@
 #include "ui/CelPanel.h"
 #include "ui/CelSizeDialog.h"
 #include "ui/EditWindow.h"
-#include "ui/EffectPanel.h"
 #include "ui/ExportDialog.h"
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
 #include "ui/PalettePanel.h"
 #include "ui/ReferencePanel.h"
 #include "ui/SettingBoardWindow.h"
+#include "ui/ShootingWindow.h"
 #include "ui/StoryboardWindow.h"
 #include "ui/TapPanel.h"
 #include "ui/XsheetPanel.h"
@@ -770,16 +770,6 @@ void MainWindow::setupPanels() {
     });
     connect(m_cameraPanel, &CameraPanel::showFrameToggled, this, [this](bool) { updateCameraOverlay(); });
 
-    m_effectPanel = new EffectPanel(this);
-    addDockWidget(Qt::RightDockWidgetArea, m_effectPanel);
-    connect(m_effectPanel, &EffectPanel::effectsEdited, this, [this] {
-        activeCut().effects() = m_effectPanel->effects();
-        m_dirty = true;
-        updateWindowTitle();
-        refreshEditWindowIfOpen();  // プレビューキャッシュを捨てて反映する
-    });
-    connect(m_effectPanel, &EffectPanel::previewRequested, this, &MainWindow::showEffectPreview);
-
     m_referencePanel = new ReferencePanel(this);
     addDockWidget(Qt::RightDockWidgetArea, m_referencePanel);
     connect(m_referencePanel, &ReferencePanel::boardSelected, this, [this](int index) {
@@ -930,7 +920,6 @@ void MainWindow::updateXsheetPanel() {
     updateCelPanel();  // セルの構成・可視状態・アクティブセルはXsheetと同じ元データなのでここで一緒に更新する
     updateTapPanel();  // 位置キーの一覧・現在コマの選択もアクティブセルに追従させる
     updateCameraPanel();  // カメラフレーム(カット単位)も現在コマ・現在カットに追従させる
-    updateEffectPanel();  // 撮影エフェクトのスタック(カット単位)も現在カットに追従させる
 }
 
 // activeCut()の全セルからセル名・可視状態を集めてセルパネルに反映する
@@ -996,27 +985,6 @@ void MainWindow::updateCameraOverlay() {
     const double cx = m_cameraPanel->centerX();
     const double cy = m_cameraPanel->centerY();
     m_canvas->setCameraFrameOverlay(QRectF(cx - w / 2.0, cy - h / 2.0, w, h));
-}
-
-// アクティブカットのエフェクトスタックとセル名一覧を撮影パネルへ反映する
-void MainWindow::updateEffectPanel() {
-    if (!m_effectPanel) return;
-    core::Cut& cut = activeCut();
-
-    QStringList celNames;
-    for (size_t ci = 0; ci < cut.celCount(); ++ci) celNames.append(QString::fromStdString(cut.cel(ci).name()));
-
-    m_effectPanel->setEffects(cut.effects(), celNames);
-}
-
-// 撮影パネルの「現在コマをプレビュー」要求: activeCut()の現在コマをエフェクト適用込みで
-// renderCutFrameし、撮影パネルのプレビューダイアログへ渡す
-void MainWindow::showEffectPreview() {
-    if (!m_effectPanel) return;
-    const core::Bitmap bitmap = core::renderCutFrame(activeCut(), m_currentFrame, kCanvasWidth, kCanvasHeight);
-    const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
-    // showPreview内でQPixmapへ変換(ピクセルデータを複製)するため、bitmap(ローカル変数)の寿命中に呼べば安全
-    m_effectPanel->showPreview(image);
 }
 
 // 新しいセルを1枚追加する。名前は自動連番(1文字目のセルは新規文書時に"A"が既にあるので、
@@ -1277,6 +1245,12 @@ void MainWindow::setupMenus() {
     editWindowAction->setShortcut(QKeySequence(Qt::Key_F9));
     connect(editWindowAction, &QAction::triggered, this, &MainWindow::openEditWindow);
 
+    // 撮影メニュー(別ウィンドウ。エフェクトスタック+撮影シート(行=エフェクト、列=コマ))
+    QMenu* shootingMenu = menuBar()->addMenu(tr("撮影(&T)"));
+    QAction* shootingAction = shootingMenu->addAction(tr("撮影ウィンドウ(&W)"));
+    shootingAction->setShortcut(QKeySequence(Qt::Key_F10));
+    connect(shootingAction, &QAction::triggered, this, &MainWindow::openShootingWindow);
+
     // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
     viewMenu->addAction(m_framePanel->toggleViewAction());
@@ -1384,6 +1358,10 @@ void MainWindow::newDocument() {
         m_editWindow->setProject(m_project.get());  // プロジェクト差し替え
         m_editWindow->refresh();
     }
+    if (m_shootingWindow) {
+        m_shootingWindow->setProject(m_project.get());  // プロジェクト差し替え
+        m_shootingWindow->refresh();
+    }
     m_referenceBoardIndex = -1;
     updateReferencePanel();
     updateFrameLabel();
@@ -1441,6 +1419,10 @@ bool MainWindow::loadFromFile(const QString& path) {
     if (m_editWindow) {
         m_editWindow->setProject(m_project.get());  // プロジェクト差し替え
         m_editWindow->refresh();
+    }
+    if (m_shootingWindow) {
+        m_shootingWindow->setProject(m_project.get());  // プロジェクト差し替え
+        m_shootingWindow->refresh();
     }
     m_referenceBoardIndex = -1;
     updateReferencePanel();
@@ -1732,13 +1714,16 @@ void MainWindow::debugSetupCameraDemo() {
     setCurrentFrame(12);
 }
 
-void MainWindow::debugSetupEffectsDemo() {
-    // 撮影パネル確認用: ストローク1本(矩形枠、セル0=アクティブセルに描く)を描いてから、
-    // 全体ブラー(半径6)・全体パラ(既定)・セル0対象グローの3エフェクトを追加し、
-    // 撮影プレビューダイアログを開く
+void MainWindow::debugSetupShootingDemo() {
+    // 撮影ウィンドウ確認用: ストローク1本(矩形枠)を描いて尺24の止めにし、
+    // 全体ブラー(コマ0=半径0→コマ23=半径10のキー)+全体パラ(キー無し)を組んで
+    // 撮影ウィンドウを開き、シートのコマ12を選択する
     debugSetupFillDemo();  // 目印になる矩形枠をアクティブセル(セル0)に描く
 
     core::Cut& cut = activeCut();
+    core::Cel& cel = activeCel();
+    cut.setFrameCount(24);
+    for (size_t t = 0; t < 24; ++t) cel.setExposure(t, 0);  // 止め(全コマで同じ絵を表示)
     cut.effects().clear();
 
     core::Effect blur;
@@ -1746,7 +1731,8 @@ void MainWindow::debugSetupEffectsDemo() {
     blur.enabled = true;
     blur.targetCel = -1;  // 全体
     blur.params = core::effectDefaultParams(core::EffectType::Blur);
-    blur.params["radius"] = 6.0;
+    blur.paramKeys[0] = {{"radius", 0.0}};    // 冒頭はボケなし
+    blur.paramKeys[23] = {{"radius", 10.0}};  // 末尾へ向けてボケていく(フォーカスアウト)
     cut.effects().push_back(blur);
 
     core::Effect para;
@@ -1756,17 +1742,12 @@ void MainWindow::debugSetupEffectsDemo() {
     para.params = core::effectDefaultParams(core::EffectType::Para);
     cut.effects().push_back(para);
 
-    core::Effect glow;
-    glow.type = core::EffectType::Glow;
-    glow.enabled = true;
-    glow.targetCel = 0;  // セル0対象
-    glow.params = core::effectDefaultParams(core::EffectType::Glow);
-    cut.effects().push_back(glow);
-
     m_dirty = true;
     updateWindowTitle();
-    updateEffectPanel();
-    showEffectPreview();
+    updateXsheetPanel();
+
+    openShootingWindow();
+    m_shootingWindow->debugSelectKoma(12);
 }
 
 void MainWindow::debugSetupFillDemo() {
@@ -2160,6 +2141,29 @@ void MainWindow::openEditWindow() {
 
 void MainWindow::refreshEditWindowIfOpen() {
     if (m_editWindow) m_editWindow->refresh();
+    refreshShootingWindowIfOpen();  // カット構成の変更は撮影ウィンドウ(カット選択/シート)にも影響する
+}
+
+void MainWindow::openShootingWindow() {
+    if (!m_shootingWindow) {
+        m_shootingWindow = new ShootingWindow(this);  // QMainWindowなので独立ウィンドウになる
+        connect(m_shootingWindow, &ShootingWindow::edited, this, [this] {
+            m_dirty = true;
+            updateWindowTitle();
+            if (m_editWindow) m_editWindow->refresh();  // 通しプレビューのキャッシュを捨てて反映する
+        });
+    }
+    m_shootingWindow->setCanvasSize(kCanvasWidth, kCanvasHeight);
+    m_shootingWindow->setProject(m_project.get());
+    m_shootingWindow->setCutIndex(static_cast<int>(m_activeCut));
+    m_shootingWindow->refresh();
+    m_shootingWindow->show();
+    m_shootingWindow->raise();
+    m_shootingWindow->activateWindow();
+}
+
+void MainWindow::refreshShootingWindowIfOpen() {
+    if (m_shootingWindow) m_shootingWindow->refresh();
 }
 
 void MainWindow::debugSetupEditDemo() {
