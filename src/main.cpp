@@ -628,6 +628,25 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --previz-pen-test <出力PNG> でプリビズ(箱モデル)を作画キャンバスの下敷きに表示し、
+    // 筆圧ペンでなぞり描き(debugSimulateStroke)した状態を保存する。--previz-underlay-testと
+    // ほぼ同じ手順だが、「プリビズを下敷きに筆圧ペンでなぞっている」証跡として別名で確認できるようにする
+    const int previzPenIndex = args.indexOf("--previz-pen-test");
+    if (previzPenIndex >= 0 && previzPenIndex + 1 < args.size()) {
+        const QString outputPath = args.at(previzPenIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugOpenPreviz();
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                window.debugSetPrevizUnderlay(true);
+                window.canvas()->debugSimulateStroke();  // 下敷きの上に筆圧ペンでなぞり描き
+                QTimer::singleShot(300, &window, [&window, outputPath] {
+                    window.canvas()->grabFramebuffer().save(outputPath);
+                    QApplication::exit(0);
+                });
+            });
+        });
+    }
+
     // 動作確認用: --storyboard-test <出力PNG> で絵コンテデモ(パネル2枚、カット番号1が2つ、
     // 尺36/12、パネル1に赤い斜め線)を組んでから絵コンテウィンドウを開き、
     // その全体(パネル表+描画エリア)を保存して終了する
@@ -749,19 +768,26 @@ int main(int argc, char* argv[]) {
         });
     }
 
-    // 動作確認用: --fulldemo <出力mp4パス> でこれまで実装した全機能を統合した3カットデモ
-    // (PAN+T.U.+グロー / クラシック撮影DoF+黒パラ / シェイク+オレンジパラ)を組み、
-    // 全カットを連結した通しmp4へ書き出す。マルチプレーンのレイトレース+ffmpegエンコードで
-    // 時間がかかるため、待ち時間は長めに取る。mp4の成否によらず代表PNG(fulldemo_cut1/2/3.png)は
-    // 保存されるので、mp4が失敗してもPNGで目視確認できる
+    // 動作確認用: --fulldemo <出力mp4パス> でこれまで実装した全機能を統合した4カットデモ
+    // (カット0: プリビズなぞり作画 / カット1: PAN+T.U.+グロー / カット2: クラシック撮影DoF+黒パラ /
+    // カット3: シェイク+オレンジパラ)を組み、全カットを連結した通しmp4へ書き出す。
+    // カット0はプリビズのカメラ視点画像(FBOレンダ)を下敷きに焼き込むため、GLコンテキストの
+    // 初期化(initializeGL)が済んでいる必要がある。そのため先にプリビズウィンドウを開いて
+    // 表示・描画が一巡するのを待ってから(500→400ms)debugBuildFullDemo()を呼ぶ2段構えにする。
+    // マルチプレーンのレイトレース+ffmpegエンコードで時間がかかるため、待ち時間は長めに取る。
+    // mp4の成否によらず代表PNG(fulldemo_cut1〜4.png)は保存されるので、mp4が失敗してもPNGで
+    // 目視確認できる
     const int fullDemoIndex = args.indexOf("--fulldemo");
     if (fullDemoIndex >= 0 && fullDemoIndex + 1 < args.size()) {
         const QString outputPath = args.at(fullDemoIndex + 1);
         QTimer::singleShot(500, &window, [&window, outputPath] {
-            window.debugBuildFullDemo();
-            QTimer::singleShot(1000, &window, [&window, outputPath] {
-                const bool ok = window.exportAllCutsMovie(outputPath, 24);
-                QApplication::exit(ok ? 0 : 1);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            window.debugOpenPreviz();  // GLコンテキスト初期化のため先に開いておく(カット0のFBOレンダに必要)
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                window.debugBuildFullDemo();  // カット0(プリビズなぞり作画)込みの4カットを構築
+                QTimer::singleShot(1000, &window, [&window, outputPath] {
+                    const bool ok = window.exportAllCutsMovie(outputPath, 24);
+                    QApplication::exit(ok ? 0 : 1);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                });
             });
         });
     }

@@ -85,6 +85,79 @@ void initializeCut(core::Cut& cut) {
     cel.setExposure(0, 0);
 }
 
+// プリビズなぞり作画用: 筆圧ペンで点列(ポリライン)をBitmapへ描く。debugSimulateStroke
+// (GLCanvas)の筆圧の付け方に倣い、ストローク全体の弧長を媒介変数化して両端が細く・
+// 中央が太くなる筆圧プロファイル(sinカーブ)にすることで、コードの均一な図形ではなく
+// 「ペンで描いたような強弱のある線」にする。
+void drawPenStroke(core::Bitmap& bitmap, const std::vector<QPointF>& pts, QColor color, float maxRadius) {
+    if (pts.size() < 2) return;
+
+    // 全体の弧長を求め、各頂点の弧長位置を弧長比0〜1へ正規化するための累積長を作る
+    std::vector<double> cumLen(pts.size(), 0.0);
+    for (size_t i = 1; i < pts.size(); ++i) {
+        const QPointF d = pts[i] - pts[i - 1];
+        cumLen[i] = cumLen[i - 1] + std::hypot(d.x(), d.y());
+    }
+    const double total = cumLen.back();
+    if (total <= 0.0) return;
+
+    constexpr double kPi = 3.14159265358979323846;
+    // t(0〜1)に対する筆圧: 両端0.15(かすれ)、中央1.0(太い)のsinカーブ
+    const auto pressureAt = [](double t) { return 0.15 + 0.85 * std::sin(kPi * t); };
+
+    core::BrushEngine engine;
+    engine.settings().radius = maxRadius;
+    engine.settings().color = {static_cast<uint8_t>(color.red()), static_cast<uint8_t>(color.green()),
+                               static_cast<uint8_t>(color.blue()), static_cast<uint8_t>(color.alpha())};
+
+    engine.beginStroke(bitmap, static_cast<float>(pts[0].x()), static_cast<float>(pts[0].y()),
+                        static_cast<float>(pressureAt(0.0)));
+    constexpr int kSubSteps = 24;  // 線分ごとの分割数(筆圧を滑らかに変化させるため)
+    for (size_t i = 1; i < pts.size(); ++i) {
+        for (int s = 1; s <= kSubSteps; ++s) {
+            const double localT = static_cast<double>(s) / kSubSteps;
+            const QPointF p = pts[i - 1] + (pts[i] - pts[i - 1]) * localT;
+            const double lenAtP = cumLen[i - 1] + (cumLen[i] - cumLen[i - 1]) * localT;
+            const double t = lenAtP / total;
+            engine.continueStroke(bitmap, static_cast<float>(p.x()), static_cast<float>(p.y()),
+                                   static_cast<float>(pressureAt(t)));
+        }
+    }
+    engine.endStroke();
+}
+
+// プリビズカメラ画像(QImage)をキャンバスサイズへアスペクト維持でスケール(レターボックス)し、
+// アルファを下げて淡い下敷き用Bitmapにする。renderCameraViewImage()はグリッド背景色で
+// 全面塗りつぶされた不透明画像を返すため、アルファを一律に落とすだけで
+// 「薄い3Dの下敷き」らしい見た目になる(白紙の上に重なって淡く見える)
+core::Bitmap makeFaintPrevizBitmap(const QImage& src, int canvasWidth, int canvasHeight, float alphaScale) {
+    core::Bitmap bitmap(canvasWidth, canvasHeight);
+    bitmap.fill({0, 0, 0, 0});
+    if (src.isNull()) return bitmap;
+
+    const QImage scaled =
+        src.scaled(canvasWidth, canvasHeight, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+            .convertToFormat(QImage::Format_RGBA8888);
+    const int offsetX = (canvasWidth - scaled.width()) / 2;
+    const int offsetY = (canvasHeight - scaled.height()) / 2;
+    const float clampedAlphaScale = std::clamp(alphaScale, 0.0f, 1.0f);
+
+    for (int y = 0; y < scaled.height(); ++y) {
+        const uchar* line = scaled.constScanLine(y);
+        const int dy = offsetY + y;
+        if (dy < 0 || dy >= canvasHeight) continue;
+        for (int x = 0; x < scaled.width(); ++x) {
+            const int dx = offsetX + x;
+            if (dx < 0 || dx >= canvasWidth) continue;
+            const uchar* px = line + static_cast<size_t>(x) * 4;
+            const core::Bitmap::Pixel pixel{px[0], px[1], px[2],
+                                            static_cast<uint8_t>(std::lround(px[3] * clampedAlphaScale))};
+            bitmap.setPixel(dx, dy, pixel);
+        }
+    }
+    return bitmap;
+}
+
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -1870,10 +1943,55 @@ void MainWindow::debugBuildFullDemo() {
     }
 
     // ==================================================================
+    // カット0「プリビズなぞり作画」(尺24コマ)
+    // ==================================================================
+    // newDocument()で作られた最初のカット(セルA=空)を先頭カットとして使う。
+    // 注意: renderCameraViewImage()はFBOレンダのため、プリビズウィンドウが表示されて
+    // GLコンテキスト初期化(initializeGL)が済んでいる必要がある。--fulldemoフック側で
+    // 事前にプリビズを開いて数百ms待ってから本関数を呼ぶ2段構えを前提にしている
+    // (未オープンならここで開くが、直後にGL未初期化のまま描画すると落ちる可能性があるため保険に留める)
+    core::Cut& cut0 = scene.cut(0);
+    cut0.setName("カット0 プリビズなぞり作画");
+    cut0.setAction("プリビズ(3DCG)を下敷きに、筆圧ペンで箱の輪郭をなぞって作画する。");
+    cut0.setDialogue("");
+    cut0.setStatus(core::CutStatus::Layout);  // Lo なぞり作画
+    cut0.setFrameCount(24);
+
+    if (!m_previzWindow) openPrevizWindow();
+    m_previzWindow->setScene(&cut0.previz());  // 空シーンには箱モデルが自動追加される(PrevizWindow::setScene)
+    m_previzWindow->setTimeline(0, cut0.frameCount());
+    const QImage previzImage = m_previzWindow->viewport()->renderCameraViewImage();
+
+    // 背景セル(プリビズ下敷き): カメラ画像をキャンバスサイズへアスペクト維持でスケールし、
+    // アルファを下げて淡く焼き込む。全コマ止め
+    core::Cel& previzBgCel = cut0.cel(0);
+    previzBgCel.setName("プリビズ下敷き");
+    previzBgCel.layer(0).frame(0).bitmap() = makeFaintPrevizBitmap(previzImage, kCanvasWidth, kCanvasHeight, 0.35f);
+    for (size_t t = 0; t < cut0.frameCount(); ++t) previzBgCel.setExposure(t, 0);
+
+    // キャラセル(筆圧ペンでなぞり線): 箱の投影位置は厳密でなくてよいので、画面中央付近に
+    // 矩形+対角線を「筆圧ペンでなぞった」線で描く(両端が細く中央が太い)
+    core::Cel& tracingCel = cut0.addCel("なぞり線");
+    core::Layer& tracingLayer = tracingCel.addLayer("レイヤー 1");
+    core::Bitmap& tracingBitmap = tracingLayer.addFrame().bitmap();
+    tracingBitmap = makeTransparentCel();
+    {
+        const float x0 = kCanvasWidth * 0.32f, x1 = kCanvasWidth * 0.68f;
+        const float y0 = kCanvasHeight * 0.30f, y1 = kCanvasHeight * 0.72f;
+        const QColor penColor(30, 30, 40);
+        // 箱の輪郭をなぞった風の矩形
+        drawPenStroke(tracingBitmap, {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}, {x0, y0}}, penColor, 14.0f);
+        // 奥行きを感じさせる対角線のなぞり線
+        drawPenStroke(tracingBitmap, {{x0, y0}, {x1, y1}}, penColor, 10.0f);
+        drawPenStroke(tracingBitmap, {{x1, y0}, {x0, y1}}, penColor, 10.0f);
+    }
+    for (size_t t = 0; t < cut0.frameCount(); ++t) tracingCel.setExposure(t, 0);
+
+    // ==================================================================
     // カット1「PAN + T.U. + グロー」(尺48コマ)
     // ==================================================================
-    core::Cut& cut1 = scene.cut(0);  // newDocument()で作られた最初のカット(セルA=空)を使う
-    cut1.setName("カット1 PAN+TU+グロー");
+    core::Cut& cut1 = scene.addCut("カット1 PAN+TU+グロー");
+    initializeCut(cut1);
     cut1.setAction("背景が左へパンしながらキャラが歩く。カメラがゆっくり寄る(T.U.)。");
     cut1.setDialogue("行くぞ!");
     cut1.setStatus(core::CutStatus::Done);
@@ -2104,7 +2222,7 @@ void MainWindow::debugBuildFullDemo() {
         cut3.effects().push_back(para3);
     }
 
-    // 構築完了: アクティブカットをカット1に揃えて各パネルの整合を取る
+    // 構築完了: アクティブカットをカット0(プリビズなぞり作画)に揃えて各パネルの整合を取る
     setActiveCut(0);
 }
 
