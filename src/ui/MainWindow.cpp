@@ -57,8 +57,8 @@ constexpr int kCanvasWidth = 1920;
 constexpr int kCanvasHeight = 1080;
 constexpr int kDefaultFps = 24;  // タイムシートは24fps基準
 
-// 自動保存: ファイル名と保存間隔(3分)
-const QString kAutosaveFileName = QStringLiteral("autosave.ppam");
+// 自動保存: フォルダ名と保存間隔(3分)
+const QString kAutosaveFileName = QStringLiteral("autosave.ppproj");
 constexpr int kAutosaveIntervalMs = 180 * 1000;
 
 // 透明なセル(作画用紙)。紙の白はGLCanvasが背景として描画する。
@@ -168,7 +168,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setCentralWidget(m_canvas);
     m_canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
         m_commands.push(std::move(command));  // pushは冪等なexecute(after画素の再書き込み)を伴う
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateWindowTitle();
     });
 
@@ -222,6 +222,43 @@ core::Layer& MainWindow::activeLayer() {
     core::Cel& cel = activeCel();
     m_activeLayer = std::min(m_activeLayer, cel.layerCount() - 1);
     return cel.layer(m_activeLayer);
+}
+
+// 保存スコープ(部分保存)の管理: markXxxDirty系ヘルパーで変更箇所を記録する。
+// いずれもm_dirty(表示用フラグ)もあわせて立てる
+void MainWindow::markProjectDirty() {
+    m_dirtyScope.project = true;
+    m_dirty = true;
+}
+
+void MainWindow::markStoryboardDirty() {
+    m_dirtyScope.storyboard = true;
+    m_dirty = true;
+}
+
+void MainWindow::markBoardsDirty() {
+    m_dirtyScope.boards = true;
+    m_dirty = true;
+}
+
+void MainWindow::markCutDirty(core::Cut& cut) {
+    // idが未採番(0)のカットは保存時に採番されるまでどのファイル名になるか定まらないため、
+    // 安全側(全カット書き出し)に倒す
+    if (cut.id() == 0) {
+        m_dirtyScope.allCuts = true;
+    } else {
+        m_dirtyScope.cutIds.insert(cut.id());
+    }
+    m_dirty = true;
+}
+
+void MainWindow::markAllDirty() {
+    m_dirtyScope.project = true;
+    m_dirtyScope.storyboard = true;
+    m_dirtyScope.boards = true;
+    m_dirtyScope.allCuts = true;
+    m_dirtyScope.cutIds.clear();  // allCuts=trueなので個別集合は不要
+    m_dirty = true;
 }
 
 // 現在のコマ(シート位置)に露出表で割り付けられた動画を、セル×レイヤーの順で集めて渡す
@@ -314,7 +351,7 @@ void MainWindow::addFrameAfterCurrent() {
     m_commands.clear();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 動画構造が変わったため
     setCurrentFrame(target);
-    m_dirty = true;
+    markCutDirty(cut);
     updateWindowTitle();
 }
 
@@ -326,7 +363,7 @@ void MainWindow::deleteCurrentFrame() {
     updateOnionSkin();
     updateFrameLabel();
     updateXsheetPanel();
-    m_dirty = true;
+    markCutDirty(activeCut());
     updateWindowTitle();
 }
 
@@ -589,7 +626,8 @@ void MainWindow::addCut() {
     core::Scene& scene = m_project->scene(0);
     core::Cut& cut = scene.addCut(tr("カット %1").arg(scene.cutCount() + 1).toStdString());
     initializeCut(cut);
-    m_dirty = true;
+    markProjectDirty();  // シーンのカット構成(cutIds)が変わる
+    markCutDirty(cut);
     updateWindowTitle();
     setActiveCut(static_cast<int>(scene.cutCount() - 1));
     refreshEditWindowIfOpen();
@@ -600,7 +638,7 @@ void MainWindow::removeActiveCut() {
     core::Scene& scene = m_project->scene(0);
     if (scene.cutCount() <= 1) return;  // 最後の1カットは消さない
     scene.removeCut(m_activeCut);
-    m_dirty = true;
+    markProjectDirty();  // シーンのカット構成(cutIds)が変わる。カット自体は削除済みなのでmarkCutDirtyは不要
     updateWindowTitle();
     setActiveCut(static_cast<int>(std::min(m_activeCut, scene.cutCount() - 1)));
     refreshEditWindowIfOpen();
@@ -612,7 +650,8 @@ void MainWindow::renameActiveCut() {
                                                QString::fromStdString(activeCut().name()), &ok);
     if (!ok || name.isEmpty()) return;
     activeCut().setName(name.toStdString());
-    m_dirty = true;
+    markProjectDirty();
+    markCutDirty(activeCut());
     updateWindowTitle();
     updateCutBar();
     refreshEditWindowIfOpen();
@@ -625,7 +664,7 @@ void MainWindow::setupPanels() {
         // 動画一覧のクリック = 現在コマにその動画を割り付ける(タイムシート編集)
         if (m_playing) return;
         activeCel().setExposure(m_currentFrame, index);
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateCanvasLayers();
         updateOnionSkin();
         updateWindowTitle();
@@ -649,7 +688,7 @@ void MainWindow::setupPanels() {
         if (static_cast<size_t>(index) >= cel.layerCount()) return;
         cel.layer(static_cast<size_t>(index)).setVisible(visible);
         updateCanvasLayers();
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateWindowTitle();
     });
     connect(m_layerPanel, &LayerPanel::addRequested, this, &MainWindow::addLayerToActiveCel);
@@ -668,7 +707,7 @@ void MainWindow::setupPanels() {
         if (!ok || newName.isEmpty()) return;  // キャンセルまたは空欄は変更しない
         layer.setName(newName.toStdString());
 
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateWindowTitle();
         updateLayerPanel();
     });
@@ -682,7 +721,7 @@ void MainWindow::setupPanels() {
             newRole = core::LayerRole::Correction;
         }
         cel.layer(static_cast<size_t>(index)).setRole(newRole);
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateWindowTitle();
         updateLayerPanel();
     });
@@ -723,7 +762,7 @@ void MainWindow::setupPanels() {
                                  : std::min(clampedDrawing, static_cast<int>(cel.drawingCount()) - 1);
         }
         cel.setExposure(static_cast<size_t>(frame), clampedDrawing);
-        m_dirty = true;
+        markCutDirty(cut);
         updateCanvasLayers();
         updateOnionSkin();
         updateFrameLabel();
@@ -735,7 +774,7 @@ void MainWindow::setupPanels() {
         core::Cut& cut = activeCut();
         cut.setFrameCount(static_cast<size_t>(frameCount));
         if (m_currentFrame >= cut.frameCount()) m_currentFrame = cut.frameCount() - 1;
-        m_dirty = true;
+        markCutDirty(cut);
         updateCanvasLayers();
         updateOnionSkin();
         updateFrameLabel();
@@ -745,7 +784,7 @@ void MainWindow::setupPanels() {
     connect(m_xsheetPanel, &XsheetPanel::stepPatternRequested, this, [this](int step) {
         if (m_playing) return;
         activeCel().applyStepPattern(step, activeCut().frameCount());
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateCanvasLayers();
         updateOnionSkin();
         updateFrameLabel();
@@ -783,7 +822,7 @@ void MainWindow::setupPanels() {
         if (m_playing) return;
         core::Cel& cel = activeCel();
         cel.setPositionKey(m_currentFrame, cel.positionAt(m_currentFrame));  // 現在の補間位置でキーを打つ
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateCanvasLayers();
         updateWindowTitle();
         updateTapPanel();
@@ -791,7 +830,7 @@ void MainWindow::setupPanels() {
     connect(m_tapPanel, &TapPanel::removeKeyRequested, this, [this](int frame) {
         if (m_playing) return;
         activeCel().removePositionKey(static_cast<size_t>(frame));
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateCanvasLayers();
         updateWindowTitle();
         updateTapPanel();
@@ -808,7 +847,7 @@ void MainWindow::setupPanels() {
         updateCanvasLayers();  // リアルタイム追従
     });
     connect(m_canvas, &GLCanvas::celMoveFinished, this, [this] {
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateWindowTitle();
         updateTapPanel();
     });
@@ -824,21 +863,21 @@ void MainWindow::setupPanels() {
         state.center = {static_cast<float>(m_cameraPanel->centerX()), static_cast<float>(m_cameraPanel->centerY())};
         state.scale = m_cameraPanel->scalePercent() / 100.0;
         activeCut().setCameraKey(m_currentFrame, state);
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateWindowTitle();
         updateCameraPanel();
     });
     connect(m_cameraPanel, &CameraPanel::removeKeyRequested, this, [this] {
         if (m_playing) return;
         activeCut().removeCameraKey(m_currentFrame);
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateWindowTitle();
         updateCameraPanel();
     });
     connect(m_cameraPanel, &CameraPanel::clearAllKeysRequested, this, [this] {
         if (m_playing) return;
         activeCut().clearCameraKeys();
-        m_dirty = true;
+        markCutDirty(activeCut());
         updateWindowTitle();
         updateCameraPanel();
     });
@@ -901,7 +940,7 @@ void MainWindow::addLayerToActiveCel() {
     m_activeLayer = cel.layerCount() - 1;
     m_commands.clear();
     m_canvas->clearTextureCache();
-    m_dirty = true;
+    markCutDirty(activeCut());
     updateCanvasLayers();
     updateOnionSkin();
     updateLayerPanel();
@@ -916,7 +955,7 @@ void MainWindow::removeActiveLayer() {
     m_activeLayer = std::min(m_activeLayer, cel.layerCount() - 1);
     m_commands.clear();
     m_canvas->clearTextureCache();
-    m_dirty = true;
+    markCutDirty(activeCut());
     updateCanvasLayers();
     updateOnionSkin();
     updateLayerPanel();
@@ -933,7 +972,7 @@ void MainWindow::moveActiveLayer(int delta) {
     m_activeLayer = static_cast<size_t>(to);
     m_commands.clear();
     m_canvas->clearTextureCache();
-    m_dirty = true;
+    markCutDirty(activeCut());
     updateCanvasLayers();
     updateOnionSkin();
     updateLayerPanel();
@@ -952,7 +991,7 @@ void MainWindow::updatePalettePanel() {
 void MainWindow::addCurrentColorToPalette() {
     m_project->palette().push_back({static_cast<uint8_t>(m_penColor.red()), static_cast<uint8_t>(m_penColor.green()),
                                      static_cast<uint8_t>(m_penColor.blue()), static_cast<uint8_t>(m_penColor.alpha())});
-    m_dirty = true;
+    markProjectDirty();  // パレットはproject.ppamに格納する
     updatePalettePanel();
     updateWindowTitle();
 }
@@ -963,7 +1002,7 @@ void MainWindow::removeSelectedPaletteColor() {
     auto& palette = m_project->palette();
     if (index < 0 || static_cast<size_t>(index) >= palette.size()) return;
     palette.erase(palette.begin() + index);
-    m_dirty = true;
+    markProjectDirty();
     updatePalettePanel();
     updateWindowTitle();
 }
@@ -1076,7 +1115,7 @@ void MainWindow::addCel() {
     m_activeCel = static_cast<size_t>(index);
 
     // 新規セル・レイヤー・動画は既存のBitmapに影響しないためUndo履歴/テクスチャキャッシュの破棄は不要
-    m_dirty = true;
+    markCutDirty(cut);
     updateCanvasLayers();
     updateXsheetPanel();
     updateLayerPanel();
@@ -1094,7 +1133,7 @@ void MainWindow::removeActiveCel() {
 
     m_commands.clear();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // セルのBitmapが破棄されたため
-    m_dirty = true;
+    markCutDirty(cut);
     updateCanvasLayers();
     updateXsheetPanel();
     updateLayerPanel();
@@ -1112,7 +1151,7 @@ void MainWindow::renameActiveCel() {
     if (!ok || newName.isEmpty()) return;  // キャンセルまたは空欄は変更しない
     cel.setName(newName.toStdString());
 
-    m_dirty = true;
+    markCutDirty(activeCut());
     updateCanvasLayers();
     updateXsheetPanel();
     updateLayerPanel();
@@ -1140,7 +1179,7 @@ void MainWindow::openCelSizeDialog() {
 
     m_commands.clear();             // 全ビットマップが再確保されたためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 同上、テクスチャキャッシュも破棄
-    m_dirty = true;
+    markCutDirty(activeCut());
     updateCanvasLayers();
     updateOnionSkin();
     updateWindowTitle();
@@ -1158,7 +1197,7 @@ void MainWindow::moveActiveCel(int delta) {
     m_activeCel = static_cast<size_t>(to);
 
     // 重なり順が変わるだけでBitmapは無傷なためテクスチャキャッシュの破棄は不要
-    m_dirty = true;
+    markCutDirty(cut);
     updateCanvasLayers();
     updateXsheetPanel();
     updateLayerPanel();
@@ -1191,7 +1230,7 @@ void MainWindow::deleteDrawing(int idx) {
 
     m_commands.clear();             // 動画のBitmapが破棄されたためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 同上、テクスチャキャッシュも破棄
-    m_dirty = true;
+    markCutDirty(cut);
     updateCanvasLayers();
     updateOnionSkin();
     updateXsheetPanel();
@@ -1222,7 +1261,7 @@ void MainWindow::duplicateDrawing(int idx) {
     m_commands.clear();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 動画構造が変わったため
     setCurrentFrame(target);
-    m_dirty = true;
+    markCutDirty(cut);
     updateWindowTitle();
 }
 
@@ -1233,7 +1272,7 @@ void MainWindow::setCelVisibility(int celIndex, bool visible) {
 
     cut.cel(static_cast<size_t>(celIndex)).setVisible(visible);
 
-    m_dirty = true;
+    markCutDirty(cut);
     updateCanvasLayers();
     updateXsheetPanel();  // 末尾でupdateCelPanel()も呼ばれる
     updateLayerPanel();
@@ -1393,6 +1432,11 @@ void MainWindow::undo() {
     } else if (command) {
         m_canvas->clearTextureCache();
     }
+    if (command) {
+        // コマンドがどのカットのBitmapを指しているか特定できないため安全側(全カット)で扱う
+        markAllDirty();
+        updateWindowTitle();
+    }
 }
 
 void MainWindow::redo() {
@@ -1403,11 +1447,23 @@ void MainWindow::redo() {
     } else if (command) {
         m_canvas->clearTextureCache();
     }
+    if (command) {
+        markAllDirty();
+        updateWindowTitle();
+    }
 }
 
 void MainWindow::updateWindowTitle() {
     const QString base = QStringLiteral("perapera-anime-maker901");
-    QString title = m_currentFilePath.isEmpty() ? base : QStringLiteral("%1 - %2").arg(base, QFileInfo(m_currentFilePath).fileName());
+    QString title = base;
+    if (!m_currentFilePath.isEmpty()) {
+        // m_currentFilePathは常に.ppprojフォルダのパス。タイトルには拡張子を除いたフォルダ名を出す
+        QString folderName = QFileInfo(m_currentFilePath).fileName();
+        if (folderName.endsWith(QStringLiteral(".ppproj"), Qt::CaseInsensitive)) {
+            folderName.chop(7);  // ".ppproj" の7文字を除く
+        }
+        title = QStringLiteral("%1 - %2").arg(base, folderName);
+    }
     if (m_dirty) {
         title = QStringLiteral("*%1").arg(title);  // 未保存の変更があることを示す
     }
@@ -1444,17 +1500,19 @@ void MainWindow::newDocument() {
     updateXsheetPanel();
     m_currentFilePath.clear();
     m_dirty = false;
+    m_dirtyScope.clear();
     updateWindowTitle();
 }
 
-bool MainWindow::saveToFile(const QString& path) {
+bool MainWindow::saveToFile(const QString& path, const core::SaveOptions* options) {
     std::string error;
-    if (!core::ProjectIO::save(*m_project, std::filesystem::path(path.toStdWString()), &error)) {
+    if (!core::ProjectIO::save(*m_project, std::filesystem::path(path.toStdWString()), &error, options)) {
         QMessageBox::warning(this, tr("保存エラー"), QString::fromStdString(error));
         return false;
     }
     m_currentFilePath = path;
     m_dirty = false;
+    m_dirtyScope.clear();
     updateWindowTitle();
     return true;
 }
@@ -1505,8 +1563,14 @@ bool MainWindow::loadFromFile(const QString& path) {
     updateCutBar();
     updatePalettePanel();
     updateXsheetPanel();
-    m_currentFilePath = path;
+    // m_currentFilePathは常に.ppprojフォルダのパスにする。project.ppamファイル自体を指すパスで
+    // 開いた場合(open()のダイアログ経由)は親フォルダへ正規化する
+    const QFileInfo pathInfo(path);
+    m_currentFilePath = pathInfo.fileName().compare(QStringLiteral("project.ppam"), Qt::CaseInsensitive) == 0
+                             ? pathInfo.path()
+                             : path;
     m_dirty = false;
+    m_dirtyScope.clear();
     updateWindowTitle();
     return true;
 }
@@ -1514,20 +1578,33 @@ bool MainWindow::loadFromFile(const QString& path) {
 void MainWindow::save() {
     if (m_currentFilePath.isEmpty()) {
         saveAs();
-    } else {
-        saveToFile(m_currentFilePath);
+        return;
     }
+    // 上書き保存: 変更範囲(DirtyScope)だけを書き直す。新規保存先(project.ppam不在)なら
+    // ProjectIO::save側でoptionsを無視して全書きするので、ここでの判定は不要
+    core::SaveOptions options;
+    options.writeProject = m_dirtyScope.project;
+    options.writeStoryboard = m_dirtyScope.storyboard;
+    options.writeBoards = m_dirtyScope.boards;
+    options.writeAllCuts = m_dirtyScope.allCuts;
+    options.cutIds = m_dirtyScope.cutIds;
+    saveToFile(m_currentFilePath, &options);
 }
 
 void MainWindow::saveAs() {
-    const QString path =
-        QFileDialog::getSaveFileName(this, tr("プロジェクトを保存"), QString(), tr("ぺらぺらプロジェクト (*.ppam)"));
-    if (!path.isEmpty()) saveToFile(path);
+    QString path =
+        QFileDialog::getSaveFileName(this, tr("プロジェクトを保存"), QString(), tr("perapera プロジェクト (*.ppproj)"));
+    if (path.isEmpty()) return;
+    if (!path.endsWith(QStringLiteral(".ppproj"), Qt::CaseInsensitive)) {
+        path += QStringLiteral(".ppproj");
+    }
+    saveToFile(path);  // 名前を付けて保存は常に全ファイル書き出し(options=nullptr)
 }
 
 void MainWindow::open() {
-    const QString path =
-        QFileDialog::getOpenFileName(this, tr("プロジェクトを開く"), QString(), tr("ぺらぺらプロジェクト (*.ppam)"));
+    // .ppprojフォルダの中のproject.ppamを選ばせる(loadFromFileはフォルダ/project.ppamどちらも受け付ける)
+    const QString path = QFileDialog::getOpenFileName(this, tr("プロジェクトを開く"), QString(),
+                                                        tr("perapera プロジェクト (project.ppam);;すべて (*.*)"));
     if (!path.isEmpty()) loadFromFile(path);
 }
 
@@ -1768,7 +1845,7 @@ void MainWindow::debugSetupOversizeDemo() {
     cel.setPositionKey(0, {0.0f, 0.0f});
     cel.setPositionKey(2, {static_cast<float>(-kCanvasWidth), 0.0f});
 
-    m_dirty = true;
+    markCutDirty(cut);
     updateWindowTitle();
     setCurrentFrame(0);
 }
@@ -1783,7 +1860,7 @@ void MainWindow::debugSetupCameraDemo() {
     for (size_t t = 0; t < 24; ++t) cel.setExposure(t, 0);  // 止め(全コマで同じ絵を表示)
     cut.setCameraKey(0, core::CameraFrameState{{kCanvasWidth / 2.0f, kCanvasHeight / 2.0f}, 1.0});
     cut.setCameraKey(23, core::CameraFrameState{{kCanvasWidth * 0.3f, kCanvasHeight * 0.3f}, 0.5});
-    m_dirty = true;
+    markCutDirty(cut);
     updateWindowTitle();
     setCurrentFrame(12);
 }
@@ -1826,7 +1903,7 @@ void MainWindow::debugSetupShootingDemo() {
     para.params = core::effectDefaultParams(core::EffectType::Para);
     cut.effects().push_back(para);
 
-    m_dirty = true;
+    markCutDirty(cut);
     updateWindowTitle();
     updateXsheetPanel();
 
@@ -1886,7 +1963,7 @@ void MainWindow::debugSetupClassicDemo() {
 
     m_canvas->clearTextureCache();
     updateCanvasLayers();
-    m_dirty = true;
+    markCutDirty(cut);
     updateWindowTitle();
 
     openShootingWindow();
@@ -1939,7 +2016,7 @@ void MainWindow::debugSetupBacklightDemo() {
 
     m_canvas->clearTextureCache();
     updateCanvasLayers();
-    m_dirty = true;
+    markCutDirty(cut);
     updateWindowTitle();
 
     openShootingWindow();
@@ -2414,7 +2491,7 @@ QString MainWindow::debugTriggerAutosave() {
     return performAutosave() ? autosavePath() : QString();
 }
 
-int MainWindow::debugPaletteRoundTrip(const QString& ppamPath) {
+int MainWindow::debugPaletteRoundTrip(const QString& projectPath) {
     // パレットに3色を追加→保存→新規(パレット空になる)→読込を行い、往復結果を検証する
     const core::Bitmap::Pixel expected[3] = {{255, 0, 0, 255}, {0, 255, 0, 255}, {0, 0, 255, 255}};
     m_project->palette().clear();
@@ -2422,9 +2499,9 @@ int MainWindow::debugPaletteRoundTrip(const QString& ppamPath) {
         m_project->palette().push_back(color);
     }
 
-    if (!saveToFile(ppamPath)) return 1;
+    if (!saveToFile(projectPath)) return 1;
     newDocument();  // パレットが空に戻ることを確認する前提の状態にする
-    if (!loadFromFile(ppamPath)) return 1;
+    if (!loadFromFile(projectPath)) return 1;
 
     const auto& loaded = m_project->palette();
     if (loaded.size() != 3) return 1;
@@ -2437,7 +2514,7 @@ int MainWindow::debugPaletteRoundTrip(const QString& ppamPath) {
     return 0;
 }
 
-int MainWindow::debugRoleRoundTrip(const QString& ppamPath) {
+int MainWindow::debugRoleRoundTrip(const QString& projectPath) {
     // レイヤーを2枚追加(計3枚)し、layer(1)をColorTrace、layer(2)をCorrectionに設定して
     // 保存→新規→読込を行い、種別が保持されているか検証する
     addLayerToActiveCel();  // レイヤー2枚目
@@ -2448,9 +2525,9 @@ int MainWindow::debugRoleRoundTrip(const QString& ppamPath) {
     cel.layer(1).setRole(core::LayerRole::ColorTrace);
     cel.layer(2).setRole(core::LayerRole::Correction);
 
-    if (!saveToFile(ppamPath)) return 1;
+    if (!saveToFile(projectPath)) return 1;
     newDocument();  // 白紙に戻す
-    if (!loadFromFile(ppamPath)) return 1;
+    if (!loadFromFile(projectPath)) return 1;
 
     core::Cel& loadedCel = activeCel();
     if (loadedCel.layerCount() != 3) return 1;
@@ -2476,7 +2553,8 @@ void MainWindow::openPrevizWindow() {
     if (!m_previzWindow) {
         m_previzWindow = new PrevizWindow(this);  // QMainWindowなので独立ウィンドウになる
         connect(m_previzWindow, &PrevizWindow::sceneEdited, this, [this] {
-            m_dirty = true;
+            // プリビズシーンはカット内(cut.previz())に格納される
+            markCutDirty(activeCut());
             updateWindowTitle();
             if (m_previzUnderlay) updateUnderlay();  // カメラ/配置の変更を下敷きへ即反映
         });
@@ -2494,7 +2572,7 @@ void MainWindow::openStoryboardWindow() {
     if (!m_storyboardWindow) {
         m_storyboardWindow = new StoryboardWindow(this);  // QMainWindowなので独立ウィンドウになる
         connect(m_storyboardWindow, &StoryboardWindow::edited, this, [this] {
-            m_dirty = true;
+            markStoryboardDirty();
             updateWindowTitle();
         });
         // 「パネルからカット作成」: 選択パネルと同じカット番号を持つ全パネルのduration合計を尺として
@@ -2505,7 +2583,8 @@ void MainWindow::openStoryboardWindow() {
                     core::Cut& cut = scene.addCut((QStringLiteral("カット ") + cutLabel).toStdString());
                     initializeCut(cut);
                     cut.setFrameCount(static_cast<size_t>(std::max(1, totalFrames)));
-                    m_dirty = true;
+                    markProjectDirty();  // シーンのカット構成(cutIds)が変わる
+                    markCutDirty(cut);
                     updateWindowTitle();
                     updateCutBar();
                     setActiveCut(static_cast<int>(scene.cutCount() - 1));
@@ -2577,7 +2656,7 @@ void MainWindow::openSettingBoardWindow() {
     if (!m_settingBoardWindow) {
         m_settingBoardWindow = new SettingBoardWindow(this);  // QMainWindowなので独立ウィンドウになる
         connect(m_settingBoardWindow, &SettingBoardWindow::edited, this, [this] {
-            m_dirty = true;
+            markBoardsDirty();
             updateWindowTitle();
             updateReferencePanel();  // 編集内容を参照ドックへ即反映
         });
@@ -2664,7 +2743,10 @@ void MainWindow::openEditWindow() {
     if (!m_editWindow) {
         m_editWindow = new EditWindow(this);  // QMainWindowなので独立ウィンドウになる
         connect(m_editWindow, &EditWindow::edited, this, [this] {
-            m_dirty = true;
+            // 名前/尺/進捗/並べ替えのどれが変わったか信号からは分からないため、project+全カットの
+            // 安全側で扱う(絵コンテ/設定ボードは対象外なのでmarkAllDirtyは使わない)
+            markProjectDirty();
+            m_dirtyScope.allCuts = true;
             updateWindowTitle();
             updateCutBar();  // カット名/構成が変わりうるためカットバーも追従させる
         });
@@ -2687,6 +2769,9 @@ void MainWindow::openShootingWindow() {
     if (!m_shootingWindow) {
         m_shootingWindow = new ShootingWindow(this);  // QMainWindowなので独立ウィンドウになる
         connect(m_shootingWindow, &ShootingWindow::edited, this, [this] {
+            // シグナルにカット特定が無く、メインウィンドウのアクティブカットと撮影ウィンドウの
+            // 表示中カットが一致するとは限らないため安全側(全カット)で扱う
+            m_dirtyScope.allCuts = true;
             m_dirty = true;
             updateWindowTitle();
             if (m_editWindow) m_editWindow->refresh();  // 通しプレビューのキャッシュを捨てて反映する
@@ -2749,7 +2834,8 @@ void MainWindow::debugSetupEditDemo() {
     engine.continueStroke(bmp2, kCanvasWidth * 0.2f, kCanvasHeight * 0.8f, 1.0f);
     engine.endStroke();
 
-    m_dirty = true;
+    // 複数カットを作り直した上でストロークも描いており波及範囲が広いため安全側(全書き)に倒す
+    markAllDirty();
     updateWindowTitle();
     updateCutBar();
     setActiveCut(0);
@@ -2949,7 +3035,8 @@ int MainWindow::debugExportSequence(const QString& dir) {
 
 void MainWindow::checkAutosaveRecovery() {
     const QString path = autosavePath();
-    if (!QFileInfo::exists(path)) return;
+    // 存在判定はフォルダ自体ではなくproject.ppamの有無で行う(空フォルダ・不完全な残骸を誤検知しない)
+    if (!QFileInfo::exists(QDir(path).filePath(QStringLiteral("project.ppam")))) return;
 
     const auto reply =
         QMessageBox::question(this, tr("自動保存データの復元"), tr("前回のセッションの自動保存データが見つかりました。復元しますか？"),
@@ -2957,11 +3044,11 @@ void MainWindow::checkAutosaveRecovery() {
     if (reply == QMessageBox::Yes) {
         if (loadFromFile(path)) {
             m_currentFilePath.clear();  // 復元後は名前を付けて保存を促す
-            m_dirty = true;
+            markAllDirty();  // 復元直後は保存先が無いため、次の保存(名前を付けて保存)で全書きする
             updateWindowTitle();
         }
     } else {
-        QFile::remove(path);
+        QDir(path).removeRecursively();  // フォルダごと削除する
     }
 }
 
@@ -2984,6 +3071,6 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         // Discardの場合は変更を破棄してそのままクローズする
     }
 
-    QFile::remove(autosavePath());  // 正常終了なのでリカバリ用データは不要
+    QDir(autosavePath()).removeRecursively();  // 正常終了なのでリカバリ用データ(フォルダ)は不要
     event->accept();
 }

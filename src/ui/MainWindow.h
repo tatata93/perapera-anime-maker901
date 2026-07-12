@@ -4,7 +4,9 @@
 #include <QMainWindow>
 #include <QPointF>
 #include <QStringList>
+#include <cstdint>
 #include <memory>
+#include <set>
 
 #include "core/CommandStack.h"
 #include "core/Project.h"
@@ -33,6 +35,7 @@ class QToolButton;
 
 namespace core {
 struct RenderOptions;
+struct SaveOptions;
 }
 
 class MainWindow : public QMainWindow {
@@ -83,10 +86,11 @@ public:
     // 自動保存確認用: performAutosave()を即実行し、保存先パスを返す(失敗時は空文字)
     QString debugTriggerAutosave();
     // カラーパレット確認用: パレットに3色追加→保存→新規→読込を行い、往復が正しければ0、不一致なら1を返す
-    int debugPaletteRoundTrip(const QString& ppamPath);
+    // (projectPathは.ppprojフォルダのパス)
+    int debugPaletteRoundTrip(const QString& projectPath);
     // レイヤー種別確認用: レイヤーを2枚追加(計3枚)し種別を設定→保存→新規→読込を行い、
-    // 往復が正しければ0、不一致なら1を返す
-    int debugRoleRoundTrip(const QString& ppamPath);
+    // 往復が正しければ0、不一致なら1を返す(projectPathは.ppprojフォルダのパス)
+    int debugRoleRoundTrip(const QString& projectPath);
 
     // 書き出し確認用: タイムシートデモ(尺6・2コマ打ち)を組んでから全コマを連番PNGで書き出す。
     // 成功時0、失敗時1を返す
@@ -174,7 +178,8 @@ private:
     void setupPanels();
 
     void newDocument();
-    bool saveToFile(const QString& path);
+    // options=nullptr(既定)なら全ファイル書き出し(名前を付けて保存/新規保存先はこちら)
+    bool saveToFile(const QString& path, const core::SaveOptions* options = nullptr);
     bool loadFromFile(const QString& path);
     void saveAs();
     void save();
@@ -182,6 +187,15 @@ private:
     void updateWindowTitle();
     void undo();
     void redo();
+
+    // 保存スコープ(部分保存)の管理: markXxxDirty系ヘルパーで変更箇所を記録し、
+    // 上書き保存(save())時にどのファイルだけ書き直せばよいか判断する。
+    // 判断に迷う・複数箇所に波及しうる変更はmarkAllDirty()で安全側(全書き)に倒す
+    void markProjectDirty();     // 構造(カット追加/削除/並べ替え/改名/シーン)+パレット
+    void markStoryboardDirty();  // 絵コンテ
+    void markBoardsDirty();      // 設定ボード
+    void markCutDirty(core::Cut& cut);  // 個別カットの変更(idが未採番(0)ならallCuts扱いにする)
+    void markAllDirty();         // 安全側: 全ファイルを書き直す
 
     core::Cut& activeCut();
     core::Cel& activeCel();
@@ -323,7 +337,22 @@ private:
     ReferencePanel* m_referencePanel = nullptr;  // 設定ボード参照ドック
     int m_referenceBoardIndex = -1;  // 参照ドックで選択中の設定ボードインデックス(未選択-1)
     QString m_currentFilePath;
-    bool m_dirty = false;  // 未保存の変更があるか
+    bool m_dirty = false;  // 未保存の変更があるか(表示用。詳細な範囲はm_dirtyScopeが持つ)
+
+    // 保存スコープ: どのファイルを書き直す必要があるか(部分保存)。安全側に倒す(迷ったら全部)
+    struct DirtyScope {
+        bool project = false;     // project.ppam(構造+パレット)
+        bool storyboard = false;  // storyboard.ppam
+        bool boards = false;      // boards.ppam
+        bool allCuts = false;     // trueなら全カット書き出し(cutIdsは無視)
+        std::set<uint64_t> cutIds;  // allCuts=falseのとき書き出す個別カットのID
+
+        void clear() {
+            project = storyboard = boards = allCuts = false;
+            cutIds.clear();
+        }
+    };
+    DirtyScope m_dirtyScope;
 
     // 移動ツール(タップ/ペグ移動)のドラッグ状態: ドラッグ開始時点のアクティブセル位置(補間値)
     QPointF m_moveBase;

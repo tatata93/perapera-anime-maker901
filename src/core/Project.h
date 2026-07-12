@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -47,11 +48,17 @@ public:
     std::vector<SettingBoard>& settingBoards() { return m_settingBoards; }
     const std::vector<SettingBoard>& settingBoards() const { return m_settingBoards; }
 
+    // カットの永続ID採番カウンタ(既定1)。ProjectIO::saveがid==0のカットへ
+    // ここから採番し、採番後にこのカウンタを更新する
+    uint64_t nextCutId() const { return m_nextCutId; }
+    void setNextCutId(uint64_t id) { m_nextCutId = id; }
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Scene>> m_scenes;
     std::vector<Bitmap::Pixel> m_palette;
     std::vector<SettingBoard> m_settingBoards;
+    uint64_t m_nextCutId = 1;
 };
 
 }  // namespace core

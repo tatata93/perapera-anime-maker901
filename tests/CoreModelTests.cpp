@@ -290,7 +290,7 @@ TEST_CASE("Cel paper size round trips through ppam", "[core][paper][io]") {
     core::Cel& celDefault = cut.addCel("B");  // 既定(0=キャンバスサイズ)のセルも往復確認する
     celDefault.addLayer("L").addFrame();
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_paper_test.ppam";
+    const auto path = std::filesystem::temp_directory_path() / "ppam_paper_test.ppproj";
     std::string error;
     REQUIRE(core::ProjectIO::save(project, path, &error));
     const auto loaded = core::ProjectIO::load(path, &error);
@@ -304,7 +304,7 @@ TEST_CASE("Cel paper size round trips through ppam", "[core][paper][io]") {
     REQUIRE(loadedDefault.paperWidth() == 0);
     REQUIRE(loadedDefault.paperHeight() == 0);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(path);
 }
 
 TEST_CASE("Cut::moveCel reorders cels", "[core]") {
@@ -389,7 +389,7 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     cut.previz().camera.sensorWidthMm = 36.0f;
     cut.previz().camera.keys[3] = {{0, 1, 4}, {10, 0, 0}, 85.0f};
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_previz_test.ppam";
+    const auto path = std::filesystem::temp_directory_path() / "ppam_previz_test.ppproj";
     std::string error;
     REQUIRE(core::ProjectIO::save(project, path, &error));
     const auto loaded = core::ProjectIO::load(path, &error);
@@ -405,7 +405,7 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     REQUIRE(previz.camera.keys.size() == 1);
     REQUIRE(previz.camera.keys.at(3).rotationDeg.x == 10.0f);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(path);
 }
 
 TEST_CASE("Cut camera frame keys interpolate", "[core][camera]") {
@@ -451,7 +451,7 @@ TEST_CASE("Cut camera keys round trip through ppam", "[core][camera][io]") {
     cut.setCameraKey(0, {{100.0f, 200.0f}, 1.0});
     cut.setCameraKey(24, {{50.0f, 60.0f}, 0.5});
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_camera_test.ppam";
+    const auto path = std::filesystem::temp_directory_path() / "ppam_camera_test.ppproj";
     std::string error;
     REQUIRE(core::ProjectIO::save(project, path, &error));
     const auto loaded = core::ProjectIO::load(path, &error);
@@ -465,7 +465,7 @@ TEST_CASE("Cut camera keys round trip through ppam", "[core][camera][io]") {
     REQUIRE(loadedCut.cameraFrameAt(24)->center.y == 60.0f);
     REQUIRE(loadedCut.cameraFrameAt(24)->scale == 0.5);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(path);
 }
 
 TEST_CASE("Project supports multiple scenes and cuts", "[core]") {

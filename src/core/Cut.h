@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -44,6 +45,11 @@ enum class CutStatus { NotStarted, Layout, KeyAnimation, Inbetween, Finishing, S
 class Cut {
 public:
     explicit Cut(std::string name) : m_name(std::move(name)) {}
+
+    // 永続ID(既定0=未割当)。並べ替えや改名でファイル参照(cuts/cut_<id>.ppam)が
+    // 壊れないための恒久的な識別子。ProjectIO::save時に未割当なら採番される
+    uint64_t id() const { return m_id; }
+    void setId(uint64_t id) { m_id = id; }
 
     const std::string& name() const { return m_name; }
     void setName(std::string name) { m_name = std::move(name); }
@@ -99,6 +105,7 @@ public:
     const MultiplaneSetup& multiplane() const { return m_multiplane; }
 
 private:
+    uint64_t m_id = 0;  // 永続ID(既定0=未割当)
     std::string m_name;
     std::vector<std::unique_ptr<Cel>> m_cels;
     PrevizScene m_previz;

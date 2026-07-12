@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QDialog>
+#include <QDir>
 #include <QFile>
 #include <QImage>
 #include <QTimer>
@@ -244,17 +245,17 @@ int main(int argc, char* argv[]) {
         });
     }
 
-    // 動作確認用: --io-test <ppamパス> <出力PNG> でストローク描画→保存→新規→
+    // 動作確認用: --io-test <.ppprojフォルダパス> <出力PNG> でストローク描画→保存→新規→
     // 読み込み→画面保存を行い、UI経由の保存/読み込みを一括検証する
     const int ioIndex = args.indexOf("--io-test");
     if (ioIndex >= 0 && ioIndex + 2 < args.size()) {
-        const QString ppamPath = args.at(ioIndex + 1);
+        const QString projectPath = args.at(ioIndex + 1);
         const QString outputPath = args.at(ioIndex + 2);
-        QTimer::singleShot(500, &window, [&window, ppamPath, outputPath] {
+        QTimer::singleShot(500, &window, [&window, projectPath, outputPath] {
             window.canvas()->debugSimulateStroke();
-            const bool saved = window.debugSaveTo(ppamPath);
+            const bool saved = window.debugSaveTo(projectPath);
             window.debugNewDocument();  // 一度白紙に戻す
-            const bool loaded = window.debugLoadFrom(ppamPath);
+            const bool loaded = window.debugLoadFrom(projectPath);
             QTimer::singleShot(200, &window, [&window, outputPath, saved, loaded] {
                 window.canvas()->grabFramebuffer().save(outputPath);
                 QApplication::exit(saved && loaded ? 0 : 1);
@@ -269,13 +270,13 @@ int main(int argc, char* argv[]) {
         const QString outputPath = args.at(autosaveIndex + 1);
         QTimer::singleShot(500, &window, [&window, outputPath] {
             window.canvas()->debugSimulateStroke();
-            const QString autosavedPath = window.debugTriggerAutosave();
+            const QString autosavedPath = window.debugTriggerAutosave();  // .ppprojフォルダのパス
             window.debugNewDocument();  // 一度白紙に戻す
             const bool loaded = !autosavedPath.isEmpty() && window.debugLoadFrom(autosavedPath);
             QTimer::singleShot(200, &window, [&window, outputPath, autosavedPath, loaded] {
                 window.canvas()->grabFramebuffer().save(outputPath);
-                // テストで作った自動保存ファイルを残すと次回通常起動時に偽のリカバリ提案が出るため削除する
-                if (!autosavedPath.isEmpty()) QFile::remove(autosavedPath);
+                // テストで作った自動保存フォルダを残すと次回通常起動時に偽のリカバリ提案が出るため削除する
+                if (!autosavedPath.isEmpty()) QDir(autosavedPath).removeRecursively();
                 QApplication::exit((!autosavedPath.isEmpty() && loaded) ? 0 : 1);
             });
         });
@@ -353,24 +354,24 @@ int main(int argc, char* argv[]) {
         });
     }
 
-    // 動作確認用: --palette-test <ppamパス> でパレット追加→保存→新規→読込の往復を検証し、
+    // 動作確認用: --palette-test <.ppprojフォルダパス> でパレット追加→保存→新規→読込の往復を検証し、
     // 結果に応じた終了コードで終了する(0=成功, 1=不一致)
     const int paletteIndex = args.indexOf("--palette-test");
     if (paletteIndex >= 0 && paletteIndex + 1 < args.size()) {
-        const QString ppamPath = args.at(paletteIndex + 1);
-        QTimer::singleShot(500, &window, [&window, ppamPath] {
-            const int result = window.debugPaletteRoundTrip(ppamPath);
+        const QString projectPath = args.at(paletteIndex + 1);
+        QTimer::singleShot(500, &window, [&window, projectPath] {
+            const int result = window.debugPaletteRoundTrip(projectPath);
             QApplication::exit(result);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
         });
     }
 
-    // 動作確認用: --role-test <ppamパス> でレイヤー種別(色トレス線/作監修正)の設定→保存→新規→読込の
-    // 往復を検証し、結果に応じた終了コードで終了する(0=成功, 1=不一致)
+    // 動作確認用: --role-test <.ppprojフォルダパス> でレイヤー種別(色トレス線/作監修正)の設定→保存→
+    // 新規→読込の往復を検証し、結果に応じた終了コードで終了する(0=成功, 1=不一致)
     const int roleIndex = args.indexOf("--role-test");
     if (roleIndex >= 0 && roleIndex + 1 < args.size()) {
-        const QString ppamPath = args.at(roleIndex + 1);
-        QTimer::singleShot(500, &window, [&window, ppamPath] {
-            const int result = window.debugRoleRoundTrip(ppamPath);
+        const QString projectPath = args.at(roleIndex + 1);
+        QTimer::singleShot(500, &window, [&window, projectPath] {
+            const int result = window.debugRoleRoundTrip(projectPath);
             QApplication::exit(result);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
         });
     }

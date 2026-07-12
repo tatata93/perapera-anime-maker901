@@ -532,7 +532,7 @@ TEST_CASE("Cut effects round trip through ppam", "[core][io][effect]") {
     shake.params = {{"amplitudeX", 12.0}, {"amplitudeY", 3.0}, {"seed", 42.0}};
     cut.effects().push_back(shake);
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_test.ppam";
+    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_test.ppproj";
     std::string error;
     REQUIRE(core::ProjectIO::save(project, path, &error));
     const auto loaded = core::ProjectIO::load(path, &error);
@@ -553,21 +553,21 @@ TEST_CASE("Cut effects round trip through ppam", "[core][io][effect]") {
     REQUIRE(effects[1].params.at("amplitudeY") == 3.0);
     REQUIRE(effects[1].params.at("seed") == 42.0);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(path);
 }
 
 TEST_CASE("Cut with no effects omits the effects field and round trips as empty", "[core][io][effect]") {
     core::Project project("P");
     project.addScene("S").addCut("Cut A").addCel("A").addLayer("L").addFrame();
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_empty_test.ppam";
+    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_empty_test.ppproj";
     std::string error;
     REQUIRE(core::ProjectIO::save(project, path, &error));
     const auto loaded = core::ProjectIO::load(path, &error);
     REQUIRE(loaded != nullptr);
     REQUIRE(loaded->scene(0).cut(0).effects().empty());
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(path);
 }
 
 // --- プロパティ単位のキーフレーム曲線(AE式、コマ補間) ---
@@ -697,7 +697,7 @@ TEST_CASE("Effect mask round trips through ppam", "[core][io][effect][mask]") {
     blur.mask = std::move(mask);
     cut.effects().push_back(blur);
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_mask_test.ppam";
+    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_mask_test.ppproj";
     std::string error;
     REQUIRE(core::ProjectIO::save(project, path, &error));
     const auto loaded = core::ProjectIO::load(path, &error);
@@ -710,7 +710,7 @@ TEST_CASE("Effect mask round trips through ppam", "[core][io][effect][mask]") {
     REQUIRE(effect.mask.pixel(3, 2).a == 200);
     REQUIRE(effect.mask.pixel(0, 0).a == 0);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(path);
 }
 
 TEST_CASE("Effect paramCurves round trip through ppam", "[core][io][effect][keys]") {
@@ -726,7 +726,7 @@ TEST_CASE("Effect paramCurves round trip through ppam", "[core][io][effect][keys
     blur.setKey("radius", 23, 10.0);
     cut.effects().push_back(blur);
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_curves_test.ppam";
+    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_curves_test.ppproj";
     std::string error;
     REQUIRE(core::ProjectIO::save(project, path, &error));
     const auto loaded = core::ProjectIO::load(path, &error);
@@ -738,5 +738,5 @@ TEST_CASE("Effect paramCurves round trip through ppam", "[core][io][effect][keys
     REQUIRE(effect.paramCurves.at("radius").at(0) == 0.0);
     REQUIRE(effect.paramCurves.at("radius").at(23) == 10.0);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(path);
 }

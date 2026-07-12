@@ -6,7 +6,7 @@
 
 namespace {
 
-std::filesystem::path tempFile(const char* name) {
+std::filesystem::path tempFolder(const char* name) {
     return std::filesystem::temp_directory_path() / name;
 }
 
@@ -48,13 +48,13 @@ core::Project makeSampleProject() {
 }  // namespace
 
 TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
-    const auto path = tempFile("ppam_roundtrip_test.ppam");
+    const auto folder = tempFolder("ppam_roundtrip_test.ppproj");
     const core::Project original = makeSampleProject();
 
     std::string error;
-    REQUIRE(core::ProjectIO::save(original, path, &error));
+    REQUIRE(core::ProjectIO::save(original, folder, &error));
 
-    const auto loaded = core::ProjectIO::load(path, &error);
+    const auto loaded = core::ProjectIO::load(folder, &error);
     REQUIRE(loaded != nullptr);
 
     REQUIRE(loaded->name() == "Sample");
@@ -111,11 +111,11 @@ TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
     REQUIRE(loaded->palette()[1].b == 0);
     REQUIRE(loaded->palette()[1].a == 128);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(folder);
 }
 
-TEST_CASE("Multiplane setup round trips through ppam", "[core][io][multiplane]") {
-    const auto path = tempFile("ppam_multiplane_roundtrip_test.ppam");
+TEST_CASE("Multiplane setup round trips through ppproj", "[core][io][multiplane]") {
+    const auto folder = tempFolder("ppam_multiplane_roundtrip_test.ppproj");
 
     core::Project project("MP");
     core::Scene& scene = project.addScene("Scene 1");
@@ -145,8 +145,8 @@ TEST_CASE("Multiplane setup round trips through ppam", "[core][io][multiplane]")
     scene.addCut("Cut B");
 
     std::string error;
-    REQUIRE(core::ProjectIO::save(project, path, &error));
-    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+    const auto loaded = core::ProjectIO::load(folder, &error);
     REQUIRE(loaded != nullptr);
 
     const core::MultiplaneSetup& loadedMp = loaded->scene(0).cut(0).multiplane();
@@ -178,10 +178,10 @@ TEST_CASE("Multiplane setup round trips through ppam", "[core][io][multiplane]")
     REQUIRE(defaultMp.planes.empty());
     REQUIRE_FALSE(defaultMp.backlight.enabled);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(folder);
 }
 
-TEST_CASE("Storyboard panels round trip through ppam", "[core][io][storyboard]") {
+TEST_CASE("Storyboard panels round trip through ppproj", "[core][io][storyboard]") {
     core::Project project("P");
     core::Scene& scene = project.addScene("S");
     scene.addCut("C").addCel("A").addLayer("L").addFrame();
@@ -201,10 +201,10 @@ TEST_CASE("Storyboard panels round trip through ppam", "[core][io][storyboard]")
     panel2.durationFrames = 12;
     scene.storyboard().push_back(std::move(panel2));
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_storyboard_test.ppam";
+    const auto folder = tempFolder("ppam_storyboard_test.ppproj");
     std::string error;
-    REQUIRE(core::ProjectIO::save(project, path, &error));
-    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+    const auto loaded = core::ProjectIO::load(folder, &error);
     REQUIRE(loaded != nullptr);
 
     const auto& sb = loaded->scene(0).storyboard();
@@ -219,10 +219,10 @@ TEST_CASE("Storyboard panels round trip through ppam", "[core][io][storyboard]")
     REQUIRE(sb[1].durationFrames == 12);
     REQUIRE(sb[1].drawing.isEmpty());
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(folder);
 }
 
-TEST_CASE("Setting boards round trip through ppam", "[core][io][settingboard]") {
+TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]") {
     core::Project project("P");
     project.addScene("S").addCut("C").addCel("A").addLayer("L").addFrame();
 
@@ -247,10 +247,10 @@ TEST_CASE("Setting boards round trip through ppam", "[core][io][settingboard]") 
     board2.name = "美術: 教室";
     project.settingBoards().push_back(std::move(board2));
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_settingboard_test.ppam";
+    const auto folder = tempFolder("ppam_settingboard_test.ppproj");
     std::string error;
-    REQUIRE(core::ProjectIO::save(project, path, &error));
-    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+    const auto loaded = core::ProjectIO::load(folder, &error);
     REQUIRE(loaded != nullptr);
 
     const auto& boards = loaded->settingBoards();
@@ -277,10 +277,10 @@ TEST_CASE("Setting boards round trip through ppam", "[core][io][settingboard]") 
     REQUIRE(boards[0].colorSpecs[1].color.b == 150);
     REQUIRE(boards[1].colorSpecs.empty());
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(folder);
 }
 
-TEST_CASE("Cut status round trips through ppam", "[core][io][edit]") {
+TEST_CASE("Cut status round trips through ppproj", "[core][io][edit]") {
     core::Project project("P");
     core::Scene& scene = project.addScene("S");
     core::Cut& cutA = scene.addCut("Cut A");
@@ -290,58 +290,212 @@ TEST_CASE("Cut status round trips through ppam", "[core][io][edit]") {
     core::Cut& cutB = scene.addCut("Cut B");  // 未設定(既定のNotStartedのまま)のカットも往復確認する
     cutB.addCel("A").addLayer("L").addFrame();
 
-    const auto path = std::filesystem::temp_directory_path() / "ppam_cutstatus_test.ppam";
+    const auto folder = tempFolder("ppam_cutstatus_test.ppproj");
     std::string error;
-    REQUIRE(core::ProjectIO::save(project, path, &error));
-    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+    const auto loaded = core::ProjectIO::load(folder, &error);
     REQUIRE(loaded != nullptr);
 
     REQUIRE(loaded->scene(0).cut(0).status() == core::CutStatus::Finishing);
     REQUIRE(loaded->scene(0).cut(1).status() == core::CutStatus::NotStarted);
 
-    std::filesystem::remove(path);
+    std::filesystem::remove_all(folder);
+}
+
+// --- 新形式(プロジェクトフォルダ)特有の挙動 ---
+
+TEST_CASE("ProjectIO save creates the expected folder layout", "[core][io][folder]") {
+    const auto folder = tempFolder("ppam_layout_test.ppproj");
+    std::filesystem::remove_all(folder);
+
+    core::Project project("Layout");
+    core::Scene& scene = project.addScene("S");
+    scene.addCut("Cut A").addCel("A").addLayer("L").addFrame();
+
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+
+    REQUIRE(std::filesystem::exists(folder / "project.ppam"));
+    REQUIRE(std::filesystem::exists(folder / "storyboard.ppam"));
+    REQUIRE(std::filesystem::exists(folder / "boards.ppam"));
+    REQUIRE(std::filesystem::exists(folder / "cuts"));
+    REQUIRE(std::filesystem::exists(folder / "cuts" / "cut_1.ppam"));
+
+    std::filesystem::remove_all(folder);
+}
+
+TEST_CASE("Cut IDs persist across save/load and orphan cut files are cleaned up", "[core][io][cutid]") {
+    const auto folder = tempFolder("ppam_cutid_test.ppproj");
+    std::filesystem::remove_all(folder);
+
+    core::Project project("Ids");
+    core::Scene& scene = project.addScene("S");
+    scene.addCut("Cut A").addCel("A").addLayer("L").addFrame();
+    scene.addCut("Cut B").addCel("A").addLayer("L").addFrame();
+    scene.addCut("Cut C").addCel("A").addLayer("L").addFrame();
+
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+
+    // 採番されたIDが保存前後でわかるよう控えておく
+    const uint64_t idA = project.scene(0).cut(0).id();
+    const uint64_t idB = project.scene(0).cut(1).id();
+    const uint64_t idC = project.scene(0).cut(2).id();
+    REQUIRE(idA != 0);
+    REQUIRE(idB != 0);
+    REQUIRE(idC != 0);
+    REQUIRE(idA != idB);
+    REQUIRE(idB != idC);
+
+    auto loaded = core::ProjectIO::load(folder, &error);
+    REQUIRE(loaded != nullptr);
+    REQUIRE(loaded->scene(0).cut(0).id() == idA);
+    REQUIRE(loaded->scene(0).cut(1).id() == idB);
+    REQUIRE(loaded->scene(0).cut(2).id() == idC);
+
+    // Cut Bを削除して再保存すると、そのcut_<id>.ppamが孤児として消える
+    loaded->scene(0).removeCut(1);
+    REQUIRE(core::ProjectIO::save(*loaded, folder, &error));
+
+    REQUIRE_FALSE(std::filesystem::exists(folder / "cuts" / ("cut_" + std::to_string(idB) + ".ppam")));
+    REQUIRE(std::filesystem::exists(folder / "cuts" / ("cut_" + std::to_string(idA) + ".ppam")));
+    REQUIRE(std::filesystem::exists(folder / "cuts" / ("cut_" + std::to_string(idC) + ".ppam")));
+
+    std::filesystem::remove_all(folder);
+}
+
+TEST_CASE("Partial save only rewrites the requested cut files", "[core][io][partial]") {
+    const auto folder = tempFolder("ppam_partial_test.ppproj");
+    std::filesystem::remove_all(folder);
+
+    core::Project project("Partial");
+    core::Scene& scene = project.addScene("S");
+    core::Cut& cut1 = scene.addCut("Cut 1");
+    cut1.addCel("A").addLayer("L").addFrame().bitmap() = core::Bitmap(4, 4);
+    core::Cut& cut2 = scene.addCut("Cut 2");
+    cut2.addCel("A").addLayer("L").addFrame().bitmap() = core::Bitmap(4, 4);
+
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, folder, &error));  // 全保存(ID採番も行われる)
+
+    const uint64_t id1 = project.scene(0).cut(0).id();
+
+    // カット1のピクセルを1個だけ変更する
+    project.scene(0).cut(0).cel(0).layer(0).frame(0).bitmap().setPixel(0, 0, {9, 9, 9, 255});
+
+    core::SaveOptions options;
+    options.writeProject = false;
+    options.writeStoryboard = false;
+    options.writeBoards = false;
+    options.writeAllCuts = false;
+    options.cutIds = {id1};
+    REQUIRE(core::ProjectIO::save(project, folder, &error, &options));
+
+    const auto loaded = core::ProjectIO::load(folder, &error);
+    REQUIRE(loaded != nullptr);
+    REQUIRE(loaded->sceneCount() == 1);
+    REQUIRE(loaded->scene(0).cutCount() == 2);
+
+    const auto changedPixel = loaded->scene(0).cut(0).cel(0).layer(0).frame(0).bitmap().pixel(0, 0);
+    REQUIRE(changedPixel.r == 9);
+    REQUIRE(changedPixel.g == 9);
+    REQUIRE(changedPixel.b == 9);
+
+    // カット2は変更していないので元のまま(空でない4x4の透明ビットマップ)
+    REQUIRE(loaded->scene(0).cut(1).name() == "Cut 2");
+    REQUIRE_FALSE(loaded->scene(0).cut(1).cel(0).layer(0).frame(0).bitmap().isEmpty());
+
+    std::filesystem::remove_all(folder);
+}
+
+TEST_CASE("ProjectIO load accepts both the folder path and the project.ppam path", "[core][io][folder]") {
+    const auto folder = tempFolder("ppam_loadpath_test.ppproj");
+    std::filesystem::remove_all(folder);
+
+    core::Project project("LoadPath");
+    project.addScene("S").addCut("C").addCel("A").addLayer("L").addFrame();
+
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+
+    const auto loadedByFolder = core::ProjectIO::load(folder, &error);
+    REQUIRE(loadedByFolder != nullptr);
+
+    const auto loadedByFile = core::ProjectIO::load(folder / "project.ppam", &error);
+    REQUIRE(loadedByFile != nullptr);
+    REQUIRE(loadedByFile->name() == "LoadPath");
+
+    std::filesystem::remove_all(folder);
+}
+
+TEST_CASE("ProjectIO load fails with a filename-specific error when a cut file is missing", "[core][io][error]") {
+    const auto folder = tempFolder("ppam_missingcut_test.ppproj");
+    std::filesystem::remove_all(folder);
+
+    core::Project project("MissingCut");
+    project.addScene("S").addCut("C").addCel("A").addLayer("L").addFrame();
+
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+
+    const uint64_t id = project.scene(0).cut(0).id();
+    std::filesystem::remove(folder / "cuts" / ("cut_" + std::to_string(id) + ".ppam"));
+
+    const auto loaded = core::ProjectIO::load(folder, &error);
+    REQUIRE(loaded == nullptr);
+    REQUIRE_FALSE(error.empty());
+    REQUIRE(error.find("cut_" + std::to_string(id) + ".ppam") != std::string::npos);
+
+    std::filesystem::remove_all(folder);
 }
 
 TEST_CASE("ProjectIO load reports errors for invalid files", "[core][io]") {
     std::string error;
 
-    SECTION("nonexistent file") {
-        REQUIRE(core::ProjectIO::load(tempFile("ppam_missing_xyz.ppam"), &error) == nullptr);
+    SECTION("nonexistent folder") {
+        REQUIRE(core::ProjectIO::load(tempFolder("ppam_missing_xyz.ppproj"), &error) == nullptr);
         REQUIRE_FALSE(error.empty());
     }
 
     SECTION("wrong magic") {
-        const auto path = tempFile("ppam_badmagic.ppam");
-        std::ofstream(path, std::ios::binary) << "NOPE0000000000000000";
-        REQUIRE(core::ProjectIO::load(path, &error) == nullptr);
+        const auto folder = tempFolder("ppam_badmagic.ppproj");
+        std::filesystem::remove_all(folder);
+        std::filesystem::create_directories(folder);
+        std::ofstream(folder / "project.ppam", std::ios::binary) << "NOPE0000000000000000";
+        REQUIRE(core::ProjectIO::load(folder, &error) == nullptr);
         REQUIRE(error.find("プロジェクトファイルではありません") != std::string::npos);
-        std::filesystem::remove(path);
+        std::filesystem::remove_all(folder);
     }
 
     SECTION("future container version") {
-        const auto path = tempFile("ppam_future.ppam");
+        const auto folder = tempFolder("ppam_future.ppproj");
+        std::filesystem::remove_all(folder);
+        std::filesystem::create_directories(folder);
         {
-            std::ofstream out(path, std::ios::binary);
+            std::ofstream out(folder / "project.ppam", std::ios::binary);
             out.write("PPAM", 4);
             const uint32_t version = 999;
             const uint64_t jsonSize = 0;
             out.write(reinterpret_cast<const char*>(&version), 4);
             out.write(reinterpret_cast<const char*>(&jsonSize), 8);
         }
-        REQUIRE(core::ProjectIO::load(path, &error) == nullptr);
+        REQUIRE(core::ProjectIO::load(folder, &error) == nullptr);
         REQUIRE(error.find("新しいバージョン") != std::string::npos);
-        std::filesystem::remove(path);
+        std::filesystem::remove_all(folder);
     }
 
-    SECTION("truncated file") {
-        const auto path = tempFile("ppam_truncated.ppam");
+    SECTION("truncated project.ppam") {
+        const auto folder = tempFolder("ppam_truncated.ppproj");
+        std::filesystem::remove_all(folder);
         core::Project project = makeSampleProject();
-        REQUIRE(core::ProjectIO::save(project, path, &error));
-        // 末尾40%を切り落とす
-        const auto fullSize = std::filesystem::file_size(path);
-        std::filesystem::resize_file(path, fullSize * 6 / 10);
-        REQUIRE(core::ProjectIO::load(path, &error) == nullptr);
+        REQUIRE(core::ProjectIO::save(project, folder, &error));
+
+        const auto projectPath = folder / "project.ppam";
+        // project.ppam本体(ヘッダ+JSON)の末尾40%を切り落とす
+        const auto fullSize = std::filesystem::file_size(projectPath);
+        std::filesystem::resize_file(projectPath, fullSize * 6 / 10);
+        REQUIRE(core::ProjectIO::load(folder, &error) == nullptr);
         REQUIRE_FALSE(error.empty());
-        std::filesystem::remove(path);
+        std::filesystem::remove_all(folder);
     }
 }
