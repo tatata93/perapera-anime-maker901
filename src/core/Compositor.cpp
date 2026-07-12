@@ -11,6 +11,44 @@ namespace core {
 
 namespace {
 
+// マスク付きでエフェクトを適用する。effect.maskが空なら通常適用。
+// 非空なら画面(キャンバス)座標のマスクのアルファを適用強度として、適用前/適用後を
+// ピクセルごとにブレンドする(a=0は元のまま、a=255は完全適用)。
+// imageのローカル座標(0,0)は画面座標(offsetX, offsetY)に対応する(全体エフェクトは0,0、
+// セル対象はそのセルの画面配置オフセット)
+void applyEffectWithMask(Bitmap& image, const Effect& effect, size_t frame, int offsetX, int offsetY) {
+    if (effect.mask.isEmpty()) {
+        applyEffect(image, effect, frame);
+        return;
+    }
+    const Bitmap before = image;  // 適用前を保存
+    applyEffect(image, effect, frame);
+
+    // エフェクトはサイズを変えない(ブラー/グロー/パラ/シェイクとも同寸)が念のため小さい方に合わせる
+    const int w = std::min(image.width(), before.width());
+    const int h = std::min(image.height(), before.height());
+    const auto blend = [](uint8_t b, uint8_t a, float t) {
+        return static_cast<uint8_t>(std::lround(b + (a - b) * t));
+    };
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const int mx = x + offsetX;
+            const int my = y + offsetY;
+            uint8_t maskA = 0;
+            if (mx >= 0 && my >= 0 && mx < effect.mask.width() && my < effect.mask.height()) {
+                maskA = effect.mask.pixel(mx, my).a;
+            }
+            if (maskA == 255) continue;  // 完全適用: image(適用後)のまま
+            const float t = maskA / 255.0f;
+            const Bitmap::Pixel bp = before.pixel(x, y);
+            const Bitmap::Pixel ap = image.pixel(x, y);
+            image.setPixel(x, y,
+                           {blend(bp.r, ap.r, t), blend(bp.g, ap.g, t), blend(bp.b, ap.b, t),
+                            blend(bp.a, ap.a, t)});
+        }
+    }
+}
+
 // srcをdst(不透明前提)へ、(offsetX, offsetY)だけずらしてsrc-over合成する。
 // はみ出す部分はクリップされる(タップ/ペグ移動・引きセル対応)
 void blendOver(Bitmap& dst, const Bitmap& src, int offsetX, int offsetY) {
@@ -139,13 +177,17 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
         Bitmap celImage = buildCelComposite(cel, drawing, options);
         if (celImage.isEmpty()) continue;
 
-        // このセルをtargetCelとする有効な撮影エフェクトをスタック順で適用する(従来経路と同じ規則)
+        // このセルをtargetCelとする有効な撮影エフェクトをスタック順で適用する(従来経路と同じ規則)。
+        // マスクはセルの画面配置オフセット(タップ移動)を考慮して参照する
+        const Vec2 position = cel.positionAt(frame);
+        const int celOffsetX = static_cast<int>(std::lround(position.x));
+        const int celOffsetY = static_cast<int>(std::lround(position.y));
         for (const Effect& effect : cut.effects()) {
-            if (effect.enabled && effect.targetCel == p.celIndex) applyEffect(celImage, effect, frame);
+            if (effect.enabled && effect.targetCel == p.celIndex)
+                applyEffectWithMask(celImage, effect, frame, celOffsetX, celOffsetY);
         }
 
         // タップ/ペグ移動(px)を平面内オフセット(mm)へ変換する
-        const Vec2 position = cel.positionAt(frame);
         const double mmPerPx = p.widthMm / celImage.width();
 
         composites.push_back(std::move(celImage));
@@ -164,7 +206,7 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
 
     // 全平面合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
     for (const Effect& effect : cut.effects()) {
-        if (effect.enabled && effect.targetCel == -1) applyEffect(out, effect, frame);
+        if (effect.enabled && effect.targetCel == -1) applyEffectWithMask(out, effect, frame, 0, 0);
     }
 
     if (const auto cam = cut.cameraFrameAt(frame)) {
@@ -221,7 +263,9 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
             // そのコピーへエフェクトを適用してから画面へ合成する(他セル・紙には影響しない)
             Bitmap celImage = buildCelComposite(cel, drawing, options);
             if (!celImage.isEmpty()) {
-                for (const Effect* effect : celEffects) applyEffect(celImage, *effect, frame);
+                // マスクはセルの画面配置オフセット(タップ移動)を考慮して参照する
+                for (const Effect* effect : celEffects)
+                    applyEffectWithMask(celImage, *effect, frame, offsetX, offsetY);
                 blendOver(out, celImage, offsetX, offsetY);
             }
         }
@@ -229,7 +273,7 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
 
     // 全セル合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
     for (const Effect& effect : cut.effects()) {
-        if (effect.enabled && effect.targetCel == -1) applyEffect(out, effect, frame);
+        if (effect.enabled && effect.targetCel == -1) applyEffectWithMask(out, effect, frame, 0, 0);
     }
 
     // カメラフレーム(画面に写る範囲)が指定されていればクロップ+リサンプルする。

@@ -418,6 +418,68 @@ TEST_CASE("applyEffect uses interpolated keyframe values (Blur radius 0 -> 4)", 
     REQUIRE(at10.pixel(21, 20).a > 0);
 }
 
+TEST_CASE("Effect mask limits a whole-screen effect to the painted region", "[core][effect][mask]") {
+    // 全面に均一の色を塗ったセルを1枚だけ持つカット。左半分だけマスクした黒パラ(上濃度も
+    // 一定になるよう top=bottom=0.5)をかけると、左半分だけ暗くなり右半分は元のままになる
+    core::Cut cut("C");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L");
+    core::Bitmap art(40, 20);
+    art.fill({200, 200, 200, 255});  // 不透明グレー(パラは透明部分に効かないため不透明にする)
+    layer.addFrame().bitmap() = std::move(art);
+    cel.setExposure(0, 0);
+    cut.setFrameCount(1);
+
+    core::Effect para;
+    para.type = core::EffectType::Para;
+    para.targetCel = -1;  // 全体
+    para.params = {{"top", 0.5}, {"bottom", 0.5}, {"r", 0.0}, {"g", 0.0}, {"b", 0.0}};  // 一定濃度の黒
+    // マスク: 画面(40x20)の左半分だけ不透明
+    core::Bitmap mask(40, 20);
+    mask.fill({0, 0, 0, 0});
+    for (int y = 0; y < 20; ++y)
+        for (int x = 0; x < 20; ++x) mask.setPixel(x, y, {255, 255, 255, 255});
+    para.mask = std::move(mask);
+    cut.effects().push_back(std::move(para));
+
+    const core::Bitmap out = core::renderCutFrame(cut, 0, 40, 20);
+    // 左半分(マスク内): 200 → 100付近(黒と0.5でブレンド)
+    REQUIRE(out.pixel(5, 10).r < 150);
+    // 右半分(マスク外): 元の200のまま
+    REQUIRE(out.pixel(35, 10).r == 200);
+}
+
+TEST_CASE("Effect mask round trips through ppam", "[core][io][effect][mask]") {
+    core::Project project("P");
+    core::Scene& scene = project.addScene("S");
+    core::Cut& cut = scene.addCut("Cut A");
+    cut.addCel("A").addLayer("L").addFrame();
+
+    core::Effect blur;
+    blur.type = core::EffectType::Blur;
+    blur.params = {{"radius", 4.0}};
+    core::Bitmap mask(8, 6);
+    mask.fill({0, 0, 0, 0});
+    mask.setPixel(3, 2, {255, 255, 255, 200});
+    blur.mask = std::move(mask);
+    cut.effects().push_back(blur);
+
+    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_mask_test.ppam";
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const auto& effect = loaded->scene(0).cut(0).effects().at(0);
+    REQUIRE_FALSE(effect.mask.isEmpty());
+    REQUIRE(effect.mask.width() == 8);
+    REQUIRE(effect.mask.height() == 6);
+    REQUIRE(effect.mask.pixel(3, 2).a == 200);
+    REQUIRE(effect.mask.pixel(0, 0).a == 0);
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Effect paramCurves round trip through ppam", "[core][io][effect][keys]") {
     core::Project project("P");
     core::Scene& scene = project.addScene("S");

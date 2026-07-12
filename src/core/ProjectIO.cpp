@@ -200,6 +200,22 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                         }
                         if (!jCurves.empty()) jEffect["paramCurves"] = std::move(jCurves);
                     }
+                    // 適用範囲マスク(画面座標のグレースケール)。空なら省略。絵と同じblob方式で圧縮する
+                    if (!effect.mask.isEmpty()) {
+                        uLongf compSize = compressBound(static_cast<uLong>(effect.mask.byteSize()));
+                        std::vector<unsigned char> compressed(compSize);
+                        if (compress2(compressed.data(), &compSize, effect.mask.data(),
+                                      static_cast<uLong>(effect.mask.byteSize()), Z_DEFAULT_COMPRESSION) != Z_OK) {
+                            setError(errorOut, "ピクセルデータの圧縮に失敗しました");
+                            return false;
+                        }
+                        jEffect["mask"] = {{"width", effect.mask.width()},
+                                           {"height", effect.mask.height()},
+                                           {"blobOffset", blobs.size()},
+                                           {"blobSize", static_cast<uint64_t>(compSize)},
+                                           {"rawSize", static_cast<uint64_t>(effect.mask.byteSize())}};
+                        blobs.insert(blobs.end(), compressed.begin(), compressed.begin() + compSize);
+                    }
                     jEffects.push_back(std::move(jEffect));
                 }
                 jCut["effects"] = std::move(jEffects);
@@ -509,6 +525,30 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                                     effect.paramCurves[it.key()][jKey.at("frame").get<size_t>()] =
                                         jKey.at("value").get<double>();
                                 }
+                            }
+                        }
+                        // 適用範囲マスク(任意、欠落時は空のまま)。絵と同じblob方式で展開する
+                        if (jEffect.contains("mask")) {
+                            const json& jMask = jEffect.at("mask");
+                            const int w = jMask.value("width", 0);
+                            const int h = jMask.value("height", 0);
+                            if (w > 0 && h > 0 && jMask.contains("blobOffset")) {
+                                const uint64_t offset = jMask.at("blobOffset").get<uint64_t>();
+                                const uint64_t blobSize = jMask.at("blobSize").get<uint64_t>();
+                                const uint64_t rawSize = jMask.at("rawSize").get<uint64_t>();
+                                Bitmap bitmap(w, h);
+                                if (rawSize != bitmap.byteSize() || offset + blobSize > blobTotal) {
+                                    setError(errorOut, "ファイルが壊れています(ピクセルデータ不整合)");
+                                    return nullptr;
+                                }
+                                uLongf destLen = static_cast<uLongf>(rawSize);
+                                if (uncompress(bitmap.data(), &destLen, blobBase + offset,
+                                               static_cast<uLong>(blobSize)) != Z_OK ||
+                                    destLen != rawSize) {
+                                    setError(errorOut, "ファイルが壊れています(展開に失敗)");
+                                    return nullptr;
+                                }
+                                effect.mask = std::move(bitmap);
                             }
                         }
                         cut.effects().push_back(std::move(effect));
