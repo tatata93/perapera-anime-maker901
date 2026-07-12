@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <cstring>
 
 #include "core/Compositor.h"
 
@@ -289,4 +290,81 @@ TEST_CASE("renderCutFrame blends semi-transparent pixels over paper", "[core][co
     REQUIRE(out.pixel(4, 4).r > 100);
     REQUIRE(out.pixel(4, 4).r < 155);
     REQUIRE(out.pixel(4, 4).a == 255);
+}
+
+// --- プロキシ縮小レンダリング(プレビュー高速化) ---
+
+TEST_CASE("renderCutFrame proxyScale=0.5 halves output and keeps marker position", "[core][compositor][proxy]") {
+    core::Cut cut("C");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L");
+    core::Bitmap art(40, 20);
+    art.fill({0, 0, 0, 0});
+    // 目印: (30,10)を中心に3x3の赤ブロック(縮小後も確実に残る大きさ)
+    for (int y = 9; y <= 11; ++y)
+        for (int x = 29; x <= 31; ++x) art.setPixel(x, y, {200, 0, 0, 255});
+    layer.addFrame().bitmap() = std::move(art);
+    cel.setExposure(0, 0);
+    cut.setFrameCount(1);
+
+    core::RenderOptions options;
+    options.proxyScale = 0.5;
+    const core::Bitmap out = core::renderCutFrame(cut, 0, 40, 20, options);
+
+    REQUIRE(out.width() == 20);
+    REQUIRE(out.height() == 10);
+    // 目印はフル解像度(30,10)→プロキシ(15,5)付近に写る(赤み=紙の白より赤が強い)
+    const core::Bitmap::Pixel marker = out.pixel(15, 5);
+    REQUIRE(marker.r > 150);
+    REQUIRE(marker.g < 100);
+    // 目印から離れた場所は紙(白)のまま
+    REQUIRE(out.pixel(2, 2).r == 255);
+    REQUIRE(out.pixel(2, 2).g == 255);
+}
+
+TEST_CASE("renderCutFrame proxyScale=1 is byte-identical to default", "[core][compositor][proxy]") {
+    core::Cut cut("C");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L");
+    core::Bitmap art(16, 16);
+    art.fill({0, 0, 0, 0});
+    art.setPixel(8, 8, {10, 200, 30, 255});
+    layer.addFrame().bitmap() = std::move(art);
+    cel.setExposure(0, 0);
+    cut.setFrameCount(1);
+
+    core::Effect blur;
+    blur.type = core::EffectType::Blur;
+    blur.params = {{"radius", 2.0}};
+    cut.effects().push_back(blur);
+
+    core::RenderOptions defaults;
+    core::RenderOptions explicitOne;
+    explicitOne.proxyScale = 1.0;
+    const core::Bitmap a = core::renderCutFrame(cut, 0, 16, 16, defaults);
+    const core::Bitmap b = core::renderCutFrame(cut, 0, 16, 16, explicitOne);
+    REQUIRE(a.byteSize() == b.byteSize());
+    REQUIRE(std::memcmp(a.data(), b.data(), a.byteSize()) == 0);
+}
+
+TEST_CASE("renderCutFrame classic path renders at proxy resolution", "[core][compositor][proxy][multiplane]") {
+    core::Cut cut("C");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L");
+    core::Bitmap art(40, 40);
+    art.fill({120, 50, 50, 255});
+    layer.addFrame().bitmap() = std::move(art);
+    cel.setExposure(0, 0);
+    cut.setFrameCount(1);
+
+    core::MultiplaneSetup& mp = cut.multiplane();
+    mp.enabled = true;
+    mp.samplesPerPixel = 1;
+    mp.planes.push_back({0, 500.0, 400.0});
+
+    core::RenderOptions options;
+    options.proxyScale = 0.5;
+    const core::Bitmap out = core::renderCutFrame(cut, 0, 80, 40, options);
+    REQUIRE(out.width() == 40);
+    REQUIRE(out.height() == 20);
 }

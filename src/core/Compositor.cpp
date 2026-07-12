@@ -13,30 +13,85 @@ namespace core {
 
 namespace {
 
+// srcをscale倍(0<scale<1)に縮小したビットマップを返す(プレミルチプライドのバイリニア縮小)。
+// プロキシ縮小レンダリング用。scale>=0.999ならコピーを避けられないためsrcのコピーを返す
+Bitmap downsampleBitmap(const Bitmap& src, double scale) {
+    if (src.isEmpty() || scale >= 0.999) return src;
+    const int outW = std::max(1, static_cast<int>(std::lround(src.width() * scale)));
+    const int outH = std::max(1, static_cast<int>(std::lround(src.height() * scale)));
+    Bitmap out(outW, outH);
+
+    parallelForRows(0, outH, [&](int rowBegin, int rowEnd) {
+        for (int oy = rowBegin; oy < rowEnd; ++oy) {
+            for (int ox = 0; ox < outW; ++ox) {
+                // 出力ピクセル中心 → 元画像座標(バイリニア4タップ、端はクランプ)
+                const double sx = (ox + 0.5) / scale - 0.5;
+                const double sy = (oy + 0.5) / scale - 0.5;
+                const int x0 = static_cast<int>(std::floor(sx));
+                const int y0 = static_cast<int>(std::floor(sy));
+                const double fx = sx - x0;
+                const double fy = sy - y0;
+
+                double r = 0.0, g = 0.0, b = 0.0, a = 0.0;
+                for (int k = 0; k < 4; ++k) {
+                    const int tx = std::clamp(x0 + (k & 1), 0, src.width() - 1);
+                    const int ty = std::clamp(y0 + (k >> 1), 0, src.height() - 1);
+                    const double wx = (k & 1) ? fx : 1.0 - fx;
+                    const double wy = (k >> 1) ? fy : 1.0 - fy;
+                    const double w = wx * wy;
+                    const Bitmap::Pixel p = src.pixel(tx, ty);
+                    const double pa = p.a / 255.0;
+                    // 透明部分の色(通常0)に引っ張られないよう、色はアルファを掛けて平均する
+                    r += w * p.r * pa;
+                    g += w * p.g * pa;
+                    b += w * p.b * pa;
+                    a += w * p.a;
+                }
+                Bitmap::Pixel result{0, 0, 0, static_cast<uint8_t>(std::lround(std::clamp(a, 0.0, 255.0)))};
+                if (result.a > 0) {
+                    const double invA = 255.0 / a;
+                    result.r = static_cast<uint8_t>(std::lround(std::clamp(r * invA, 0.0, 255.0)));
+                    result.g = static_cast<uint8_t>(std::lround(std::clamp(g * invA, 0.0, 255.0)));
+                    result.b = static_cast<uint8_t>(std::lround(std::clamp(b * invA, 0.0, 255.0)));
+                }
+                out.setPixel(ox, oy, result);
+            }
+        }
+    });
+    return out;
+}
+
 // マスク付きでエフェクトを適用する。effect.maskが空なら通常適用。
 // 非空なら画面(キャンバス)座標のマスクのアルファを適用強度として、適用前/適用後を
 // ピクセルごとにブレンドする(a=0は元のまま、a=255は完全適用)。
-// imageのローカル座標(0,0)は画面座標(offsetX, offsetY)に対応する(全体エフェクトは0,0、
-// セル対象はそのセルの画面配置オフセット)
-void applyEffectWithMask(Bitmap& image, const Effect& effect, size_t frame, int offsetX, int offsetY) {
+// imageのローカル座標(0,0)は画面のフル解像度座標(offsetX, offsetY)に対応する(全体エフェクトは
+// 0,0、セル対象はそのセルの画面配置オフセット)。
+// scaleはプロキシ縮小率(imageが縮小されている場合、マスクはフル解像度のまま参照し、
+// エフェクトのpxパラメータはapplyEffect側でスケールされる)
+void applyEffectWithMask(Bitmap& image, const Effect& effect, size_t frame, int offsetX, int offsetY,
+                          double scale = 1.0) {
     if (effect.mask.isEmpty()) {
-        applyEffect(image, effect, frame);
+        applyEffect(image, effect, frame, scale);
         return;
     }
     const Bitmap before = image;  // 適用前を保存
-    applyEffect(image, effect, frame);
+    applyEffect(image, effect, frame, scale);
 
     // エフェクトはサイズを変えない(ブラー/グロー/パラ/シェイクとも同寸)が念のため小さい方に合わせる
     const int w = std::min(image.width(), before.width());
     const int h = std::min(image.height(), before.height());
+    const bool proxied = scale > 0.0 && scale < 0.999;
     const auto blend = [](uint8_t b, uint8_t a, float t) {
         return static_cast<uint8_t>(std::lround(b + (a - b) * t));
     };
     parallelForRows(0, h, [&](int rowBegin, int rowEnd) {
         for (int y = rowBegin; y < rowEnd; ++y) {
             for (int x = 0; x < w; ++x) {
-                const int mx = x + offsetX;
-                const int my = y + offsetY;
+                // マスクはフル解像度の画面座標のまま参照する(プロキシ時は座標を逆スケール)
+                const int lx = proxied ? static_cast<int>(std::lround((x + 0.5) / scale - 0.5)) : x;
+                const int ly = proxied ? static_cast<int>(std::lround((y + 0.5) / scale - 0.5)) : y;
+                const int mx = lx + offsetX;
+                const int my = ly + offsetY;
                 uint8_t maskA = 0;
                 if (mx >= 0 && my >= 0 && mx < effect.mask.width() && my < effect.mask.height()) {
                     maskA = effect.mask.pixel(mx, my).a;
@@ -254,9 +309,13 @@ Bitmap buildCelComposite(const Cel& cel, int drawing, const RenderOptions& optio
 
 // クラシック撮影(マルチプレーン撮影台)経路。割付(planes)にあるセルごとに
 // セル単独の透明合成ビットマップを作り、マルチプレーンのレイトレースで撮影する。
-// その後は従来経路と同じく全体エフェクト→カメラフレームクロップを適用する
-Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height, const RenderOptions& options) {
+// その後は従来経路と同じく全体エフェクト→カメラフレームクロップを適用する。
+// width/heightは出力解像度(プロキシ時は縮小済み)、sはプロキシ縮小率(1.0=フル)。
+// レイトレーサは解像度非依存(物理mm指定)なので、出力解像度を下げるだけで正しく縮小になる
+Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height, const RenderOptions& options,
+                              double s) {
     const MultiplaneSetup& setup = cut.multiplane();
+    const bool proxied = s != 1.0;
 
     // artwork(Bitmap)は差し替え中もポインタが有効である必要があるため、
     // plane数ぶんreserveしてから push_back する(再確保でポインタが無効化しないように)
@@ -276,18 +335,22 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
         Bitmap celImage = buildCelComposite(cel, drawing, options);
         if (celImage.isEmpty()) continue;
 
-        // このセルをtargetCelとする有効な撮影エフェクトをスタック順で適用する(従来経路と同じ規則)。
-        // マスクはセルの画面配置オフセット(タップ移動)を考慮して参照する
+        // タップ/ペグ移動(px)を平面内オフセット(mm)へ変換する(縮小前のフル解像度幅で計算する)
         const Vec2 position = cel.positionAt(frame);
+        const double mmPerPx = p.widthMm / celImage.width();
+
+        // プロキシ時はアートワークを縮小してからエフェクトを掛ける(レイトレーサはバイリニア
+        // サンプルなので、物理幅mmが同じなら解像度が下がっても写りは同じ)
+        if (proxied) celImage = downsampleBitmap(celImage, s);
+
+        // このセルをtargetCelとする有効な撮影エフェクトをスタック順で適用する(従来経路と同じ規則)。
+        // マスクはセルの画面配置オフセット(タップ移動、フル解像度座標)を考慮して参照する
         const int celOffsetX = static_cast<int>(std::lround(position.x));
         const int celOffsetY = static_cast<int>(std::lround(position.y));
         for (const Effect& effect : cut.effects()) {
             if (effect.enabled && effect.activeAt(frame) && effect.targetCel == p.celIndex)
-                applyEffectWithMask(celImage, effect, frame, celOffsetX, celOffsetY);
+                applyEffectWithMask(celImage, effect, frame, celOffsetX, celOffsetY, s);
         }
-
-        // タップ/ペグ移動(px)を平面内オフセット(mm)へ変換する
-        const double mmPerPx = p.widthMm / celImage.width();
 
         composites.push_back(std::move(celImage));
         MultiplanePlane mp;
@@ -301,16 +364,25 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
 
     int samples = setup.samplesPerPixel;
     if (options.multiplaneSampleCap > 0) samples = std::min(samples, options.multiplaneSampleCap);
-    Bitmap out = renderMultiplane(mplanes, setup.camera, width, height, samples, 1, &setup.backlight);
+
+    // 透過光のハレーション半径は出力px単位なのでプロキシ時はスケールする
+    MultiplaneBacklight backlight = setup.backlight;
+    if (proxied) backlight.bloomRadiusPx *= s;
+    Bitmap out = renderMultiplane(mplanes, setup.camera, width, height, samples, 1, &backlight);
 
     // 全平面合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
     for (const Effect& effect : cut.effects()) {
         if (effect.enabled && effect.activeAt(frame) && effect.targetCel == -1)
-            applyEffectWithMask(out, effect, frame, 0, 0);
+            applyEffectWithMask(out, effect, frame, 0, 0, s);
     }
 
     if (const auto cam = cut.cameraFrameAt(frame)) {
-        out = applyCameraFrame(out, *cam, width, height);
+        CameraFrameState camState = *cam;
+        if (proxied) {
+            camState.center.x = static_cast<float>(camState.center.x * s);
+            camState.center.y = static_cast<float>(camState.center.y * s);
+        }
+        out = applyCameraFrame(out, camState, width, height);
     }
     return out;
 }
@@ -318,13 +390,20 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
 }  // namespace
 
 Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const RenderOptions& options) {
+    // プロキシ縮小レンダリング(プレビュー用): 出力・エフェクトを縮小解像度で行い高速化する。
+    // s==1.0(既定)は従来とバイト単位で同一
+    const double s = (options.proxyScale > 0.0 && options.proxyScale < 0.999) ? options.proxyScale : 1.0;
+    const bool proxied = s != 1.0;
+    const int outW = proxied ? std::max(1, static_cast<int>(std::lround(width * s))) : width;
+    const int outH = proxied ? std::max(1, static_cast<int>(std::lround(height * s))) : height;
+
     // クラシック撮影(マルチプレーン撮影台)が有効なら専用経路へ。無効時は完全に従来動作
     // (バイト単位で同一)を保証する
     if (cut.multiplane().enabled) {
-        return renderCutFrameClassic(cut, frame, width, height, options);
+        return renderCutFrameClassic(cut, frame, outW, outH, options, s);
     }
 
-    Bitmap out(width, height);
+    Bitmap out(outW, outH);
     out.fill({255, 255, 255, 255});  // 紙(白)
 
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
@@ -334,10 +413,13 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
         const int drawing = cel.exposure(frame);
         if (drawing < 0) continue;  // このコマにセルなし
 
-        // タップ/ペグ移動: このコマでのセル位置(キー間は線形補間)
+        // タップ/ペグ移動: このコマでのセル位置(キー間は線形補間)。
+        // フル解像度座標(マスク参照用)と出力座標(プロキシ時は縮小)の両方を持つ
         const Vec2 position = cel.positionAt(frame);
         const int offsetX = static_cast<int>(std::lround(position.x));
         const int offsetY = static_cast<int>(std::lround(position.y));
+        const int outOffsetX = proxied ? static_cast<int>(std::lround(position.x * s)) : offsetX;
+        const int outOffsetY = proxied ? static_cast<int>(std::lround(position.y * s)) : offsetY;
 
         // このセルをtargetCelとする有効な撮影エフェクトを集める(スタック順)
         std::vector<const Effect*> celEffects;
@@ -347,9 +429,10 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
         }
 
         // エフェクトが無くても、除外される色トレス線(白化修正の同化処理が必要)を持つセルは
-        // 高速経路を使えない(buildCelCompositeを通す必要がある)
-        const bool needsCelComposite =
-            !celEffects.empty() || (!options.includeColorTrace && celHasVisibleColorTrace(cel, drawing));
+        // 高速経路を使えない(buildCelCompositeを通す必要がある)。プロキシ時は縮小合成が必要な
+        // ため常にセル合成経路を使う
+        const bool needsCelComposite = proxied || !celEffects.empty() ||
+                                       (!options.includeColorTrace && celHasVisibleColorTrace(cel, drawing));
 
         if (!needsCelComposite) {
             // 従来経路: レイヤーを直接outへblendOverする(エフェクト・トレス同化が無い場合の性能維持、
@@ -366,14 +449,15 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
                 blendOver(out, src, offsetX, offsetY);
             }
         } else {
-            // エフェクトあり: セルのレイヤーをまずセル自身の座標系(0,0起点)の透明キャンバスへ合成し、
-            // そのコピーへエフェクトを適用してから画面へ合成する(他セル・紙には影響しない)
+            // エフェクトあり(またはプロキシ): セルのレイヤーをまずセル自身の座標系(0,0起点)の
+            // 透明キャンバスへ合成し、そのコピーへエフェクトを適用してから画面へ合成する
             Bitmap celImage = buildCelComposite(cel, drawing, options);
             if (!celImage.isEmpty()) {
-                // マスクはセルの画面配置オフセット(タップ移動)を考慮して参照する
+                if (proxied) celImage = downsampleBitmap(celImage, s);  // エフェクトは縮小解像度で行う
+                // マスクはセルの画面配置オフセット(タップ移動、フル解像度座標)を考慮して参照する
                 for (const Effect* effect : celEffects)
-                    applyEffectWithMask(celImage, *effect, frame, offsetX, offsetY);
-                blendOver(out, celImage, offsetX, offsetY);
+                    applyEffectWithMask(celImage, *effect, frame, offsetX, offsetY, s);
+                blendOver(out, celImage, outOffsetX, outOffsetY);
             }
         }
     }
@@ -381,14 +465,20 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
     // 全セル合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
     for (const Effect& effect : cut.effects()) {
         if (effect.enabled && effect.activeAt(frame) && effect.targetCel == -1)
-            applyEffectWithMask(out, effect, frame, 0, 0);
+            applyEffectWithMask(out, effect, frame, 0, 0, s);
     }
 
     // カメラフレーム(画面に写る範囲)が指定されていればクロップ+リサンプルする。
     // エフェクトの後にクロップする(撮影の自然な順: エフェクト→カメラ)。
     // キーもエフェクトも無い場合は完全に既存動作のまま(バイト単位で同一)
     if (const auto cam = cut.cameraFrameAt(frame)) {
-        out = applyCameraFrame(out, *cam, width, height);
+        CameraFrameState camState = *cam;
+        if (proxied) {
+            // カメラ中心はフル解像度px指定なので出力座標系へスケールする(scale倍率はそのまま)
+            camState.center.x = static_cast<float>(camState.center.x * s);
+            camState.center.y = static_cast<float>(camState.center.y * s);
+        }
+        out = applyCameraFrame(out, camState, outW, outH);
     }
     return out;
 }

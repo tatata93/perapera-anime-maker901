@@ -127,7 +127,24 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
         if (m_updating || index < 0) return;
         m_cutIndex = index;
         m_koma = 0;
+        clearFrameCache();  // カット切替で見た目の元が変わるため、以前のカットのキャッシュは無効
         refresh();
+    });
+
+    // プレビュー画質: 撮影ウィンドウのプレビューは応答性優先で既定1/2縮小(core::RenderOptions::
+    // proxyScale)。書き出しは常にフル品質のまま(renderPreviewNowだけがこの値を使う)
+    toolBar->addWidget(new QLabel(tr(" プレビュー画質: "), toolBar));
+    m_previewQualityCombo = new QComboBox(toolBar);
+    m_previewQualityCombo->addItem(tr("フル"), 1.0);
+    m_previewQualityCombo->addItem(tr("1/2"), 0.5);
+    m_previewQualityCombo->addItem(tr("1/4"), 0.25);
+    m_previewQualityCombo->setCurrentIndex(1);  // 既定=1/2
+    toolBar->addWidget(m_previewQualityCombo);
+    connect(m_previewQualityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (m_updating || index < 0) return;
+        m_previewQuality = m_previewQualityCombo->itemData(index).toDouble();
+        clearFrameCache();  // 画質が変わると過去のキャッシュ画像はサイズ/精細さが合わなくなる
+        requestPreview();
     });
 
     auto* central = new QWidget(this);
@@ -386,17 +403,20 @@ void ShootingWindow::setProject(core::Project* project) {
     m_project = project;
     m_cutIndex = 0;
     m_koma = 0;
+    clearFrameCache();
 }
 
 void ShootingWindow::setCanvasSize(int width, int height) {
     m_canvasWidth = width;
     m_canvasHeight = height;
+    clearFrameCache();  // 出力サイズが変わるとキャッシュ画像のサイズも合わなくなる
 }
 
 void ShootingWindow::setCutIndex(int index) {
     if (index == m_cutIndex) return;
     m_cutIndex = index;
     m_koma = 0;
+    clearFrameCache();
     refresh();
 }
 
@@ -408,6 +428,7 @@ core::Cut* ShootingWindow::currentCut() const {
 }
 
 void ShootingWindow::refresh() {
+    clearFrameCache();  // カット構成(セル/エフェクト等)が変わりうるため、キャッシュは信頼できない
     if (m_playTimer->isActive()) {
         m_playTimer->stop();
         m_playing = false;
@@ -897,24 +918,120 @@ void ShootingWindow::requestPreview() {
     }
 }
 
+// 現在コマの見た目を決める全状態を文字列化する(コマ指紋)。同じ指紋になるコマは同じ絵になるため、
+// renderPreviewNow()はこれをキーにm_frameCacheを引き、ヒットすれば合成を丸ごと省略できる
+QString ShootingWindow::frameFingerprint(const core::Cut& cut, int koma) const {
+    const size_t frame = static_cast<size_t>(koma);
+    QString fp;
+    fp.reserve(512);
+
+    // 各セル: visible・露出(動画番号)・位置キー(x,y)
+    for (size_t ci = 0; ci < cut.celCount(); ++ci) {
+        const core::Cel& cel = cut.cel(ci);
+        const core::Vec2 pos = cel.positionAt(frame);
+        fp += cel.visible() ? QStringLiteral("1,") : QStringLiteral("0,");
+        fp += QString::number(cel.exposure(frame));
+        fp += QLatin1Char(',');
+        fp += QString::number(pos.x, 'f', 4);
+        fp += QLatin1Char(',');
+        fp += QString::number(pos.y, 'f', 4);
+        fp += QLatin1Char(';');
+    }
+    fp += QLatin1Char('|');
+
+    // 各エフェクト: 種類・有効・適用範囲内か・対象・マスク有無・(Shake/Grainのみ)コマ番号・全パラメータ値
+    for (const core::Effect& effect : cut.effects()) {
+        const bool active = effect.activeAt(frame);
+        fp += QString::number(static_cast<int>(effect.type));
+        fp += effect.enabled ? QStringLiteral(",1,") : QStringLiteral(",0,");
+        fp += active ? QStringLiteral("1,") : QStringLiteral("0,");
+        fp += QString::number(effect.targetCel);
+        fp += effect.mask.isEmpty() ? QStringLiteral(",0,") : QStringLiteral(",1,");
+        // Shake/Grainは有効かつ適用範囲内ならコマごとに乱数(seed+koma)が変わるため、komaそのものを含める
+        if (active && effect.enabled &&
+            (effect.type == core::EffectType::Shake || effect.type == core::EffectType::Grain)) {
+            fp += QStringLiteral("k");
+            fp += QString::number(koma);
+            fp += QLatin1Char(',');
+        }
+        for (const auto& [key, value] : effect.paramsAt(frame)) {
+            fp += QString::fromStdString(key);
+            fp += QLatin1Char('=');
+            fp += QString::number(value, 'f', 4);
+            fp += QLatin1Char(',');
+        }
+        fp += QLatin1Char(';');
+    }
+    fp += QLatin1Char('|');
+
+    // カメラ(PAN/T.U.)
+    if (const auto camera = cut.cameraFrameAt(frame)) {
+        fp += QStringLiteral("c1,");
+        fp += QString::number(camera->center.x, 'f', 4);
+        fp += QLatin1Char(',');
+        fp += QString::number(camera->center.y, 'f', 4);
+        fp += QLatin1Char(',');
+        fp += QString::number(camera->scale, 'f', 4);
+    } else {
+        fp += QStringLiteral("c0");
+    }
+    fp += QLatin1Char('|');
+
+    // クラシック撮影: パラメータ自体の変更はmarkEdited()経由の全クリアで対応するので、
+    // enabledフラグと透過光の有効フラグだけで十分
+    const core::MultiplaneSetup& mp = cut.multiplane();
+    fp += mp.enabled ? QStringLiteral("m1") : QStringLiteral("m0");
+    fp += mp.backlight.enabled ? QStringLiteral("b1") : QStringLiteral("b0");
+
+    // プレビュー画質(出力解像度が変わる)。画質変更時はclearFrameCache()するので通常は不要だが、
+    // 念のため指紋にも含めておく(二重の安全策)
+    fp += QLatin1Char('|');
+    fp += QString::number(m_previewQuality, 'f', 4);
+
+    return fp;
+}
+
 void ShootingWindow::renderPreviewNow() {
     core::Cut* cut = currentCut();
     if (!cut) {
         m_previewLabel->clear();
         return;
     }
-    // 撮影ウィンドウのプレビューは応答性優先: クラシック撮影のサンプル数を上限4に抑える。
-    // 書き出し・編集ウィンドウの通しプレビューはこの上限を渡さないのでフル品質のまま
+
+    const QString fingerprint = frameFingerprint(*cut, m_koma);
+    const auto cacheIt = m_frameCache.constFind(fingerprint);
+    if (cacheIt != m_frameCache.constEnd()) {
+        m_previewLabel->setPixmap(*cacheIt);
+        m_lastRenderNote = tr("キャッシュ");
+        updateTransportLabel();
+        return;
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+
+    // 撮影ウィンドウのプレビューは応答性優先: クラシック撮影のサンプル数を上限4に抑え、
+    // プレビュー画質(m_previewQuality)で縮小レンダリングする(proxyScale)。
+    // 書き出し・編集ウィンドウの通しプレビューはこれらを渡さないのでフル品質のまま
     core::RenderOptions options;
     options.multiplaneSampleCap = 4;
+    options.proxyScale = m_previewQuality;
     const core::Bitmap bitmap =
         core::renderCutFrame(*cut, static_cast<size_t>(m_koma), m_canvasWidth, m_canvasHeight, options);
     const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
     QSize target = m_previewLabel->size();
     if (target.width() < 64 || target.height() < 64) target = QSize(640, 360);
-    // scaled()は新しいQImageを作る(元のピクセルへの参照が切れる)ため、bitmapの寿命外でも安全
-    m_previewLabel->setPixmap(
-        QPixmap::fromImage(image.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+    // proxyScaleにより出力は既に縮小済み(表示先とほぼ同サイズ)なので、Smoothではなく
+    // 高速なFastTransformationで十分きれいに表示できる
+    const QPixmap pixmap =
+        QPixmap::fromImage(image.scaled(target, Qt::KeepAspectRatio, Qt::FastTransformation));
+    m_previewLabel->setPixmap(pixmap);
+
+    m_lastRenderNote = tr("描画 %1ms").arg(timer.elapsed());
+    updateTransportLabel();
+
+    if (m_frameCache.size() >= kFrameCacheLimit) m_frameCache.clear();  // 上限超過は単純に全クリア
+    m_frameCache.insert(fingerprint, pixmap);
 }
 
 void ShootingWindow::updateTransportLabel() {
@@ -924,15 +1041,19 @@ void ShootingWindow::updateTransportLabel() {
         return;
     }
     const double seconds = static_cast<double>(m_koma) / 24.0;
-    m_komaLabel->setText(
-        tr("コマ %1 / %2 (%3s)").arg(m_koma + 1).arg(cut->frameCount()).arg(seconds, 0, 'f', 2));
+    QString text = tr("コマ %1 / %2 (%3s)").arg(m_koma + 1).arg(cut->frameCount()).arg(seconds, 0, 'f', 2);
+    // 計測ログ(検証用): 直近のrenderPreviewNow()の所要時間、またはキャッシュヒットを付記する
+    if (!m_lastRenderNote.isEmpty()) text += QStringLiteral(" ") + m_lastRenderNote;
+    m_komaLabel->setText(text);
 }
 
-void ShootingWindow::setKoma(int koma) {
+void ShootingWindow::setKoma(int koma, bool lightweight) {
     core::Cut* cut = currentCut();
     const int maxKoma = cut ? static_cast<int>(cut->frameCount()) - 1 : 0;
     m_koma = std::clamp(koma, 0, std::max(0, maxKoma));
-    refreshParamRowValues();
+    // 再生中(lightweight)は左パネルのスピン値同期を省く(誰も見ていないフォーカスの無い
+    // パネルを毎コマ更新するのは無駄な負荷なので、停止時に一度フル同期すれば十分)
+    if (!lightweight) refreshParamRowValues();
     refreshTimelineHighlight();
     requestPreview();
     updateTransportLabel();
@@ -947,6 +1068,19 @@ void ShootingWindow::scheduleRebuild() {
     QTimer::singleShot(0, this, [this] {
         m_rebuildScheduled = false;
         rebuildEffectControls();
+        rebuildTimeline();
+    });
+}
+
+// タイムラインだけを次のイベントループへ遅延・合流して作り直す(scheduleRebuild()と同様の
+// singleShot(0)+フラグだが、こちらはエフェクトコントロールパネルを作り直さない=編集中の
+// スピンのフォーカスを守る)。スピン連打(onParamSpinChanged)のような高頻度発火元から
+// 直接rebuildTimeline()を呼ぶと、連打のたびにタイムライン全体(セル群)を再構築してしまい重いため
+void ShootingWindow::scheduleTimelineRebuild() {
+    if (m_timelineRebuildScheduled) return;
+    m_timelineRebuildScheduled = true;
+    QTimer::singleShot(0, this, [this] {
+        m_timelineRebuildScheduled = false;
         rebuildTimeline();
     });
 }
@@ -1059,7 +1193,7 @@ void ShootingWindow::onParamSpinChanged(int effectIndex, const std::string& key,
         }
     }
 
-    rebuildTimeline();
+    scheduleTimelineRebuild();  // ◆有無の見た目が変わりうるが、スピン連打中に毎回全体再構築しない
     markEdited();
 }
 
@@ -1119,8 +1253,11 @@ void ShootingWindow::togglePlayback() {
         m_playTimer->stop();
         m_playing = false;
         m_playButton->setText(tr("再生"));
+        refreshParamRowValues();  // 再生中は省いていた左パネルのスピン値同期を、停止時に一度だけ行う
     } else {
         m_playing = true;
+        m_playStartKoma = m_koma;
+        m_playElapsed.restart();  // 実時間基準のフレームスキップ用(onPlaybackTick参照)
         m_playTimer->start();
         m_playButton->setText(tr("一時停止"));
     }
@@ -1133,21 +1270,32 @@ void ShootingWindow::onPlaybackTick() {
         m_playing = false;
         return;
     }
-    int next = m_koma + 1;
-    if (next >= static_cast<int>(cut->frameCount())) next = 0;  // 末尾でループ
-    setKoma(next);
+    const int frameCount = static_cast<int>(cut->frameCount());
+    if (frameCount <= 0) return;
+    // 「本来今表示すべきコマ」を実経過時間から計算する(1コマずつ進めない)。
+    // 描画が24fpsに追いつかず遅れても、コマ送りのテンポ自体は実時間どおりに保たれる
+    // (キャッシュが温まれば見た目も滑らかになる)
+    const qint64 elapsedMs = m_playElapsed.elapsed();
+    const int advanced = static_cast<int>(elapsedMs * 24 / 1000);
+    const int next = (m_playStartKoma + advanced) % frameCount;
+    setKoma(next, /*lightweight=*/true);
 }
 
 void ShootingWindow::debugSelectKoma(int koma) { setKoma(koma); }
+
+void ShootingWindow::debugTogglePlayback() { togglePlayback(); }
 
 void ShootingWindow::debugOpenMaskEditDialog(int effectIndex) { openMaskEditDialog(effectIndex); }
 
 QWidget* ShootingWindow::maskEditDialogWidget() const { return m_maskEditDialog; }
 
 void ShootingWindow::markEdited() {
+    clearFrameCache();  // データが変わったので、以前のコマ指紋キャッシュ画像は信頼できない
     requestPreview();
     emit edited();
 }
+
+void ShootingWindow::clearFrameCache() { m_frameCache.clear(); }
 
 void ShootingWindow::rebuildMultiplanePanel() {
     m_updating = true;

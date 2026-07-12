@@ -498,13 +498,27 @@ void applyChromAb(Bitmap& image, const Effect& effect) {
 
 }  // namespace
 
-void applyEffect(Bitmap& image, const Effect& effect, size_t frame) {
+void applyEffect(Bitmap& image, const Effect& effect, size_t frame, double pixelScale) {
     if (!effect.enabled || image.isEmpty()) return;
 
     // キーフレーム曲線(コマ間の線形補間)を反映したパラメータ一式に解決してから適用する
     Effect resolved = effect;
     resolved.params = effect.paramsAt(frame);
     resolved.paramCurves.clear();
+
+    // プロキシ縮小レンダリング時: px単位のパラメータを画像の縮小率に合わせてスケールし、
+    // フル解像度と見た目を揃える(相対値のパラメータ=濃度・倍率・タップ数等はそのまま)
+    if (pixelScale > 0.0 && pixelScale < 0.999) {
+        const auto scaleIf = [&](const char* key) {
+            const auto it = resolved.params.find(key);
+            if (it != resolved.params.end()) it->second *= pixelScale;
+        };
+        scaleIf("radius");       // ブラー/グロー/ディフュージョンの半径
+        scaleIf("amplitudeX");   // シェイクの振幅
+        scaleIf("amplitudeY");
+        if (resolved.type == EffectType::ChromAb) scaleIf("amount");  // 色収差のずれ量(px)
+        if (resolved.type == EffectType::Grain) scaleIf("size");      // 粒サイズ(px)
+    }
 
     switch (resolved.type) {
         case EffectType::Blur:

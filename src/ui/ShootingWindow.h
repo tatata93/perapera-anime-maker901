@@ -1,6 +1,9 @@
 #pragma once
 
+#include <QElapsedTimer>
+#include <QHash>
 #include <QMainWindow>
+#include <QPixmap>
 #include <QStringList>
 #include <map>
 #include <string>
@@ -50,6 +53,8 @@ public:
 
     // 動作確認用: 現在コマ(CTI)を直接指定する
     void debugSelectKoma(int koma);
+    // 動作確認用: 再生の開始/停止をトグルする(実際のQTimer駆動のtogglePlayback()をそのまま呼ぶ)
+    void debugTogglePlayback();
     // 動作確認用: 指定エフェクトのマスク編集ダイアログを開く(既存が開いていれば閉じてから開き直す)
     void debugOpenMaskEditDialog(int effectIndex);
     // 動作確認用: 現在開いているマスク編集ダイアログ(未オープンならnullptr)
@@ -96,6 +101,10 @@ private:
     // ウィジェットのシグナル処理中にrebuildEffectControls()を直接呼ぶと発信元ウィジェットを
     // delete してしまいクラッシュするため、シグナルハンドラからは必ずこちらを使うこと
     void scheduleRebuild();
+    // タイムラインだけを次のイベントループへ遅延・合流して作り直す(エフェクトコントロールは
+    // 作り直さない=スピン編集中のフォーカスを守る)。スピンのvalueChangedのような高頻度発火元
+    // から直接rebuildTimeline()を呼ぶのは避け、こちらを使うこと
+    void scheduleTimelineRebuild();
     void refreshParamRowValues();  // 構造は変えずスピン値/◆表示だけを現在コマに合わせて更新する(軽量、再生中用)
     void rebuildTimeline();        // 下段タイムライン(キー持ちプロパティのみ行を作る)を作り直す
     void refreshTimelineHighlight();  // 行の作り直し無しでCTI列のハイライトだけ更新する
@@ -103,9 +112,16 @@ private:
     // スピン連打やスクラブでも重い合成が積み上がらない
     void requestPreview();
     void renderPreviewNow();       // 現在コマをrenderCutFrameしてプレビューへ即時表示する(実処理)
-    void updateTransportLabel();   // 「コマ n / N (t s)」ラベルを更新する
+    // 現在コマの見た目を決める全状態を文字列化する(コマ指紋)。同じ指紋なら同じ絵になるため、
+    // renderPreviewNow()はこれをキーにm_frameCacheを引き、ヒットすれば合成を丸ごと省略する
+    QString frameFingerprint(const core::Cut& cut, int koma) const;
+    void clearFrameCache();  // m_frameCacheを全クリアする(構造変更・画質変更・カット切替時)
+    void updateTransportLabel();  // 「コマ n / N (t s) 描画Xms/キャッシュ」ラベルを更新する(m_lastRenderNoteを付記)
 
-    void setKoma(int koma);  // 現在コマ(CTI)を変更する。範囲外はクランプ。タイムライン/プレビュー同期
+    // 現在コマ(CTI)を変更する。範囲外はクランプ。タイムライン/プレビュー同期。
+    // lightweight=trueの場合(再生中)はrefreshParamRowValues()を省略する(左パネルのスピン値
+    // 同期はフォーカスの無い再生中は不要な負荷なので、停止時に一度フル同期すれば十分)
+    void setKoma(int koma, bool lightweight = false);
 
     void addEffectOfType(int typeInt);
     void removeEffect(int effectIndex);
@@ -148,6 +164,7 @@ private:
     int m_koma = 0;        // 現在コマ(CTI、0始まり)
 
     QComboBox* m_cutCombo = nullptr;
+    QComboBox* m_previewQualityCombo = nullptr;  // プレビュー画質(フル/1/2/1/4)
 
     // 左: エフェクトコントロールパネル
     QScrollArea* m_effectScroll = nullptr;
@@ -183,6 +200,8 @@ private:
     QTimer* m_playTimer = nullptr;
     QTimer* m_previewTimer = nullptr;  // プレビュー更新のデバウンス用(singleShot)
     bool m_playing = false;            // 再生中はプレビューをデバウンスせず各コマ直接描く
+    QElapsedTimer m_playElapsed;       // 再生開始からの経過時間(実時間維持のフレームスキップに使う)
+    int m_playStartKoma = 0;           // 再生開始時のコマ(経過時間からの相対計算の基準)
 
     // 下段: タイムライン(After Effects風「エフェクトレイヤー」形式。行=エフェクト見出し+
     // キー持ちプロパティ、列=コマ)
@@ -201,4 +220,13 @@ private:
     int m_canvasHeight = 1080;
     bool m_updating = false;  // 表示反映中はシグナル・編集処理を抑止する
     bool m_rebuildScheduled = false;  // scheduleRebuild()の多重予約防止
+    bool m_timelineRebuildScheduled = false;  // scheduleTimelineRebuild()の多重予約防止
+
+    // プレビュー画質(1.0=フル, 0.5=1/2, 0.25=1/4)。core::RenderOptions::proxyScaleへ渡す
+    double m_previewQuality = 0.5;
+    // コマ指紋→描画済みプレビューのキャッシュ。同じ絵になるコマの再合成を省略する
+    QHash<QString, QPixmap> m_frameCache;
+    static constexpr int kFrameCacheLimit = 200;  // これを超えたら単純にclear()する
+
+    QString m_lastRenderNote;  // 直近のrenderPreviewNow()の所要時間表示(「描画 12ms」/「キャッシュ」)
 };

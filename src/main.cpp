@@ -753,6 +753,36 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --shooting-playback-test <出力PNG1> <出力PNG2> で撮影デモを組み、実際に再生を
+    // 開始してから数秒間(実時間)そのまま実行し続け(=QTimer駆動のonPlaybackTickが実際に何度も
+    // 走る)、再生停止直後のウィンドウ(出力PNG1、コマ番号ラベルの描画時間/キャッシュ表示込み)を
+    // 保存する。続けてコマ12(setup直後に一度プレビュー済み=キャッシュ済みのはずのコマ)へ
+    // スクラブし直し、その結果(出力PNG2、「キャッシュ」表示になるはず)も保存して終了する。
+    // プレビュー高速化(コマ指紋キャッシュ・実時間フレームスキップ)の効果を確認するためのもの
+    const int shootingPlaybackIndex = args.indexOf("--shooting-playback-test");
+    if (shootingPlaybackIndex >= 0 && shootingPlaybackIndex + 2 < args.size()) {
+        const QString outputPath1 = args.at(shootingPlaybackIndex + 1);
+        const QString outputPath2 = args.at(shootingPlaybackIndex + 2);
+        QTimer::singleShot(500, &window, [&window, outputPath1, outputPath2] {
+            window.debugSetupShootingDemo();  // 内部でdebugSelectKoma(12)まで行う(=コマ12を一度プレビュー)
+            QTimer::singleShot(400, &window, [&window, outputPath1, outputPath2] {
+                window.shootingWindow()->debugTogglePlayback();  // 再生開始
+                QTimer::singleShot(3000, &window, [&window, outputPath1, outputPath2] {
+                    window.shootingWindow()->debugTogglePlayback();  // 再生停止(状態を固定してから撮る)
+                    QTimer::singleShot(200, &window, [&window, outputPath1, outputPath2] {
+                        window.shootingWindow()->grab().save(outputPath1);
+                        window.shootingWindow()->debugSelectKoma(12);  // 既にキャッシュ済みのはずのコマへスクラブ
+                        QTimer::singleShot(300, &window, [&window, outputPath2] {
+                            window.shootingWindow()->grab().save(outputPath2);
+                            QApplication::exit(
+                                0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                        });
+                    });
+                });
+            });
+        });
+    }
+
     // 動作確認用: --shooting-mask-test <出力PNG> で撮影デモ(--shooting-testと同じ、ブラーに
     // 画面右半分マスク付き)を組んでから、そのブラー(エフェクトindex0)のマスク編集ダイアログ
     // (GLCanvas+ツール行)を開いた状態を保存して終了する
