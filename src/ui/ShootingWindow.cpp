@@ -4,6 +4,7 @@
 #include <QAction>
 #include <QBrush>
 #include <QColor>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDialog>
 #include <QDoubleSpinBox>
@@ -27,6 +28,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include "core/Compositor.h"
@@ -196,6 +198,14 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     m_multiplaneGroup->setChecked(false);
     auto* mpLayout = new QVBoxLayout(m_multiplaneGroup);
 
+    // キー追加/削除の小ボタンを1つ作る共通ヘルパー(◆規則: 現在コマにキーを追加/削除する)
+    const auto makeKeyButton = [this](const QString& text, const QString& tooltip) {
+        auto* button = new QToolButton(m_multiplaneGroup);
+        button->setText(text);
+        button->setToolTip(tooltip);
+        return button;
+    };
+
     auto* mpForm = new QFormLayout();
     m_mpFocalSpin = new QDoubleSpinBox(m_multiplaneGroup);
     m_mpFocalSpin->setRange(1.0, 300.0);
@@ -203,7 +213,13 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     m_mpFocalSpin->setSuffix(tr(" mm"));
     m_mpFocalSpin->setFocusPolicy(Qt::ClickFocus);
     m_mpFocalSpin->setKeyboardTracking(false);  // 入力途中で処理を走らせない(確定時のみ)
-    mpForm->addRow(tr("焦点距離"), m_mpFocalSpin);
+    m_mpFocalKeyAddButton = makeKeyButton(tr("キー追加"), tr("現在コマに焦点距離のキーを追加"));
+    m_mpFocalKeyRemoveButton = makeKeyButton(tr("キー削除"), tr("現在コマの焦点距離キーを削除"));
+    auto* focalRow = new QHBoxLayout();
+    focalRow->addWidget(m_mpFocalSpin, 1);
+    focalRow->addWidget(m_mpFocalKeyAddButton);
+    focalRow->addWidget(m_mpFocalKeyRemoveButton);
+    mpForm->addRow(tr("焦点距離"), focalRow);
 
     m_mpSensorSpin = new QDoubleSpinBox(m_multiplaneGroup);
     m_mpSensorSpin->setRange(1.0, 100.0);
@@ -227,7 +243,13 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     m_mpFocusSpin->setSuffix(tr(" mm"));
     m_mpFocusSpin->setFocusPolicy(Qt::ClickFocus);
     m_mpFocusSpin->setKeyboardTracking(false);
-    mpForm->addRow(tr("フォーカス距離"), m_mpFocusSpin);
+    m_mpFocusKeyAddButton = makeKeyButton(tr("キー追加"), tr("現在コマにフォーカス距離のキーを追加"));
+    m_mpFocusKeyRemoveButton = makeKeyButton(tr("キー削除"), tr("現在コマのフォーカス距離キーを削除"));
+    auto* focusRow = new QHBoxLayout();
+    focusRow->addWidget(m_mpFocusSpin, 1);
+    focusRow->addWidget(m_mpFocusKeyAddButton);
+    focusRow->addWidget(m_mpFocusKeyRemoveButton);
+    mpForm->addRow(tr("フォーカス距離"), focusRow);
 
     m_mpSamplesSpin = new QSpinBox(m_multiplaneGroup);
     m_mpSamplesSpin->setRange(1, 64);
@@ -267,7 +289,13 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     m_blIntensitySpin->setSingleStep(0.1);
     m_blIntensitySpin->setFocusPolicy(Qt::ClickFocus);
     m_blIntensitySpin->setKeyboardTracking(false);
-    blForm->addRow(tr("強度"), m_blIntensitySpin);
+    m_blIntensityKeyAddButton = makeKeyButton(tr("キー追加"), tr("現在コマに強度のキーを追加(蛍光灯/液晶の点滅に)"));
+    m_blIntensityKeyRemoveButton = makeKeyButton(tr("キー削除"), tr("現在コマの強度キーを削除"));
+    auto* intensityRow = new QHBoxLayout();
+    intensityRow->addWidget(m_blIntensitySpin, 1);
+    intensityRow->addWidget(m_blIntensityKeyAddButton);
+    intensityRow->addWidget(m_blIntensityKeyRemoveButton);
+    blForm->addRow(tr("強度"), intensityRow);
 
     auto* blColorRow = new QHBoxLayout();
     m_blColorRSpin = new QDoubleSpinBox(m_backlightGroup);
@@ -283,6 +311,12 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     blColorRow->addWidget(m_blColorRSpin);
     blColorRow->addWidget(m_blColorGSpin);
     blColorRow->addWidget(m_blColorBSpin);
+    // 色見本(スウォッチ): 数値だけだと見にくいのでクリックでQColorDialogから選べる背景色ボタン
+    m_blColorSwatch = new QPushButton(m_backlightGroup);
+    m_blColorSwatch->setFixedWidth(40);
+    m_blColorSwatch->setToolTip(tr("クリックして光源色を選ぶ"));
+    connect(m_blColorSwatch, &QPushButton::clicked, this, &ShootingWindow::onBacklightColorSwatchClicked);
+    blColorRow->addWidget(m_blColorSwatch);
     blForm->addRow(tr("光源色 R/G/B"), blColorRow);
 
     m_blTransmittanceSpin = new QDoubleSpinBox(m_backlightGroup);
@@ -308,6 +342,34 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     m_blBloomStrengthSpin->setFocusPolicy(Qt::ClickFocus);
     m_blBloomStrengthSpin->setKeyboardTracking(false);
     blForm->addRow(tr("にじみ強さ"), m_blBloomStrengthSpin);
+
+    // 光源マスク(T光にもマスクを): ペンで塗る、またはセル/レイヤーの形を光源として使う
+    auto* blMaskRow = new QHBoxLayout();
+    m_blMaskEditButton = new QToolButton(m_backlightGroup);
+    m_blMaskEditButton->setText(tr("マスクをペンで編集"));
+    m_blMaskEditButton->setToolTip(tr("ペンで塗った範囲だけに透過光を絞る(AEのマスクと同様)"));
+    connect(m_blMaskEditButton, &QToolButton::clicked, this, &ShootingWindow::openBacklightMaskEditDialog);
+    blMaskRow->addWidget(m_blMaskEditButton);
+    m_blMaskClearButton = new QPushButton(tr("マスク全消去"), m_backlightGroup);
+    connect(m_blMaskClearButton, &QPushButton::clicked, this, [this] {
+        core::Cut* cut = currentCut();
+        if (!cut) return;
+        cut->multiplane().backlight.mask = core::Bitmap();
+        if (m_backlightMaskDialog) closeBacklightMaskDialogIfOpen();  // 開いていれば作り直しのため一旦閉じる
+        markEdited();
+    });
+    blMaskRow->addWidget(m_blMaskClearButton);
+    blForm->addRow(tr("光源マスク"), blMaskRow);
+
+    m_blMaskCelCombo = new QComboBox(m_backlightGroup);
+    connect(m_blMaskCelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &ShootingWindow::onBacklightMaskCelChanged);
+    blForm->addRow(tr("マスクセル"), m_blMaskCelCombo);
+
+    m_blMaskLayerCombo = new QComboBox(m_backlightGroup);
+    connect(m_blMaskLayerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &ShootingWindow::onBacklightMaskLayerChanged);
+    blForm->addRow(tr("マスクレイヤー"), m_blMaskLayerCombo);
 
     auto* blGroupLayout = new QVBoxLayout(m_backlightGroup);
     blGroupLayout->addLayout(blForm);
@@ -397,6 +459,19 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_blTransmittanceSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onBacklightChanged(); });
     connect(m_blBloomRadiusSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onBacklightChanged(); });
     connect(m_blBloomStrengthSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onBacklightChanged(); });
+    // 光源色スピンの変更でスウォッチ(見本)の表示も追従させる
+    connect(m_blColorRSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { updateBacklightColorSwatch(); });
+    connect(m_blColorGSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { updateBacklightColorSwatch(); });
+    connect(m_blColorBSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { updateBacklightColorSwatch(); });
+
+    // コマキー(点滅=透過光強度、滑らかなカメラ変化=焦点距離/フォーカス距離)の追加/削除ボタン
+    connect(m_blIntensityKeyAddButton, &QToolButton::clicked, this, &ShootingWindow::onIntensityKeyAddClicked);
+    connect(m_blIntensityKeyRemoveButton, &QToolButton::clicked, this,
+            &ShootingWindow::onIntensityKeyRemoveClicked);
+    connect(m_mpFocalKeyAddButton, &QToolButton::clicked, this, &ShootingWindow::onFocalKeyAddClicked);
+    connect(m_mpFocalKeyRemoveButton, &QToolButton::clicked, this, &ShootingWindow::onFocalKeyRemoveClicked);
+    connect(m_mpFocusKeyAddButton, &QToolButton::clicked, this, &ShootingWindow::onFocusKeyAddClicked);
+    connect(m_mpFocusKeyRemoveButton, &QToolButton::clicked, this, &ShootingWindow::onFocusKeyRemoveClicked);
 }
 
 void ShootingWindow::setProject(core::Project* project) {
@@ -429,6 +504,7 @@ core::Cut* ShootingWindow::currentCut() const {
 
 void ShootingWindow::refresh() {
     clearFrameCache();  // カット構成(セル/エフェクト等)が変わりうるため、キャッシュは信頼できない
+    closeBacklightMaskDialogIfOpen();  // カット/プロジェクト差し替えでmaskへの生ポインタ束縛が無効化する前に閉じる
     if (m_playTimer->isActive()) {
         m_playTimer->stop();
         m_playing = false;
@@ -977,11 +1053,29 @@ QString ShootingWindow::frameFingerprint(const core::Cut& cut, int koma) const {
     }
     fp += QLatin1Char('|');
 
-    // クラシック撮影: パラメータ自体の変更はmarkEdited()経由の全クリアで対応するので、
-    // enabledフラグと透過光の有効フラグだけで十分
+    // クラシック撮影: パラメータ自体の変更はmarkEdited()経由の全クリアで対応するが、
+    // コマキー(点滅の強度/焦点距離/フォーカス距離)はコマごとに値が変わるため、
+    // このコマへ解決した値を必ず含める(含め漏れると点滅がキャッシュで固まる)
     const core::MultiplaneSetup& mp = cut.multiplane();
     fp += mp.enabled ? QStringLiteral("m1") : QStringLiteral("m0");
     fp += mp.backlight.enabled ? QStringLiteral("b1") : QStringLiteral("b0");
+    if (mp.enabled) {
+        fp += QLatin1Char(',');
+        fp += QString::number(core::MultiplaneSetup::valueAt(mp.intensityKeys, frame, mp.backlight.intensity),
+                              'f', 4);
+        fp += QLatin1Char(',');
+        fp += QString::number(core::MultiplaneSetup::valueAt(mp.focalKeys, frame, mp.camera.focalLengthMm), 'f',
+                              4);
+        fp += QLatin1Char(',');
+        fp += QString::number(core::MultiplaneSetup::valueAt(mp.focusKeys, frame, mp.camera.focusDistanceMm),
+                              'f', 4);
+        // 光源マスク(ペン/セル/レイヤー)。セルマスクの形はマスクセルの露出・位置に依存するが、
+        // それらは冒頭のセル節で既に指紋へ含まれている
+        fp += mp.backlight.mask.isEmpty() ? QStringLiteral(",p0,") : QStringLiteral(",p1,");
+        fp += QString::number(mp.backlight.maskCelIndex);
+        fp += QLatin1Char(',');
+        fp += QString::number(mp.backlight.maskLayerIndex);
+    }
 
     // プレビュー画質(出力解像度が変わる)。画質変更時はclearFrameCache()するので通常は不要だが、
     // 念のため指紋にも含めておく(二重の安全策)
@@ -1053,7 +1147,10 @@ void ShootingWindow::setKoma(int koma, bool lightweight) {
     m_koma = std::clamp(koma, 0, std::max(0, maxKoma));
     // 再生中(lightweight)は左パネルのスピン値同期を省く(誰も見ていないフォーカスの無い
     // パネルを毎コマ更新するのは無駄な負荷なので、停止時に一度フル同期すれば十分)
-    if (!lightweight) refreshParamRowValues();
+    if (!lightweight) {
+        refreshParamRowValues();
+        refreshMultiplaneKeyedFields();  // キー持ちの強度/焦点距離/フォーカスも現在コマの補間値へ
+    }
     refreshTimelineHighlight();
     requestPreview();
     updateTransportLabel();
@@ -1374,8 +1471,21 @@ void ShootingWindow::rebuildMultiplanePanel() {
     m_blTransmittanceSpin->setValue(setup.backlight.paintTransmittance);
     m_blBloomRadiusSpin->setValue(setup.backlight.bloomRadiusPx);
     m_blBloomStrengthSpin->setValue(setup.backlight.bloomStrength);
+    updateBacklightColorSwatch();
+
+    // 光源マスクのセル/レイヤーコンボを作り直す(0=なし、以降セル名)
+    m_blMaskCelCombo->clear();
+    m_blMaskCelCombo->addItem(tr("なし"));
+    m_blMaskCelCombo->addItems(celNames);
+    const int maskCel = setup.backlight.maskCelIndex;
+    m_blMaskCelCombo->setCurrentIndex(maskCel >= 0 && maskCel < celNames.size() ? maskCel + 1 : 0);
+    m_blMaskCelCombo->setEnabled(cut != nullptr);
+    refreshBacklightMaskLayerCombo();
 
     m_updating = false;
+
+    // キー持ちの強度/焦点距離/フォーカス距離は現在コマの補間値へ上書きし、キーボタン状態も更新する
+    refreshMultiplaneKeyedFields();
 }
 
 void ShootingWindow::onMultiplaneToggled(bool checked) {
@@ -1454,4 +1564,294 @@ void ShootingWindow::onBacklightChanged() {
     backlight.bloomRadiusPx = m_blBloomRadiusSpin->value();
     backlight.bloomStrength = m_blBloomStrengthSpin->value();
     markEdited();
+}
+
+// --- 透過光(T光)の色見本・光源マスク・コマキー ---
+
+// 光源色スピン(0〜1)の現在値をスウォッチ(見本ボタン)の背景色へ反映する
+void ShootingWindow::updateBacklightColorSwatch() {
+    if (!m_blColorSwatch) return;
+    const int r = static_cast<int>(std::lround(std::clamp(m_blColorRSpin->value(), 0.0, 1.0) * 255.0));
+    const int g = static_cast<int>(std::lround(std::clamp(m_blColorGSpin->value(), 0.0, 1.0) * 255.0));
+    const int b = static_cast<int>(std::lround(std::clamp(m_blColorBSpin->value(), 0.0, 1.0) * 255.0));
+    m_blColorSwatch->setStyleSheet(QStringLiteral("background-color: rgb(%1,%2,%3);").arg(r).arg(g).arg(b));
+}
+
+// 色見本ボタン: QColorDialogで選んだ色をスピン(0〜1)へ反映する(数値だけだと見にくい対策)
+void ShootingWindow::onBacklightColorSwatchClicked() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    const QColor initial(static_cast<int>(std::lround(m_blColorRSpin->value() * 255.0)),
+                         static_cast<int>(std::lround(m_blColorGSpin->value() * 255.0)),
+                         static_cast<int>(std::lround(m_blColorBSpin->value() * 255.0)));
+    const QColor picked = QColorDialog::getColor(initial, this, tr("光源色を選ぶ"));
+    if (!picked.isValid()) return;
+
+    // スピン3つの変更で onBacklightChanged が3回走らないよう、まとめて設定してから1回だけ反映する
+    m_updating = true;
+    m_blColorRSpin->setValue(picked.red() / 255.0);
+    m_blColorGSpin->setValue(picked.green() / 255.0);
+    m_blColorBSpin->setValue(picked.blue() / 255.0);
+    m_updating = false;
+    updateBacklightColorSwatch();
+    onBacklightChanged();
+}
+
+void ShootingWindow::ensureBacklightMaskAllocated(core::MultiplaneBacklight& backlight) const {
+    if (!backlight.mask.isEmpty()) return;
+    core::Bitmap mask(m_canvasWidth, m_canvasHeight);
+    mask.fill({0, 0, 0, 0});  // 全面透明。ペンで塗った所(alpha>0)だけ光が通るようになる
+    backlight.mask = std::move(mask);
+}
+
+void ShootingWindow::closeBacklightMaskDialogIfOpen() {
+    if (!m_backlightMaskDialog) return;
+    m_backlightMaskDialog->close();  // WA_DeleteOnCloseで破棄。finishedハンドラでポインタもクリアされる
+}
+
+// T光の光源マスクをペンで塗るモードレスダイアログ(エフェクトのマスク編集と同じ流儀)。
+// 注意: ペンマスクは「塗った所だけ光る」(空=全面)。塗り始めた時点で未塗り部は遮光になる
+void ShootingWindow::openBacklightMaskEditDialog() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+
+    closeBacklightMaskDialogIfOpen();
+
+    core::MultiplaneBacklight& backlight = cut->multiplane().backlight;
+    ensureBacklightMaskAllocated(backlight);
+
+    auto* dialog = new QDialog(this);
+    dialog->setWindowTitle(tr("光源マスク編集 - 透過光(T光)"));
+    dialog->resize(960, 540);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    auto* layout = new QVBoxLayout(dialog);
+
+    auto* toolRow = new QHBoxLayout();
+    auto* penButton = new QToolButton(dialog);
+    penButton->setText(tr("ペン"));
+    penButton->setCheckable(true);
+    penButton->setChecked(true);
+    auto* eraserButton = new QToolButton(dialog);
+    eraserButton->setText(tr("消しゴム"));
+    eraserButton->setCheckable(true);
+    penButton->setAutoExclusive(true);
+    eraserButton->setAutoExclusive(true);
+    toolRow->addWidget(penButton);
+    toolRow->addWidget(eraserButton);
+
+    toolRow->addWidget(new QLabel(tr("太さ"), dialog));
+    constexpr int kMaskRadiusMin = 10;
+    constexpr int kMaskRadiusMax = 200;
+    constexpr int kMaskRadiusDefault = 40;
+    auto* radiusSlider = new QSlider(Qt::Horizontal, dialog);
+    radiusSlider->setRange(kMaskRadiusMin, kMaskRadiusMax);
+    radiusSlider->setValue(kMaskRadiusDefault);
+    radiusSlider->setFixedWidth(160);
+    toolRow->addWidget(radiusSlider);
+    auto* radiusValueLabel = new QLabel(QString::number(kMaskRadiusDefault), dialog);
+    radiusValueLabel->setFixedWidth(32);
+    toolRow->addWidget(radiusValueLabel);
+
+    auto* clearButton = new QPushButton(tr("全消去"), dialog);
+    clearButton->setToolTip(tr("マスクを消して全面に光が通る状態へ戻す"));
+    toolRow->addWidget(clearButton);
+    toolRow->addStretch(1);
+    layout->addLayout(toolRow);
+
+    auto* canvas = new GLCanvas(dialog);
+    canvas->setCanvasSize(m_canvasWidth, m_canvasHeight);
+    canvas->setTool(GLCanvas::Tool::Pen);
+    canvas->setPenColor(kMaskPenColor);
+    canvas->setPenRadius(static_cast<float>(kMaskRadiusDefault));
+    canvas->setEraserRadius(static_cast<float>(kMaskRadiusDefault));
+    canvas->setBitmap(&backlight.mask);
+    layout->addWidget(canvas, 1);
+
+    // 下敷き: 透過光を一時的に無効化した現在コマの合成画像を薄く表示し、光らせたい場所の目安にする
+    {
+        const bool originalEnabled = backlight.enabled;
+        backlight.enabled = false;
+        core::RenderOptions options;
+        options.multiplaneSampleCap = 4;
+        const core::Bitmap under =
+            core::renderCutFrame(*cut, static_cast<size_t>(m_koma), m_canvasWidth, m_canvasHeight, options);
+        backlight.enabled = originalEnabled;
+        const QImage underImage =
+            QImage(under.data(), under.width(), under.height(), QImage::Format_RGBA8888).copy();
+        canvas->setUnderlayImage(underImage);
+        canvas->setUnderlayOpacity(0.5f);
+    }
+
+    connect(penButton, &QToolButton::toggled, canvas, [canvas, radiusSlider](bool checked) {
+        if (!checked) return;
+        canvas->setTool(GLCanvas::Tool::Pen);
+        canvas->setPenRadius(static_cast<float>(radiusSlider->value()));
+    });
+    connect(eraserButton, &QToolButton::toggled, canvas, [canvas, radiusSlider](bool checked) {
+        if (!checked) return;
+        canvas->setTool(GLCanvas::Tool::Eraser);
+        canvas->setEraserRadius(static_cast<float>(radiusSlider->value()));
+    });
+    connect(radiusSlider, &QSlider::valueChanged, dialog, [canvas, radiusValueLabel, penButton](int value) {
+        radiusValueLabel->setText(QString::number(value));
+        if (penButton->isChecked()) {
+            canvas->setPenRadius(static_cast<float>(value));
+        } else {
+            canvas->setEraserRadius(static_cast<float>(value));
+        }
+    });
+
+    connect(clearButton, &QPushButton::clicked, this, [this, canvas] {
+        core::Cut* c = currentCut();
+        if (!c) return;
+        core::MultiplaneBacklight& bl = c->multiplane().backlight;
+        bl.mask = core::Bitmap();          // 空に戻す(=全面に光が通る)
+        ensureBacklightMaskAllocated(bl);  // 引き続きこのダイアログで塗れるよう確保し直す
+        canvas->setBitmap(&bl.mask);
+        canvas->clearTextureCache();
+        markEdited();
+    });
+
+    canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command>) { markEdited(); });
+
+    m_backlightMaskDialog = dialog;
+    connect(dialog, &QDialog::finished, this, [this, dialog] {
+        if (m_backlightMaskDialog == dialog) m_backlightMaskDialog = nullptr;
+    });
+
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
+// 「マスクセル」コンボ: 0=なし、1以降=セルindex+1
+void ShootingWindow::onBacklightMaskCelChanged(int comboIndex) {
+    if (m_updating) return;
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    cut->multiplane().backlight.maskCelIndex = comboIndex <= 0 ? -1 : comboIndex - 1;
+    cut->multiplane().backlight.maskLayerIndex = -1;  // セルを変えたらレイヤー指定はリセット(セル全体)
+    refreshBacklightMaskLayerCombo();
+    markEdited();
+}
+
+// 「マスクレイヤー」コンボ: 0=セル全体、1以降=レイヤーindex+1
+void ShootingWindow::onBacklightMaskLayerChanged(int comboIndex) {
+    if (m_updating) return;
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    cut->multiplane().backlight.maskLayerIndex = comboIndex <= 0 ? -1 : comboIndex - 1;
+    markEdited();
+}
+
+// 「マスクレイヤー」コンボの項目を、選択中のマスクセルのレイヤー一覧で作り直す
+void ShootingWindow::refreshBacklightMaskLayerCombo() {
+    if (!m_blMaskLayerCombo) return;
+    const bool wasUpdating = m_updating;
+    m_updating = true;
+    m_blMaskLayerCombo->clear();
+    m_blMaskLayerCombo->addItem(tr("セル全体"));
+
+    core::Cut* cut = currentCut();
+    const int maskCel = cut ? cut->multiplane().backlight.maskCelIndex : -1;
+    const bool hasCel = cut && maskCel >= 0 && static_cast<size_t>(maskCel) < cut->celCount();
+    if (hasCel) {
+        const core::Cel& cel = cut->cel(static_cast<size_t>(maskCel));
+        for (size_t li = 0; li < cel.layerCount(); ++li) {
+            m_blMaskLayerCombo->addItem(QString::fromStdString(cel.layer(li).name()));
+        }
+        const int layerIndex = cut->multiplane().backlight.maskLayerIndex;
+        m_blMaskLayerCombo->setCurrentIndex(
+            layerIndex >= 0 && layerIndex < static_cast<int>(cel.layerCount()) ? layerIndex + 1 : 0);
+    }
+    m_blMaskLayerCombo->setEnabled(hasCel);
+    m_updating = wasUpdating;
+}
+
+// --- クラシック撮影のコマキー(点滅・滑らかなカメラ変化) ---
+
+void ShootingWindow::onIntensityKeyAddClicked() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    cut->multiplane().intensityKeys[static_cast<size_t>(m_koma)] = m_blIntensitySpin->value();
+    refreshMultiplaneKeyedFields();
+    markEdited();
+}
+
+void ShootingWindow::onIntensityKeyRemoveClicked() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    cut->multiplane().intensityKeys.erase(static_cast<size_t>(m_koma));
+    refreshMultiplaneKeyedFields();
+    markEdited();
+}
+
+void ShootingWindow::onFocalKeyAddClicked() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    cut->multiplane().focalKeys[static_cast<size_t>(m_koma)] = m_mpFocalSpin->value();
+    refreshMultiplaneKeyedFields();
+    markEdited();
+}
+
+void ShootingWindow::onFocalKeyRemoveClicked() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    cut->multiplane().focalKeys.erase(static_cast<size_t>(m_koma));
+    refreshMultiplaneKeyedFields();
+    markEdited();
+}
+
+void ShootingWindow::onFocusKeyAddClicked() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    cut->multiplane().focusKeys[static_cast<size_t>(m_koma)] = m_mpFocusSpin->value();
+    refreshMultiplaneKeyedFields();
+    markEdited();
+}
+
+void ShootingWindow::onFocusKeyRemoveClicked() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    cut->multiplane().focusKeys.erase(static_cast<size_t>(m_koma));
+    refreshMultiplaneKeyedFields();
+    markEdited();
+}
+
+// キー持ちの強度/焦点距離/フォーカス距離スピンを現在コマの補間値へ同期し、キー削除ボタンの
+// 有効状態(現在コマにキーがあるときだけ)を更新する。キーが無いフィールドは基本値のまま
+void ShootingWindow::refreshMultiplaneKeyedFields() {
+    core::Cut* cut = currentCut();
+    const bool wasUpdating = m_updating;
+    m_updating = true;
+    if (cut) {
+        const core::MultiplaneSetup& mp = cut->multiplane();
+        const size_t frame = static_cast<size_t>(m_koma);
+        if (!mp.intensityKeys.empty()) {
+            m_blIntensitySpin->setValue(
+                core::MultiplaneSetup::valueAt(mp.intensityKeys, frame, mp.backlight.intensity));
+        }
+        if (!mp.focalKeys.empty()) {
+            m_mpFocalSpin->setValue(core::MultiplaneSetup::valueAt(mp.focalKeys, frame, mp.camera.focalLengthMm));
+        }
+        if (!mp.focusKeys.empty()) {
+            m_mpFocusSpin->setValue(
+                core::MultiplaneSetup::valueAt(mp.focusKeys, frame, mp.camera.focusDistanceMm));
+        }
+        m_blIntensityKeyRemoveButton->setEnabled(mp.intensityKeys.count(frame) > 0);
+        m_mpFocalKeyRemoveButton->setEnabled(mp.focalKeys.count(frame) > 0);
+        m_mpFocusKeyRemoveButton->setEnabled(mp.focusKeys.count(frame) > 0);
+        m_blIntensityKeyAddButton->setEnabled(true);
+        m_mpFocalKeyAddButton->setEnabled(true);
+        m_mpFocusKeyAddButton->setEnabled(true);
+    } else {
+        m_blIntensityKeyRemoveButton->setEnabled(false);
+        m_mpFocalKeyRemoveButton->setEnabled(false);
+        m_mpFocusKeyRemoveButton->setEnabled(false);
+        m_blIntensityKeyAddButton->setEnabled(false);
+        m_mpFocalKeyAddButton->setEnabled(false);
+        m_mpFocusKeyAddButton->setEnabled(false);
+    }
+    m_updating = wasUpdating;
 }

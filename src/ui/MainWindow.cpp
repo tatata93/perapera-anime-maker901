@@ -2014,8 +2014,23 @@ void MainWindow::debugSetupBacklightDemo() {
     mp.backlight.bloomRadiusPx = 24.0;
     mp.backlight.bloomStrength = 0.8;
 
+    // 蛍光灯/液晶の点滅(押井守風): 強度のコマキーで消灯↔点灯を繰り返す(尺8の止め)
+    cut.setFrameCount(8);
+    core::Cel& cel = activeCel();
+    for (size_t t = 0; t < 8; ++t) cel.setExposure(t, 0);  // 止め
+    mp.intensityKeys.clear();
+    for (size_t t = 0; t < 8; ++t) mp.intensityKeys[t] = (t % 2 == 0) ? 0.0 : 4.0;  // 偶数コマ=消灯
+    // 滑らかなカメラ変化: 焦点距離50→70mm、フォーカス250→500mmへキー補間
+    mp.focalKeys.clear();
+    mp.focalKeys[0] = 50.0;
+    mp.focalKeys[7] = 70.0;
+    mp.focusKeys.clear();
+    mp.focusKeys[0] = 250.0;
+    mp.focusKeys[7] = 500.0;
+
     m_canvas->clearTextureCache();
     updateCanvasLayers();
+    updateXsheetPanel();
     markCutDirty(cut);
     updateWindowTitle();
 

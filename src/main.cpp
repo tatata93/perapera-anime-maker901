@@ -833,6 +833,29 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --backlight-blink-test <消灯PNG> <点灯PNG> で透過光の点滅キー
+    // (強度キー: 偶数コマ=0/奇数コマ=4)がプレビュー(指紋キャッシュ込み)で正しく変わることを確認する。
+    // コマ0(消灯)とコマ1(点灯)をそれぞれ保存して終了する
+    const int blinkIndex = args.indexOf("--backlight-blink-test");
+    if (blinkIndex >= 0 && blinkIndex + 2 < args.size()) {
+        const QString offPath = args.at(blinkIndex + 1);
+        const QString onPath = args.at(blinkIndex + 2);
+        QTimer::singleShot(500, &window, [&window, offPath, onPath] {
+            window.debugSetupBacklightDemo();
+            QTimer::singleShot(900, &window, [&window, offPath, onPath] {
+                window.shootingWindow()->debugSelectKoma(0);  // 消灯コマ
+                QTimer::singleShot(900, &window, [&window, offPath, onPath] {
+                    window.shootingWindow()->grab().save(offPath);
+                    window.shootingWindow()->debugSelectKoma(1);  // 点灯コマ
+                    QTimer::singleShot(900, &window, [&window, onPath] {
+                        window.shootingWindow()->grab().save(onPath);
+                        QApplication::exit(0);  // quit()はcloseEventを経由するためexit()で直接終了する
+                    });
+                });
+            });
+        });
+    }
+
     // 動作確認用: --fulldemo <出力mp4パス> でこれまで実装した全機能を統合した4カットデモ
     // (カット0: プリビズなぞり作画 / カット1: PAN+T.U.+グロー / カット2: クラシック撮影DoF+黒パラ /
     // カット3: シェイク+オレンジパラ)を組み、全カットを連結した通しmp4へ書き出す。

@@ -41,6 +41,17 @@ struct MultiplaneBacklight {
     double paintTransmittance = 0.1;   // 塗料の透過率(0=完全遮光、1=完全なカラーゲル)
     double bloomRadiusPx = 24.0;       // ハレーションの広がり(出力px)
     double bloomStrength = 0.5;        // ハレーションの強さ(0=なし)
+
+    // 光源マスク(スクリーン座標)。空でなければ、各出力ピクセルの透過光をこのマスクの
+    // アルファ(0〜255)で乗算する=光源の形を絞る。ペンで描く(Compositor側で実効マスクを
+    // 組み立てて渡す。マスクは出力解像度と同サイズが基本だが、サイズが違う場合はバイリニアで
+    // サンプルする=安全側)
+    Bitmap mask;
+    // セル/レイヤーを光源マスクとして使う(-1=なし)。maskCelIndex>=0のとき、そのセルの
+    // 現在コマの絵のアルファを光の形として使う(Compositor::renderCutFrameClassicが解決して
+    // 上のmaskへ合成する)。maskLayerIndex=-1はセル全体(可視レイヤー合成)、>=0はそのレイヤーのみ
+    int maskCelIndex = -1;
+    int maskLayerIndex = -1;
 };
 
 // レイトレースで合成する。背景(全平面の奥)は白。samplesPerPixel>1でDoF/ジッタのモンテカルロ平均。

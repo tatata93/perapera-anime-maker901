@@ -474,3 +474,173 @@ TEST_CASE("renderMultiplane is deterministic across runs (parallel rows)", "[cor
     const core::Bitmap b = core::renderMultiplane({plane}, camera, 160, 90, 8, 3, &backlight);
     REQUIRE(std::memcmp(a.data(), b.data(), a.byteSize()) == 0);
 }
+
+// --- T光マスク(ペンで絞る/セル・レイヤーを光源形状として使う) ---
+
+TEST_CASE("renderMultiplane backlight mask restricts light to the pen-drawn shape",
+          "[core][multiplane][backlight][mask]") {
+    // 黒塗り(不透明・完全遮光)の中に、左寄りと右寄りの2つの穴を開ける
+    core::Bitmap art(40, 40);
+    art.fill({0, 0, 0, 255});
+    for (int y = 18; y <= 21; ++y) {
+        for (int x = 8; x <= 11; ++x) art.setPixel(x, y, {0, 0, 0, 0});    // 左穴
+        for (int x = 28; x <= 31; ++x) art.setPixel(x, y, {0, 0, 0, 0});   // 右穴
+    }
+
+    core::MultiplanePlane plane;
+    plane.artwork = &art;
+    plane.distanceMm = 500.0;
+    plane.widthMm = 400.0;
+    core::MultiplaneCamera camera;  // 既定: focal50/sensor36/ピンホール/focus500
+
+    // マスク無し(比較用の対照): 両穴ともブルームで周辺の黒塗りを明るくする
+    core::MultiplaneBacklight noMask;
+    noMask.enabled = true;
+    noMask.intensity = 4.0;
+    noMask.colorR = noMask.colorG = noMask.colorB = 1.0;
+    noMask.bloomStrength = 1.0;
+    noMask.bloomRadiusPx = 10.0;
+
+    // マスク有り: 出力(100x100)の左半分だけalpha255、右半分は0(=右穴は光源として絞られ消える)
+    core::Bitmap mask(100, 100);
+    for (int y = 0; y < 100; ++y) {
+        for (int x = 0; x < 100; ++x) {
+            mask.setPixel(x, y, {255, 255, 255, static_cast<uint8_t>(x < 50 ? 255 : 0)});
+        }
+    }
+    core::MultiplaneBacklight withMask = noMask;
+    withMask.mask = mask;
+
+    const core::Bitmap outNoMask = core::renderMultiplane({plane}, camera, 100, 100, 1, 1, &noMask);
+    const core::Bitmap outWithMask = core::renderMultiplane({plane}, camera, 100, 100, 1, 1, &withMask);
+
+    // 穴そのものの投影位置は反射(紙白フォールバック)で常に白飽和するため、
+    // 穴のすぐ外側(黒塗りのまま)のブルームによるにじみで判定する(halationテストと同じ手法)。
+    // 左穴(投影px≈22)のすぐ外側・右穴(投影px≈78)のすぐ外側を見る
+    const int leftAdjacentX = 30;   // 左穴のすぐ外側(ブルームが届く)
+    const int rightAdjacentX = 86;  // 右穴のすぐ外側(ブルームが届く)
+
+    // マスク無し: 両穴ともブルームで黒塗りのすぐ外側まで明るくなる(対照実験)
+    REQUIRE(outNoMask.pixel(rightAdjacentX, 50).r > 5);
+
+    // マスク有り: 右穴はマスクで絞られて透過光ゼロになる(ブルーム元が無い)ため、すぐ外側も暗いまま
+    REQUIRE(outWithMask.pixel(rightAdjacentX, 50).r < outNoMask.pixel(rightAdjacentX, 50).r);
+    REQUIRE(outWithMask.pixel(rightAdjacentX, 50).r < 3);
+
+    // 左穴はマスクの内側(alpha255)なので、マスク無しと同じ明るさのまま(乗算1.0=無変化)
+    REQUIRE(outWithMask.pixel(leftAdjacentX, 50).r == outNoMask.pixel(leftAdjacentX, 50).r);
+    REQUIRE(outWithMask.pixel(leftAdjacentX, 50).r > 5);
+}
+
+// --- Cut/Compositor統合: キーフレーム・セル/レイヤーマスク ---
+
+TEST_CASE("MultiplaneSetup::valueAt interpolates keyframes with clamping", "[core][multiplane][keys]") {
+    const std::map<size_t, double> empty;
+    REQUIRE(core::MultiplaneSetup::valueAt(empty, 5, 42.0) == 42.0);  // キー無し→基本値をそのまま
+
+    const std::map<size_t, double> oneKey{{3, 7.0}};
+    REQUIRE(core::MultiplaneSetup::valueAt(oneKey, 0, 42.0) == 7.0);   // 1キーのみ→定数
+    REQUIRE(core::MultiplaneSetup::valueAt(oneKey, 3, 42.0) == 7.0);
+    REQUIRE(core::MultiplaneSetup::valueAt(oneKey, 10, 42.0) == 7.0);
+
+    const std::map<size_t, double> twoKeys{{2, 10.0}, {6, 20.0}};
+    REQUIRE(core::MultiplaneSetup::valueAt(twoKeys, 0, 0.0) == 10.0);   // 最初のキーより前→クランプ
+    REQUIRE(core::MultiplaneSetup::valueAt(twoKeys, 2, 0.0) == 10.0);   // キー上
+    REQUIRE(core::MultiplaneSetup::valueAt(twoKeys, 4, 0.0) == 15.0);   // 中間=線形補間
+    REQUIRE(core::MultiplaneSetup::valueAt(twoKeys, 6, 0.0) == 20.0);   // キー上
+    REQUIRE(core::MultiplaneSetup::valueAt(twoKeys, 100, 0.0) == 20.0);  // 最後のキーより後→クランプ
+}
+
+TEST_CASE("renderCutFrame classic multiplane blinks via intensityKeys", "[core][compositor][multiplane][keys]") {
+    // 点滅(押井守作品風)の再現確認: 透過光の強度キーframe0=0/frame2=8で、
+    // frame0はほぼ消灯・frame2は明るく光る
+    core::Cut cut("Cut");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("線画");
+    core::Bitmap art(100, 100);
+    art.fill({60, 60, 60, 255});  // 不透明な暗いグレー(反射のベースライン、透過は色c=60/255で少量通す)
+    layer.addFrame().bitmap() = art;
+    cut.setFrameCount(3);
+    // 動画は1枚(drawing 0)のみ。全コマで同じ絵を表示する(露出0固定、コマごとの絵変化は無関係にする)
+    cel.setExposure(0, 0);
+    cel.setExposure(1, 0);
+    cel.setExposure(2, 0);
+
+    core::MultiplaneSetup& mp = cut.multiplane();
+    mp.enabled = true;
+    mp.camera.apertureFStop = 0.0;  // ピンホール(決定論的)
+    mp.samplesPerPixel = 1;
+    mp.planes.push_back({0, 500.0, 400.0});  // 400mm幅はFOV(360mm)より広く、全面を覆う
+    mp.backlight.enabled = true;
+    mp.backlight.colorR = mp.backlight.colorG = mp.backlight.colorB = 1.0;
+    mp.backlight.paintTransmittance = 0.3;
+    mp.backlight.bloomStrength = 0.0;
+    mp.intensityKeys = {{0, 0.0}, {2, 8.0}};
+
+    const core::Bitmap out0 = core::renderCutFrame(cut, 0, 100, 100);
+    const core::Bitmap out2 = core::renderCutFrame(cut, 2, 100, 100);
+
+    // frame0: 透過光0→反射(暗いグレー)のみ。frame2: 透過光8→大きく明るくなる
+    const int r0 = out0.pixel(50, 50).r;
+    const int r2 = out2.pixel(50, 50).r;
+    INFO("r0=" << r0 << " r2=" << r2);
+    REQUIRE(r2 > r0 + 50);
+    REQUIRE(r0 < 90);   // ほぼベースラインのまま
+    REQUIRE(r2 < 255);  // 飽和はしていない(差が見える範囲)
+}
+
+TEST_CASE("renderCutFrame classic multiplane backlight cel/layer mask lights only that shape",
+          "[core][compositor][multiplane][mask]") {
+    // セルA=不透明な暗いグレー全面(遮光気味・わずかに透過)をマルチプレーンの唯一の段として撮影し、
+    // セルB=中央に円(planesには割付けない、光源マスクとしてのみ使う)を指定する。
+    // 円の内側だけ透過光が強く出て、外側はベースライン(セルAの反射+わずかな一様透過)のままになる
+    core::Cut cut("Cut");
+    core::Cel& celA = cut.addCel("A");
+    core::Layer& layerA = celA.addLayer("線画");
+    core::Bitmap artA(100, 100);
+    artA.fill({60, 60, 60, 255});
+    layerA.addFrame().bitmap() = artA;
+
+    core::Cel& celB = cut.addCel("B");
+    core::Layer& layerB = celB.addLayer("線画");
+    core::Bitmap artB(100, 100);
+    artB.fill({0, 0, 0, 0});  // 全面透明
+    for (int y = 0; y < 100; ++y) {
+        for (int x = 0; x < 100; ++x) {
+            const double dx = x - 50.0;
+            const double dy = y - 50.0;
+            if (dx * dx + dy * dy <= 15.0 * 15.0) artB.setPixel(x, y, {255, 255, 255, 255});  // 中央の円
+        }
+    }
+    layerB.addFrame().bitmap() = artB;
+
+    cut.setFrameCount(1);
+    celA.setExposure(0, 0);
+    celB.setExposure(0, 0);
+
+    core::MultiplaneSetup& mp = cut.multiplane();
+    mp.enabled = true;
+    mp.camera.apertureFStop = 0.0;
+    mp.samplesPerPixel = 1;
+    mp.planes.push_back({0, 500.0, 400.0});  // セルAのみ撮影台に割り付ける(セルBは光源マスク専用)
+    mp.backlight.enabled = true;
+    mp.backlight.intensity = 6.0;
+    mp.backlight.colorR = mp.backlight.colorG = mp.backlight.colorB = 1.0;
+    mp.backlight.paintTransmittance = 0.3;
+    mp.backlight.bloomStrength = 0.0;
+    mp.backlight.maskCelIndex = 1;    // セルB
+    mp.backlight.maskLayerIndex = -1;  // セル全体(可視レイヤー合成)
+
+    const core::Bitmap out = core::renderCutFrame(cut, 0, 100, 100);
+
+    // 円の内側(中央): ベースライン反射+透過光の乗算マスクで明るく光る
+    REQUIRE(out.pixel(50, 50).r > 100);
+    // 円の外側: セルAのベースライン反射のみ(マスクで透過光が絞られてほぼ0)
+    REQUIRE(out.pixel(10, 10).r < 80);
+    REQUIRE(out.pixel(90, 90).r < 80);
+
+    // 対照実験: マスク指定を外す(maskCelIndex=-1)と全面が一様に明るくなり、円の外側も明るくなる
+    mp.backlight.maskCelIndex = -1;
+    const core::Bitmap outNoMask = core::renderCutFrame(cut, 0, 100, 100);
+    REQUIRE(outNoMask.pixel(10, 10).r > out.pixel(10, 10).r);
+}

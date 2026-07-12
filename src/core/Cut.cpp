@@ -54,4 +54,19 @@ void Cut::setCameraKey(size_t frame, CameraFrameState state) {
     m_cameraKeys[frame] = state;
 }
 
+double MultiplaneSetup::valueAt(const std::map<size_t, double>& keys, size_t frame, double base) {
+    if (keys.empty()) return base;  // キーフレームが無ければ基本値をそのまま使う
+
+    // frame以上の最初のキーを探す(Cut::cameraFrameAt/Effect::valueAtと同じクランプ規則)
+    const auto upper = keys.lower_bound(frame);
+    if (upper == keys.begin()) return upper->second;          // 最初のキーより前
+    if (upper == keys.end()) return std::prev(upper)->second;  // 最後のキーより後
+    if (upper->first == frame) return upper->second;           // キー上
+
+    // 前後のキーで線形補間する
+    const auto lower = std::prev(upper);
+    const double t = static_cast<double>(frame - lower->first) / static_cast<double>(upper->first - lower->first);
+    return lower->second + (upper->second - lower->second) * t;
+}
+
 }  // namespace core

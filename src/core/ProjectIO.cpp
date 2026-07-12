@@ -385,15 +385,36 @@ bool buildCutJson(const Cut& cut, json* jCutOut, std::vector<unsigned char>* blo
                             {"planes", std::move(jPlanes)}};
         // 透過光(T光)。無効なら省略する
         if (mp.backlight.enabled) {
-            jMultiplane["backlight"] = {{"enabled", mp.backlight.enabled},
-                                        {"intensity", mp.backlight.intensity},
-                                        {"r", mp.backlight.colorR},
-                                        {"g", mp.backlight.colorG},
-                                        {"b", mp.backlight.colorB},
-                                        {"tau", mp.backlight.paintTransmittance},
-                                        {"bloomRadius", mp.backlight.bloomRadiusPx},
-                                        {"bloomStrength", mp.backlight.bloomStrength}};
+            json jBacklight = {{"enabled", mp.backlight.enabled},
+                               {"intensity", mp.backlight.intensity},
+                               {"r", mp.backlight.colorR},
+                               {"g", mp.backlight.colorG},
+                               {"b", mp.backlight.colorB},
+                               {"tau", mp.backlight.paintTransmittance},
+                               {"bloomRadius", mp.backlight.bloomRadiusPx},
+                               {"bloomStrength", mp.backlight.bloomStrength}};
+            // 光源マスク(ペンで塗った範囲)。空なら省略する
+            if (!mp.backlight.mask.isEmpty()) {
+                json jMask;
+                if (!writeBitmapBlob(mp.backlight.mask, jMask, *blobsOut, errorOut)) return false;
+                jBacklight["mask"] = std::move(jMask);
+            }
+            // セル/レイヤーを光源マスクとして使う指定(既定-1=なしなら省略)
+            if (mp.backlight.maskCelIndex >= 0) jBacklight["maskCel"] = mp.backlight.maskCelIndex;
+            if (mp.backlight.maskLayerIndex >= 0) jBacklight["maskLayer"] = mp.backlight.maskLayerIndex;
+            jMultiplane["backlight"] = std::move(jBacklight);
         }
+
+        // コマ→値のキーフレーム曲線(点滅=intensity、滑らかなカメラ変化=focal/focus)。空なら省略する
+        const auto writeKeyCurve = [](const std::map<size_t, double>& keys) {
+            json arr = json::array();
+            for (const auto& [keyFrame, value] : keys) arr.push_back({{"frame", keyFrame}, {"value", value}});
+            return arr;
+        };
+        if (!mp.intensityKeys.empty()) jMultiplane["intensityKeys"] = writeKeyCurve(mp.intensityKeys);
+        if (!mp.focalKeys.empty()) jMultiplane["focalKeys"] = writeKeyCurve(mp.focalKeys);
+        if (!mp.focusKeys.empty()) jMultiplane["focusKeys"] = writeKeyCurve(mp.focusKeys);
+
         jCut["multiplane"] = std::move(jMultiplane);
     }
 
@@ -523,7 +544,23 @@ bool parseCutJson(const json& jCut, Cut& cut, const unsigned char* blobBase, uin
             mp.backlight.paintTransmittance = jBl.value("tau", 0.1);
             mp.backlight.bloomRadiusPx = jBl.value("bloomRadius", 24.0);
             mp.backlight.bloomStrength = jBl.value("bloomStrength", 0.5);
+            // 光源マスク(ペンで塗った範囲)。欠落時は空のまま
+            if (jBl.contains("mask")) {
+                if (!readBitmapBlob(jBl.at("mask"), blobBase, blobTotal, &mp.backlight.mask, errorOut)) return false;
+            }
+            mp.backlight.maskCelIndex = jBl.value("maskCel", -1);
+            mp.backlight.maskLayerIndex = jBl.value("maskLayer", -1);
         }
+        // コマ→値のキーフレーム曲線(任意、欠落時は空のまま)
+        const auto readKeyCurve = [&jMp](const char* name, std::map<size_t, double>* out) {
+            if (!jMp.contains(name)) return;
+            for (const json& jKey : jMp.at(name)) {
+                (*out)[jKey.at("frame").get<size_t>()] = jKey.at("value").get<double>();
+            }
+        };
+        readKeyCurve("intensityKeys", &mp.intensityKeys);
+        readKeyCurve("focalKeys", &mp.focalKeys);
+        readKeyCurve("focusKeys", &mp.focusKeys);
         if (jMp.contains("planes")) {
             for (const json& jPlane : jMp.at("planes")) {
                 MultiplaneCelPlane plane;

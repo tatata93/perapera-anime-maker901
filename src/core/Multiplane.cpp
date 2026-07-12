@@ -74,6 +74,29 @@ inline FloatPixel samplePlane(const PlaneContext& ctx, double wx, double wy) {
     return sampleArtworkBilinear(*ctx.artwork, u, v);
 }
 
+// 光源マスクの出力ピクセル(ox, oy)におけるアルファ(0〜1)を返す。マスクが出力と同サイズなら
+// そのまま参照し、サイズが異なる場合(呼び出し側の解像度計算が丸め誤差でズレた場合の保険)は
+// バイリニアで(outW/outH比)スケールしてサンプルする
+double sampleMaskAlpha01(const Bitmap& mask, int ox, int oy, int outW, int outH) {
+    if (mask.width() == outW && mask.height() == outH) {
+        return mask.pixel(ox, oy).a / 255.0;
+    }
+    const double mx = (ox + 0.5) * mask.width() / outW - 0.5;
+    const double my = (oy + 0.5) * mask.height() / outH - 0.5;
+    const int x0 = static_cast<int>(std::floor(mx));
+    const int y0 = static_cast<int>(std::floor(my));
+    const double fx = mx - x0;
+    const double fy = my - y0;
+    const auto tap = [&](int x, int y) -> double {
+        x = std::clamp(x, 0, mask.width() - 1);
+        y = std::clamp(y, 0, mask.height() - 1);
+        return mask.pixel(x, y).a / 255.0;
+    };
+    const double top = tap(x0, y0) + (tap(x0 + 1, y0) - tap(x0, y0)) * fx;
+    const double bottom = tap(x0, y0 + 1) + (tap(x0 + 1, y0 + 1) - tap(x0, y0 + 1)) * fx;
+    return top + (bottom - top) * fy;
+}
+
 }  // namespace
 
 Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const MultiplaneCamera& camera, int width,
@@ -219,6 +242,24 @@ Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const Multip
             }
         }
     });
+
+    // 光源マスク: 各出力ピクセルの透過光成分(ブルーム前)へマスクのアルファを乗算し、光源の形を絞る。
+    // ブルームはマスク後の透過光に掛かる(=絞った光がにじむ、物理的に正しい)ため、この乗算は
+    // ブルーム計算より前に行う
+    if (useBacklight && !backlight->mask.isEmpty()) {
+        const Bitmap& mask = backlight->mask;
+        parallelForRows(0, height, [&](int rowBegin, int rowEnd) {
+            for (int py = rowBegin; py < rowEnd; ++py) {
+                for (int px = 0; px < width; ++px) {
+                    const size_t idx = static_cast<size_t>(py) * width + px;
+                    const double a = sampleMaskAlpha01(mask, px, py, width, height);
+                    transR[idx] = static_cast<float>(transR[idx] * a);
+                    transG[idx] = static_cast<float>(transG[idx] * a);
+                    transB[idx] = static_cast<float>(transB[idx] * a);
+                }
+            }
+        });
+    }
 
     // ハレーション(ブルーム): 透過光成分だけをぼかして加算する(フィルムの光のにじみの近似)
     std::vector<float> bloomR, bloomG, bloomB;

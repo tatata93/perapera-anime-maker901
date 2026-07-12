@@ -29,6 +29,7 @@ namespace core {
 class Cut;
 class Effect;
 class Project;
+struct MultiplaneBacklight;
 }
 
 // 撮影ウィンドウ(別ウィンドウ)。After Effects風の上下2段レイアウト:
@@ -156,6 +157,30 @@ private:
 
     // --- 透過光(T光)パネル(クラシック撮影グループ内) ---
     void onBacklightChanged();  // 有効/強度/色/塗料透過率/にじみのいずれかが変わった
+    // 光源色スウォッチ(見本)ボタンがクリックされた: QColorDialogで選び、スピン(0〜1)へ反映する
+    void onBacklightColorSwatchClicked();
+    // 光源色スピン(R/G/B)いずれかの表示直後にスウォッチの背景色を合わせる(値の反映はonBacklightChanged側)
+    void updateBacklightColorSwatch();
+
+    // 光源マスク(ペンで塗った範囲/セル・レイヤー指定)
+    void ensureBacklightMaskAllocated(core::MultiplaneBacklight& backlight) const;
+    void openBacklightMaskEditDialog();       // マスクをペンで塗るモードレスダイアログを開く
+    void closeBacklightMaskDialogIfOpen();    // カット切替等でBitmap*束縛が無効化する前に閉じる
+    void onBacklightMaskCelChanged(int comboIndex);    // 「マスクセル」コンボの変更
+    void onBacklightMaskLayerChanged(int comboIndex);  // 「マスクレイヤー」コンボの変更
+    void refreshBacklightMaskLayerCombo();  // マスクセルの選択に応じて「マスクレイヤー」コンボの項目を作り直す
+
+    // --- クラシック撮影のコマキー(点滅=透過光強度、滑らかな変化=焦点距離/フォーカス距離) ---
+    // 現在コマ(m_koma)へのキー追加/削除。追加時はスピンの現在表示値をそのまま登録する
+    void onIntensityKeyAddClicked();
+    void onIntensityKeyRemoveClicked();
+    void onFocalKeyAddClicked();
+    void onFocalKeyRemoveClicked();
+    void onFocusKeyAddClicked();
+    void onFocusKeyRemoveClicked();
+    // コマ移動時、キー持ちの透過光強度/焦点距離/フォーカス距離スピンを現在コマの補間値へ同期し、
+    // キー追加/削除ボタンの有効状態を更新する(構造は変えない軽量更新、rebuildMultiplanePanel内でも使う)
+    void refreshMultiplaneKeyedFields();
 
     void markEdited();  // 現在コマのプレビュー更新+シグナル送出(データ変更の共通後処理)
 
@@ -182,16 +207,33 @@ private:
     QTableWidget* m_mpTable = nullptr;
     QPushButton* m_mpAddButton = nullptr;
     QPushButton* m_mpRemoveButton = nullptr;
+    // 焦点距離/フォーカス距離のコマキー追加・削除(滑らかなカメラ変化用)
+    QToolButton* m_mpFocalKeyAddButton = nullptr;
+    QToolButton* m_mpFocalKeyRemoveButton = nullptr;
+    QToolButton* m_mpFocusKeyAddButton = nullptr;
+    QToolButton* m_mpFocusKeyRemoveButton = nullptr;
 
     // 透過光(T光)パネル(クラシック撮影グループ内)
     QGroupBox* m_backlightGroup = nullptr;
     QDoubleSpinBox* m_blIntensitySpin = nullptr;
+    // 強度のコマキー追加・削除(蛍光灯/液晶の点滅用)
+    QToolButton* m_blIntensityKeyAddButton = nullptr;
+    QToolButton* m_blIntensityKeyRemoveButton = nullptr;
     QDoubleSpinBox* m_blColorRSpin = nullptr;
     QDoubleSpinBox* m_blColorGSpin = nullptr;
     QDoubleSpinBox* m_blColorBSpin = nullptr;
+    QPushButton* m_blColorSwatch = nullptr;  // 光源色の見本(クリックでQColorDialog)
     QDoubleSpinBox* m_blTransmittanceSpin = nullptr;
     QDoubleSpinBox* m_blBloomRadiusSpin = nullptr;
     QDoubleSpinBox* m_blBloomStrengthSpin = nullptr;
+
+    // 光源マスク(ペンで塗った範囲/セル・レイヤー指定)
+    QToolButton* m_blMaskEditButton = nullptr;
+    QPushButton* m_blMaskClearButton = nullptr;
+    QComboBox* m_blMaskCelCombo = nullptr;
+    QComboBox* m_blMaskLayerCombo = nullptr;
+    // T光マスク編集ダイアログ(開いていなければnullptr)。QDialogはWA_DeleteOnCloseで自動破棄される
+    QDialog* m_backlightMaskDialog = nullptr;
 
     // 右: プレビュー+トランスポート
     QLabel* m_previewLabel = nullptr;

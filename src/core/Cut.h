@@ -35,6 +35,16 @@ struct MultiplaneSetup {
     std::vector<MultiplaneCelPlane> planes;  // 割付の無いセルは撮影されない
     int samplesPerPixel = 8;                 // プレビュー/書き出しのサンプル数
     MultiplaneBacklight backlight;           // 透過光(T光)。既定は無効
+
+    // コマ→値のキーフレーム曲線(キー間は線形補間、範囲外クランプ。空なら基本値を使う)。
+    // 蛍光灯や液晶の点滅(押井守作品風)は隣接コマに0↔強度のキーを打つことで再現する
+    std::map<size_t, double> intensityKeys;  // 透過光強度(backlight.intensityの代わりに使う)
+    std::map<size_t, double> focalKeys;      // カメラ焦点距離mm(camera.focalLengthMmの代わり)
+    std::map<size_t, double> focusKeys;      // カメラフォーカス距離mm(camera.focusDistanceMmの代わり)
+
+    // キーフレーム曲線からコマframeの値を解決する(キーが無ければbaseをそのまま返す)。
+    // 規則はEffect::valueAtと同じ(キー間線形補間、範囲外は端のキーでクランプ)
+    static double valueAt(const std::map<size_t, double>& keys, size_t frame, double base);
 };
 
 // 制作進捗(編集/カッティング工程の進行管理用)

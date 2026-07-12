@@ -181,6 +181,89 @@ TEST_CASE("Multiplane setup round trips through ppproj", "[core][io][multiplane]
     std::filesystem::remove_all(folder);
 }
 
+TEST_CASE("Multiplane backlight mask/cel-mask and keyframe curves round trip through ppproj",
+          "[core][io][multiplane][mask]") {
+    const auto folder = tempFolder("ppam_backlight_mask_roundtrip_test.ppproj");
+
+    core::Project project("MPMask");
+    core::Scene& scene = project.addScene("Scene 1");
+    core::Cut& cut = scene.addCut("Cut A");
+    cut.addCel("A");
+    cut.addCel("B");
+
+    core::MultiplaneSetup& mp = cut.multiplane();
+    mp.enabled = true;
+    mp.planes.push_back({0, 500.0, 400.0});
+    mp.backlight.enabled = true;
+    mp.backlight.intensity = 5.0;
+
+    // 光源マスク(ペンで塗った範囲): 4x4のグレースケール、alphaが位置ごとに変わるパターン
+    core::Bitmap mask(4, 4);
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            mask.setPixel(x, y, {200, 100, 50, static_cast<uint8_t>((x + y * 4) * 16)});
+        }
+    }
+    mp.backlight.mask = mask;
+    mp.backlight.maskCelIndex = 1;
+    mp.backlight.maskLayerIndex = 2;
+
+    // コマ→値のキーフレーム曲線(点滅+滑らかなカメラ変化)
+    mp.intensityKeys = {{0, 0.0}, {1, 8.0}, {2, 0.0}};
+    mp.focalKeys = {{0, 35.0}, {5, 85.0}};
+    mp.focusKeys = {{0, 300.0}, {5, 900.0}};
+
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+    const auto loaded = core::ProjectIO::load(folder, &error);
+    REQUIRE(loaded != nullptr);
+
+    const core::MultiplaneSetup& loadedMp = loaded->scene(0).cut(0).multiplane();
+    REQUIRE(loadedMp.backlight.enabled == true);
+    REQUIRE_FALSE(loadedMp.backlight.mask.isEmpty());
+    REQUIRE(loadedMp.backlight.mask.width() == 4);
+    REQUIRE(loadedMp.backlight.mask.height() == 4);
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            const core::Bitmap::Pixel p = loadedMp.backlight.mask.pixel(x, y);
+            REQUIRE(p.r == 200);
+            REQUIRE(p.g == 100);
+            REQUIRE(p.b == 50);
+            REQUIRE(p.a == static_cast<uint8_t>((x + y * 4) * 16));
+        }
+    }
+    REQUIRE(loadedMp.backlight.maskCelIndex == 1);
+    REQUIRE(loadedMp.backlight.maskLayerIndex == 2);
+
+    REQUIRE(loadedMp.intensityKeys.size() == 3);
+    REQUIRE(loadedMp.intensityKeys.at(0) == 0.0);
+    REQUIRE(loadedMp.intensityKeys.at(1) == 8.0);
+    REQUIRE(loadedMp.intensityKeys.at(2) == 0.0);
+    REQUIRE(loadedMp.focalKeys.size() == 2);
+    REQUIRE(loadedMp.focalKeys.at(0) == 35.0);
+    REQUIRE(loadedMp.focalKeys.at(5) == 85.0);
+    REQUIRE(loadedMp.focusKeys.size() == 2);
+    REQUIRE(loadedMp.focusKeys.at(0) == 300.0);
+    REQUIRE(loadedMp.focusKeys.at(5) == 900.0);
+
+    // マスク/セルマスク/キーを持たないカットは既定(空・-1)のまま
+    core::Cut& cutB = scene.addCut("Cut B");
+    cutB.multiplane().enabled = true;
+    cutB.multiplane().backlight.enabled = true;  // 有効だがmask/maskCel/keysは未設定
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+    const auto loaded2 = core::ProjectIO::load(folder, &error);
+    REQUIRE(loaded2 != nullptr);
+    const core::MultiplaneSetup& defaultMp = loaded2->scene(0).cut(1).multiplane();
+    REQUIRE(defaultMp.backlight.mask.isEmpty());
+    REQUIRE(defaultMp.backlight.maskCelIndex == -1);
+    REQUIRE(defaultMp.backlight.maskLayerIndex == -1);
+    REQUIRE(defaultMp.intensityKeys.empty());
+    REQUIRE(defaultMp.focalKeys.empty());
+    REQUIRE(defaultMp.focusKeys.empty());
+
+    std::filesystem::remove_all(folder);
+}
+
 TEST_CASE("Storyboard panels round trip through ppproj", "[core][io][storyboard]") {
     core::Project project("P");
     core::Scene& scene = project.addScene("S");
