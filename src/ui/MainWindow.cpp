@@ -1892,6 +1892,59 @@ void MainWindow::debugSetupClassicDemo() {
     openShootingWindow();
 }
 
+void MainWindow::debugSetupBacklightDemo() {
+    // 透過光(T光)確認用: アクティブセルを黒で全面塗りし、中央付近に丸い穴(消しゴムで
+    // アルファを0に戻す=未塗り)をいくつか開ける。その平面をクラシック撮影に距離500mm/幅400mmで
+    // 割り付け、f/2.0・フォーカス250mm(=500mmの穴平面はピント外れ=玉ボケになる)にし、
+    // 透過光ON(強度4、にじみ半径24/強さ0.8)にして撮影ウィンドウを開く
+    core::Cut& cut = activeCut();
+    core::Bitmap& bitmap = activeLayer().frame(m_currentFrame).bitmap();
+    bitmap.fill({0, 0, 0, 255});  // 黒で全面塗り(未塗り部だけが透過光を通す)
+
+    core::BrushEngine holeEngine;
+    holeEngine.settings().radius = 36.0f;
+    holeEngine.settings().mode = core::BrushMode::Erase;  // 消しゴムで穴を開ける(alphaを0に戻す)
+    const struct {
+        float dx, dy;
+    } kHoles[] = {
+        {0.0f, 0.0f}, {90.0f, -60.0f}, {-90.0f, -60.0f}, {70.0f, 80.0f}, {-70.0f, 80.0f},
+    };
+    for (const auto& hole : kHoles) {
+        const float hx = kCanvasWidth * 0.5f + hole.dx;
+        const float hy = kCanvasHeight * 0.5f + hole.dy;
+        holeEngine.beginStroke(bitmap, hx, hy, 1.0f);
+        holeEngine.endStroke();
+    }
+
+    // クラシック撮影(マルチプレーン)を有効化
+    core::MultiplaneSetup& mp = cut.multiplane();
+    mp.enabled = true;
+    mp.camera.focalLengthMm = 50.0;
+    mp.camera.sensorWidthMm = 36.0;
+    mp.camera.apertureFStop = 2.0;
+    mp.camera.focusDistanceMm = 250.0;  // 穴の平面(500mm)より手前にピント=穴はピンボケ(玉ボケ)
+    mp.samplesPerPixel = 16;
+    mp.planes.clear();
+    core::MultiplaneCelPlane plane;
+    plane.celIndex = 0;
+    plane.distanceMm = 500.0;
+    plane.widthMm = 400.0;
+    mp.planes.push_back(plane);
+
+    // 透過光(T光)を有効化
+    mp.backlight.enabled = true;
+    mp.backlight.intensity = 4.0;
+    mp.backlight.bloomRadiusPx = 24.0;
+    mp.backlight.bloomStrength = 0.8;
+
+    m_canvas->clearTextureCache();
+    updateCanvasLayers();
+    m_dirty = true;
+    updateWindowTitle();
+
+    openShootingWindow();
+}
+
 void MainWindow::debugBuildFullDemo() {
     // これまで実装した全機能を1本の作品として統合したデモを、newDocument()相当から
     // プログラム的に構築する(作画は手描きできないためBrushEngineで幾何図形を描く)。

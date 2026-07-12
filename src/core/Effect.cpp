@@ -65,6 +65,18 @@ std::map<std::string, double> effectDefaultParams(EffectType type) {
             return {{"top", 0.25}, {"bottom", 0.0}, {"r", 0.0}, {"g", 0.0}, {"b", 0.0}};
         case EffectType::Shake:
             return {{"amplitudeX", 8.0}, {"amplitudeY", 8.0}, {"seed", 1.0}};
+        case EffectType::ColorCorrect:
+            return {{"brightness", 0.0}, {"contrast", 1.0}, {"saturation", 1.0}, {"hue", 0.0}};
+        case EffectType::Diffusion:
+            return {{"radius", 12.0}, {"strength", 0.5}};
+        case EffectType::RadialBlur:
+            return {{"centerX", 0.5}, {"centerY", 0.5}, {"amount", 0.02}, {"taps", 8.0}};
+        case EffectType::Vignette:
+            return {{"amount", 0.4}, {"softness", 0.5}};
+        case EffectType::Grain:
+            return {{"amount", 0.15}, {"size", 1.0}};
+        case EffectType::ChromAb:
+            return {{"amount", 2.0}};
     }
     return {};
 }
@@ -79,6 +91,18 @@ const char* effectTypeName(EffectType type) {
             return "パラ";
         case EffectType::Shake:
             return "シェイク";
+        case EffectType::ColorCorrect:
+            return "色調補正";
+        case EffectType::Diffusion:
+            return "ディフュージョン";
+        case EffectType::RadialBlur:
+            return "放射ブラー";
+        case EffectType::Vignette:
+            return "ビネット";
+        case EffectType::Grain:
+            return "グレイン";
+        case EffectType::ChromAb:
+            return "色収差";
     }
     return "";
 }

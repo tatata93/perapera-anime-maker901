@@ -785,6 +785,23 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --backlight-test <出力PNG> で透過光(T光)デモ(黒塗りセルに丸い穴を数個開け、
+    // クラシック撮影を距離500mm・f/2.0・フォーカス250mm[穴の平面はピント外れ=玉ボケ]で有効化し、
+    // 透過光ON[強度4・にじみ半径24/強さ0.8]にする)を組み、撮影ウィンドウ(クラシック撮影+
+    // 透過光UI込み)を保存して終了する
+    const int backlightIndex = args.indexOf("--backlight-test");
+    if (backlightIndex >= 0 && backlightIndex + 1 < args.size()) {
+        const QString outputPath = args.at(backlightIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupBacklightDemo();
+            // マルチプレーンのレイトレース(samples=16)は時間がかかりうるため待ちを長めに取る
+            QTimer::singleShot(900, &window, [&window, outputPath] {
+                window.shootingWindow()->grab().save(outputPath);
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
     // 動作確認用: --fulldemo <出力mp4パス> でこれまで実装した全機能を統合した4カットデモ
     // (カット0: プリビズなぞり作画 / カット1: PAN+T.U.+グロー / カット2: クラシック撮影DoF+黒パラ /
     // カット3: シェイク+オレンジパラ)を組み、全カットを連結した通しmp4へ書き出す。

@@ -129,6 +129,9 @@ private:
     void addMultiplanePlaneRow();
     void removeMultiplanePlaneRow();
 
+    // --- 透過光(T光)パネル(クラシック撮影グループ内) ---
+    void onBacklightChanged();  // 有効/強度/色/塗料透過率/にじみのいずれかが変わった
+
     void markEdited();  // 現在コマのプレビュー更新+シグナル送出(データ変更の共通後処理)
 
     core::Project* m_project = nullptr;
@@ -153,6 +156,16 @@ private:
     QTableWidget* m_mpTable = nullptr;
     QPushButton* m_mpAddButton = nullptr;
     QPushButton* m_mpRemoveButton = nullptr;
+
+    // 透過光(T光)パネル(クラシック撮影グループ内)
+    QGroupBox* m_backlightGroup = nullptr;
+    QDoubleSpinBox* m_blIntensitySpin = nullptr;
+    QDoubleSpinBox* m_blColorRSpin = nullptr;
+    QDoubleSpinBox* m_blColorGSpin = nullptr;
+    QDoubleSpinBox* m_blColorBSpin = nullptr;
+    QDoubleSpinBox* m_blTransmittanceSpin = nullptr;
+    QDoubleSpinBox* m_blBloomRadiusSpin = nullptr;
+    QDoubleSpinBox* m_blBloomStrengthSpin = nullptr;
 
     // 右: プレビュー+トランスポート
     QLabel* m_previewLabel = nullptr;

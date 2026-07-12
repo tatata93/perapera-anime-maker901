@@ -39,22 +39,57 @@ namespace {
 // パラメータ名(core::Effect::params のキー)の日本語表示名
 QString paramLabel(const std::string& key) {
     static const std::map<std::string, QString> kLabels = {
-        {"radius", QObject::tr("半径")},     {"threshold", QObject::tr("しきい値")},
-        {"strength", QObject::tr("強さ")},   {"top", QObject::tr("上濃度")},
-        {"bottom", QObject::tr("下濃度")},   {"r", QObject::tr("R")},
-        {"g", QObject::tr("G")},             {"b", QObject::tr("B")},
-        {"amplitudeX", QObject::tr("振幅X")}, {"amplitudeY", QObject::tr("振幅Y")},
-        {"seed", QObject::tr("シード")},
+        {"radius", QObject::tr("半径")},         {"threshold", QObject::tr("しきい値")},
+        {"strength", QObject::tr("強さ")},       {"top", QObject::tr("上濃度")},
+        {"bottom", QObject::tr("下濃度")},       {"r", QObject::tr("R")},
+        {"g", QObject::tr("G")},                 {"b", QObject::tr("B")},
+        {"amplitudeX", QObject::tr("振幅X")},     {"amplitudeY", QObject::tr("振幅Y")},
+        {"seed", QObject::tr("シード")},          {"brightness", QObject::tr("明るさ")},
+        {"contrast", QObject::tr("コントラスト")}, {"saturation", QObject::tr("彩度")},
+        {"hue", QObject::tr("色相")},             {"centerX", QObject::tr("中心X")},
+        {"centerY", QObject::tr("中心Y")},        {"amount", QObject::tr("量")},
+        {"taps", QObject::tr("タップ数")},        {"size", QObject::tr("粒サイズ")},
+        {"softness", QObject::tr("柔らかさ")},
     };
     const auto it = kLabels.find(key);
     if (it != kLabels.end()) return it->second;
     return QString::fromStdString(key);  // 未知のキーはそのまま表示(将来のパラメータ追加に備えた保険)
 }
 
-// 濃度系パラメータ(0〜1程度の細かい調整が必要)はステップ0.05、それ以外(半径系)は1.0
-bool isDensityParam(const std::string& key) { return key == "top" || key == "bottom" || key == "strength"; }
+// 濃度系パラメータ(0〜1程度の細かい調整が必要)はステップ0.05、それ以外(半径・角度系)は1.0
+bool isDensityParam(const std::string& key) {
+    return key == "top" || key == "bottom" || key == "strength" || key == "amount" || key == "softness" ||
+           key == "centerX" || key == "centerY";
+}
 
 bool isRgbParam(const std::string& key) { return key == "r" || key == "g" || key == "b"; }
+
+// パラメータの表示範囲(min, max)。"amount"のように同じキー名でもエフェクト種別によって
+// 意味・スケールが異なるものがあるため、effect.typeも見て判定する
+std::pair<double, double> paramRange(core::EffectType type, const std::string& key) {
+    if (key == "brightness") return {-255.0, 255.0};
+    if (key == "hue") return {-180.0, 180.0};
+    if (key == "contrast" || key == "saturation") return {0.0, 3.0};
+    if (key == "centerX" || key == "centerY") return {0.0, 1.0};
+    if (key == "softness") return {0.05, 1.0};
+    if (key == "taps") return {2.0, 32.0};
+    if (key == "size") return {1.0, 4.0};
+    if (key == "amount") {
+        switch (type) {
+            case core::EffectType::RadialBlur:
+                return {0.0, 0.2};
+            case core::EffectType::Vignette:
+            case core::EffectType::Grain:
+                return {0.0, 1.0};
+            case core::EffectType::ChromAb:
+                return {0.0, 20.0};
+            default:
+                break;
+        }
+    }
+    if (isRgbParam(key)) return {0.0, 255.0};
+    return {0.0, 4096.0};
+}
 
 // エフェクトGroupBoxのタイトル(「ブラー (全体)」「グロー (A)」等)
 QString effectRowLabel(const core::Effect& effect, const QStringList& celNames) {
@@ -123,6 +158,12 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
         {core::EffectType::Glow, "グロー"},
         {core::EffectType::Para, "パラ"},
         {core::EffectType::Shake, "シェイク"},
+        {core::EffectType::ColorCorrect, "色調補正"},
+        {core::EffectType::Diffusion, "ディフュージョン"},
+        {core::EffectType::RadialBlur, "放射ブラー"},
+        {core::EffectType::Vignette, "ビネット"},
+        {core::EffectType::Grain, "グレイン"},
+        {core::EffectType::ChromAb, "色収差"},
     };
     for (const auto& entry : kTypes) {
         QAction* action = addMenu->addAction(QString::fromUtf8(entry.label));
@@ -195,6 +236,65 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     mpButtonRow->addWidget(m_mpAddButton);
     mpButtonRow->addWidget(m_mpRemoveButton);
     mpLayout->addLayout(mpButtonRow);
+
+    // 透過光(T光)パネル: クラシック撮影台の下からの光源(実物の透過光撮影の二重露光を再現する)。
+    // 段割付テーブルの下に配置する
+    m_backlightGroup = new QGroupBox(tr("透過光(T光)"), m_multiplaneGroup);
+    m_backlightGroup->setCheckable(true);
+    m_backlightGroup->setChecked(false);
+    auto* blForm = new QFormLayout();
+
+    m_blIntensitySpin = new QDoubleSpinBox(m_backlightGroup);
+    m_blIntensitySpin->setRange(0.0, 16.0);
+    m_blIntensitySpin->setDecimals(2);
+    m_blIntensitySpin->setSingleStep(0.1);
+    m_blIntensitySpin->setFocusPolicy(Qt::ClickFocus);
+    m_blIntensitySpin->setKeyboardTracking(false);
+    blForm->addRow(tr("強度"), m_blIntensitySpin);
+
+    auto* blColorRow = new QHBoxLayout();
+    m_blColorRSpin = new QDoubleSpinBox(m_backlightGroup);
+    m_blColorGSpin = new QDoubleSpinBox(m_backlightGroup);
+    m_blColorBSpin = new QDoubleSpinBox(m_backlightGroup);
+    for (QDoubleSpinBox* spin : {m_blColorRSpin, m_blColorGSpin, m_blColorBSpin}) {
+        spin->setRange(0.0, 1.0);
+        spin->setDecimals(2);
+        spin->setSingleStep(0.05);
+        spin->setFocusPolicy(Qt::ClickFocus);
+        spin->setKeyboardTracking(false);
+    }
+    blColorRow->addWidget(m_blColorRSpin);
+    blColorRow->addWidget(m_blColorGSpin);
+    blColorRow->addWidget(m_blColorBSpin);
+    blForm->addRow(tr("光源色 R/G/B"), blColorRow);
+
+    m_blTransmittanceSpin = new QDoubleSpinBox(m_backlightGroup);
+    m_blTransmittanceSpin->setRange(0.0, 1.0);
+    m_blTransmittanceSpin->setDecimals(2);
+    m_blTransmittanceSpin->setSingleStep(0.05);
+    m_blTransmittanceSpin->setFocusPolicy(Qt::ClickFocus);
+    m_blTransmittanceSpin->setKeyboardTracking(false);
+    blForm->addRow(tr("塗料透過率"), m_blTransmittanceSpin);
+
+    m_blBloomRadiusSpin = new QDoubleSpinBox(m_backlightGroup);
+    m_blBloomRadiusSpin->setRange(0.0, 200.0);
+    m_blBloomRadiusSpin->setDecimals(1);
+    m_blBloomRadiusSpin->setSuffix(tr(" px"));
+    m_blBloomRadiusSpin->setFocusPolicy(Qt::ClickFocus);
+    m_blBloomRadiusSpin->setKeyboardTracking(false);
+    blForm->addRow(tr("にじみ半径"), m_blBloomRadiusSpin);
+
+    m_blBloomStrengthSpin = new QDoubleSpinBox(m_backlightGroup);
+    m_blBloomStrengthSpin->setRange(0.0, 4.0);
+    m_blBloomStrengthSpin->setDecimals(2);
+    m_blBloomStrengthSpin->setSingleStep(0.05);
+    m_blBloomStrengthSpin->setFocusPolicy(Qt::ClickFocus);
+    m_blBloomStrengthSpin->setKeyboardTracking(false);
+    blForm->addRow(tr("にじみ強さ"), m_blBloomStrengthSpin);
+
+    auto* blGroupLayout = new QVBoxLayout(m_backlightGroup);
+    blGroupLayout->addLayout(blForm);
+    mpLayout->addWidget(m_backlightGroup);
 
     m_effectContainerLayout->addWidget(m_multiplaneGroup);
 
@@ -271,6 +371,15 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
             [this](int) { onMultiplaneCameraChanged(); });
     connect(m_mpAddButton, &QPushButton::clicked, this, &ShootingWindow::addMultiplanePlaneRow);
     connect(m_mpRemoveButton, &QPushButton::clicked, this, &ShootingWindow::removeMultiplanePlaneRow);
+
+    connect(m_backlightGroup, &QGroupBox::toggled, this, [this](bool) { onBacklightChanged(); });
+    connect(m_blIntensitySpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onBacklightChanged(); });
+    connect(m_blColorRSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onBacklightChanged(); });
+    connect(m_blColorGSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onBacklightChanged(); });
+    connect(m_blColorBSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onBacklightChanged(); });
+    connect(m_blTransmittanceSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onBacklightChanged(); });
+    connect(m_blBloomRadiusSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onBacklightChanged(); });
+    connect(m_blBloomStrengthSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onBacklightChanged(); });
 }
 
 void ShootingWindow::setProject(core::Project* project) {
@@ -397,7 +506,8 @@ QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringLis
         row->addWidget(new QLabel(paramLabel(key), box));
 
         auto* spin = new QDoubleSpinBox(box);
-        spin->setRange(0.0, isRgbParam(key) ? 255.0 : 4096.0);
+        const auto range = paramRange(effect.type, key);
+        spin->setRange(range.first, range.second);
         spin->setDecimals(2);
         spin->setSingleStep(isDensityParam(key) ? 0.05 : 1.0);
         spin->setValue(value);
@@ -1048,6 +1158,17 @@ void ShootingWindow::rebuildMultiplanePanel() {
 
     m_mpAddButton->setEnabled(cut != nullptr);
     m_mpRemoveButton->setEnabled(!setup.planes.empty());
+
+    m_backlightGroup->setEnabled(cut != nullptr);
+    m_backlightGroup->setChecked(setup.backlight.enabled);
+    m_blIntensitySpin->setValue(setup.backlight.intensity);
+    m_blColorRSpin->setValue(setup.backlight.colorR);
+    m_blColorGSpin->setValue(setup.backlight.colorG);
+    m_blColorBSpin->setValue(setup.backlight.colorB);
+    m_blTransmittanceSpin->setValue(setup.backlight.paintTransmittance);
+    m_blBloomRadiusSpin->setValue(setup.backlight.bloomRadiusPx);
+    m_blBloomStrengthSpin->setValue(setup.backlight.bloomStrength);
+
     m_updating = false;
 }
 
@@ -1110,5 +1231,21 @@ void ShootingWindow::removeMultiplanePlaneRow() {
     setup.planes.erase(setup.planes.begin() + target);
 
     rebuildMultiplanePanel();
+    markEdited();
+}
+
+void ShootingWindow::onBacklightChanged() {
+    if (m_updating) return;
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    core::MultiplaneBacklight& backlight = cut->multiplane().backlight;
+    backlight.enabled = m_backlightGroup->isChecked();
+    backlight.intensity = m_blIntensitySpin->value();
+    backlight.colorR = m_blColorRSpin->value();
+    backlight.colorG = m_blColorGSpin->value();
+    backlight.colorB = m_blColorBSpin->value();
+    backlight.paintTransmittance = m_blTransmittanceSpin->value();
+    backlight.bloomRadiusPx = m_blBloomRadiusSpin->value();
+    backlight.bloomStrength = m_blBloomStrengthSpin->value();
     markEdited();
 }

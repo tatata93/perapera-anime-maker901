@@ -194,6 +194,308 @@ void applyShake(Bitmap& image, const Effect& effect, size_t frame) {
     image = std::move(shifted);
 }
 
+// バイリニアサンプリング(straight-alphaのまま線形補間する簡易版)。
+// RadialBlur/ChromAbのような「近傍を少しずらしてサンプルする」系のエフェクトで使う。
+// Blur/Glowほど厳密なアルファ加重合成は行わないが、ずれ幅が小さいため縁の色にじみは目立たない
+Bitmap::Pixel sampleBilinear(const Bitmap& image, double x, double y) {
+    const int w = image.width();
+    const int h = image.height();
+    x = std::clamp(x, 0.0, static_cast<double>(w - 1));
+    y = std::clamp(y, 0.0, static_cast<double>(h - 1));
+    const int x0 = static_cast<int>(std::floor(x));
+    const int y0 = static_cast<int>(std::floor(y));
+    const int x1 = std::min(x0 + 1, w - 1);
+    const int y1 = std::min(y0 + 1, h - 1);
+    const double fx = x - x0;
+    const double fy = y - y0;
+    const Bitmap::Pixel p00 = image.pixel(x0, y0);
+    const Bitmap::Pixel p10 = image.pixel(x1, y0);
+    const Bitmap::Pixel p01 = image.pixel(x0, y1);
+    const Bitmap::Pixel p11 = image.pixel(x1, y1);
+    auto lerp2 = [&](double a00, double a10, double a01, double a11) {
+        const double top = a00 + (a10 - a00) * fx;
+        const double bottom = a01 + (a11 - a01) * fx;
+        return top + (bottom - top) * fy;
+    };
+    const double r = lerp2(p00.r, p10.r, p01.r, p11.r);
+    const double g = lerp2(p00.g, p10.g, p01.g, p11.g);
+    const double b = lerp2(p00.b, p10.b, p01.b, p11.b);
+    const double a = lerp2(p00.a, p10.a, p01.a, p11.a);
+    return {static_cast<uint8_t>(std::lround(std::clamp(r, 0.0, 255.0))),
+            static_cast<uint8_t>(std::lround(std::clamp(g, 0.0, 255.0))),
+            static_cast<uint8_t>(std::lround(std::clamp(b, 0.0, 255.0))),
+            static_cast<uint8_t>(std::lround(std::clamp(a, 0.0, 255.0)))};
+}
+
+// 色調補正: 明るさ加算→コントラスト(128中心)→彩度(輝度基準スケール)→色相回転
+// (CSS/SVGのhue-rotateフィルタと同じ回転行列。輝度をおおむね保ったままRGBを回転させる)の順に適用する。
+// 透明ピクセル(a==0)はスキップして余白を汚さない
+void applyColorCorrect(Bitmap& image, const Effect& effect) {
+    const double brightness = param(effect, "brightness", 0.0);
+    const double contrast = param(effect, "contrast", 1.0);
+    const double saturation = param(effect, "saturation", 1.0);
+    const double hueDeg = param(effect, "hue", 0.0);
+    const int w = image.width();
+    const int h = image.height();
+    if (w <= 0 || h <= 0) return;
+
+    const double hueRad = hueDeg * 3.14159265358979323846 / 180.0;
+    const double cosA = std::cos(hueRad);
+    const double sinA = std::sin(hueRad);
+    const double m00 = 0.213 + cosA * 0.787 - sinA * 0.213;
+    const double m01 = 0.715 - cosA * 0.715 - sinA * 0.715;
+    const double m02 = 0.072 - cosA * 0.072 + sinA * 0.928;
+    const double m10 = 0.213 - cosA * 0.213 + sinA * 0.143;
+    const double m11 = 0.715 + cosA * 0.285 + sinA * 0.140;
+    const double m12 = 0.072 - cosA * 0.072 - sinA * 0.283;
+    const double m20 = 0.213 - cosA * 0.213 - sinA * 0.787;
+    const double m21 = 0.715 - cosA * 0.715 + sinA * 0.715;
+    const double m22 = 0.072 + cosA * 0.928 + sinA * 0.072;
+
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                Bitmap::Pixel p = image.pixel(x, y);
+                if (p.a == 0) continue;
+                double r = std::clamp(p.r + brightness, 0.0, 255.0);
+                double g = std::clamp(p.g + brightness, 0.0, 255.0);
+                double b = std::clamp(p.b + brightness, 0.0, 255.0);
+
+                r = std::clamp((r - 128.0) * contrast + 128.0, 0.0, 255.0);
+                g = std::clamp((g - 128.0) * contrast + 128.0, 0.0, 255.0);
+                b = std::clamp((b - 128.0) * contrast + 128.0, 0.0, 255.0);
+
+                const double luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                r = std::clamp(luma + (r - luma) * saturation, 0.0, 255.0);
+                g = std::clamp(luma + (g - luma) * saturation, 0.0, 255.0);
+                b = std::clamp(luma + (b - luma) * saturation, 0.0, 255.0);
+
+                const double nr = std::clamp(m00 * r + m01 * g + m02 * b, 0.0, 255.0);
+                const double ng = std::clamp(m10 * r + m11 * g + m12 * b, 0.0, 255.0);
+                const double nb = std::clamp(m20 * r + m21 * g + m22 * b, 0.0, 255.0);
+
+                p.r = static_cast<uint8_t>(std::lround(nr));
+                p.g = static_cast<uint8_t>(std::lround(ng));
+                p.b = static_cast<uint8_t>(std::lround(nb));
+                image.setPixel(x, y, p);
+            }
+        }
+    });
+}
+
+// ディフュージョン: 画像全体をプリマルチプライドでブラーし、そのぼかしコピーを元画像へ
+// screen合成(1-(1-a)(1-b))でstrengthブレンドする。しきい値が無い点がグローとの違いで、
+// 明部だけでなく画像全体がふわっと柔らかくにじむ。アルファも同時にブレンドするため、
+// 透明な縁の外側にもわずかに光が滲み出す(明部が周囲へ広がる)
+void applyDiffusion(Bitmap& image, const Effect& effect) {
+    const double radius = param(effect, "radius", 12.0);
+    const double strength = std::clamp(param(effect, "strength", 0.5), 0.0, 1.0);
+    const int w = image.width();
+    const int h = image.height();
+    if (w <= 0 || h <= 0 || radius <= 0.0 || strength <= 0.0) return;
+    const int boxRadius = std::max(1, static_cast<int>(std::lround(radius)));
+
+    const size_t count = static_cast<size_t>(w) * h;
+    std::vector<float> rp(count), gp(count), bp(count), ap(count);
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const Bitmap::Pixel p = image.pixel(x, y);
+                const size_t idx = static_cast<size_t>(y) * w + x;
+                const float alphaFrac = p.a / 255.0f;
+                rp[idx] = p.r * alphaFrac;
+                gp[idx] = p.g * alphaFrac;
+                bp[idx] = p.b * alphaFrac;
+                ap[idx] = static_cast<float>(p.a);
+            }
+        }
+    });
+
+    tripleBoxBlur(rp, w, h, boxRadius);
+    tripleBoxBlur(gp, w, h, boxRadius);
+    tripleBoxBlur(bp, w, h, boxRadius);
+    tripleBoxBlur(ap, w, h, boxRadius);
+
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const size_t idx = static_cast<size_t>(y) * w + x;
+                const Bitmap::Pixel p = image.pixel(x, y);
+                const float blurA = std::clamp(ap[idx], 0.0f, 255.0f);
+                float blurR = 0.0f, blurG = 0.0f, blurB = 0.0f;
+                if (blurA > 0.5f) {
+                    const float f = blurA / 255.0f;
+                    blurR = std::clamp(rp[idx] / f, 0.0f, 255.0f);
+                    blurG = std::clamp(gp[idx] / f, 0.0f, 255.0f);
+                    blurB = std::clamp(bp[idx] / f, 0.0f, 255.0f);
+                }
+                // screen合成: 1-(1-orig)(1-blur) を0〜1に正規化して計算する
+                const float on = p.r / 255.0f, og = p.g / 255.0f, ob = p.b / 255.0f;
+                const float bn = blurR / 255.0f, bg = blurG / 255.0f, bb = blurB / 255.0f;
+                const float sr = 1.0f - (1.0f - on) * (1.0f - bn);
+                const float sg = 1.0f - (1.0f - og) * (1.0f - bg);
+                const float sb = 1.0f - (1.0f - ob) * (1.0f - bb);
+                const float strengthF = static_cast<float>(strength);
+                const float fr = std::clamp(p.r + strengthF * (sr * 255.0f - p.r), 0.0f, 255.0f);
+                const float fg = std::clamp(p.g + strengthF * (sg * 255.0f - p.g), 0.0f, 255.0f);
+                const float fb = std::clamp(p.b + strengthF * (sb * 255.0f - p.b), 0.0f, 255.0f);
+                const float fa = std::clamp(p.a + strengthF * (blurA - p.a), 0.0f, 255.0f);
+
+                Bitmap::Pixel result{static_cast<uint8_t>(std::lround(fr)), static_cast<uint8_t>(std::lround(fg)),
+                                      static_cast<uint8_t>(std::lround(fb)), static_cast<uint8_t>(std::lround(fa))};
+                image.setPixel(x, y, result);
+            }
+        }
+    });
+}
+
+// 放射ブラー(ズームブラー): 各ピクセルを中心へ向けてtaps回だけ縮小サンプリング(バイリニア)して
+// 平均する。中心ピクセルは(x,y)==centerのためオフセットが常に0になり、どのtapでも中心そのものを
+// サンプルするので不変。周辺ほど中心からの距離が長く、taps間のスケール差が大きいのでよく滲む
+void applyRadialBlur(Bitmap& image, const Effect& effect) {
+    const double centerX = param(effect, "centerX", 0.5);
+    const double centerY = param(effect, "centerY", 0.5);
+    const double amount = std::clamp(param(effect, "amount", 0.02), 0.0, 0.2);
+    const int taps = std::clamp(static_cast<int>(std::lround(param(effect, "taps", 8.0))), 2, 32);
+    const int w = image.width();
+    const int h = image.height();
+    if (w <= 0 || h <= 0 || amount <= 0.0) return;
+
+    const Bitmap source = image;  // サンプリング元。書き込み先(image)と分離して読み取り競合を避ける
+    const double cx = centerX * (w - 1);
+    const double cy = centerY * (h - 1);
+
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                double sumR = 0.0, sumG = 0.0, sumB = 0.0, sumA = 0.0;
+                for (int t = 0; t < taps; ++t) {
+                    const double scale = 1.0 - amount * (static_cast<double>(t) / (taps - 1));
+                    const double sx = cx + (x - cx) * scale;
+                    const double sy = cy + (y - cy) * scale;
+                    const Bitmap::Pixel sample = sampleBilinear(source, sx, sy);
+                    sumR += sample.r;
+                    sumG += sample.g;
+                    sumB += sample.b;
+                    sumA += sample.a;
+                }
+                Bitmap::Pixel result{static_cast<uint8_t>(std::lround(sumR / taps)),
+                                      static_cast<uint8_t>(std::lround(sumG / taps)),
+                                      static_cast<uint8_t>(std::lround(sumB / taps)),
+                                      static_cast<uint8_t>(std::lround(sumA / taps))};
+                image.setPixel(x, y, result);
+            }
+        }
+    });
+}
+
+// ビネット(周辺減光): 中心からの正規化距離d(0=中心、1=四隅相当)に対しsmoothstepで
+// なめらかに暗くする。中心はd=0なのでsmoothstepの下端未満となり常に不変
+void applyVignette(Bitmap& image, const Effect& effect) {
+    const double amount = std::clamp(param(effect, "amount", 0.4), 0.0, 1.0);
+    const double softness = std::clamp(param(effect, "softness", 0.5), 0.05, 1.0);
+    const int w = image.width();
+    const int h = image.height();
+    if (w <= 0 || h <= 0 || amount <= 0.0) return;
+
+    const double cx = (w - 1) / 2.0;
+    const double cy = (h - 1) / 2.0;
+    const double maxDist = std::sqrt(cx * cx + cy * cy);
+    if (maxDist <= 0.0) return;
+    const double edge0 = 1.0 - softness;
+
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                Bitmap::Pixel p = image.pixel(x, y);
+                if (p.a == 0) continue;
+                const double dx = x - cx;
+                const double dy = y - cy;
+                const double d = std::sqrt(dx * dx + dy * dy) / maxDist;
+                const double t = std::clamp((d - edge0) / softness, 0.0, 1.0);
+                const double darken = t * t * (3.0 - 2.0 * t) * amount;  // smoothstep
+                const double factor = 1.0 - darken;
+                p.r = static_cast<uint8_t>(std::lround(std::clamp(p.r * factor, 0.0, 255.0)));
+                p.g = static_cast<uint8_t>(std::lround(std::clamp(p.g * factor, 0.0, 255.0)));
+                p.b = static_cast<uint8_t>(std::lround(std::clamp(p.b * factor, 0.0, 255.0)));
+                image.setPixel(x, y, p);
+            }
+        }
+    });
+}
+
+// グレイン(フィルム粒状感): コマ番号+粒座標(ピクセル座標をsize単位に丸めたブロック)から
+// std::minstd_randを決定論的に初期化し、輝度へ±ノイズを加減算する。同コマなら常に同じ結果になる
+void applyGrain(Bitmap& image, const Effect& effect, size_t frame) {
+    const double amount = std::clamp(param(effect, "amount", 0.15), 0.0, 1.0);
+    const double size = std::clamp(param(effect, "size", 1.0), 1.0, 4.0);
+    const int w = image.width();
+    const int h = image.height();
+    if (w <= 0 || h <= 0 || amount <= 0.0) return;
+
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const int by = static_cast<int>(y / size);
+            for (int x = 0; x < w; ++x) {
+                Bitmap::Pixel p = image.pixel(x, y);
+                if (p.a == 0) continue;
+                const int bx = static_cast<int>(x / size);
+                uint32_t seedValue = static_cast<uint32_t>(frame) * 2654435761u +
+                                      static_cast<uint32_t>(bx) * 668265263u +
+                                      static_cast<uint32_t>(by) * 374761393u + 1u;
+                if (seedValue == 0) seedValue = 1;  // minstd_randは0シードだと縮退する
+                std::minstd_rand rng(seedValue);
+                const uint32_t r1 = static_cast<uint32_t>(rng());
+                const double noise = (static_cast<double>(r1 % 2000001u) / 1000000.0) - 1.0;  // -1.0〜1.0
+                const double delta = noise * amount * 127.5;
+                p.r = static_cast<uint8_t>(std::lround(std::clamp(p.r + delta, 0.0, 255.0)));
+                p.g = static_cast<uint8_t>(std::lround(std::clamp(p.g + delta, 0.0, 255.0)));
+                p.b = static_cast<uint8_t>(std::lround(std::clamp(p.b + delta, 0.0, 255.0)));
+                image.setPixel(x, y, p);
+            }
+        }
+    });
+}
+
+// 色収差: R/Bチャンネルを中心から半径方向に±amount*d(dは正規化距離、0=中心〜1=四隅相当)だけ
+// ずらしてバイリンサンプルする(Gはそのまま)。中心は距離0のためオフセット無し=不変、
+// 周辺ほどR/Bのずれが大きくなり色にじみが出る
+void applyChromAb(Bitmap& image, const Effect& effect) {
+    const double amount = std::clamp(param(effect, "amount", 2.0), 0.0, 20.0);
+    const int w = image.width();
+    const int h = image.height();
+    if (w <= 0 || h <= 0 || amount <= 0.0) return;
+
+    const Bitmap source = image;  // サンプリング元。書き込み先(image)と分離して読み取り競合を避ける
+    const double cx = (w - 1) / 2.0;
+    const double cy = (h - 1) / 2.0;
+    const double maxDist = std::sqrt(cx * cx + cy * cy);
+    if (maxDist <= 0.0) return;
+
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const double dx = x - cx;
+                const double dy = y - cy;
+                const double dist = std::sqrt(dx * dx + dy * dy);
+                const Bitmap::Pixel orig = source.pixel(x, y);
+                if (dist < 1e-6) {
+                    image.setPixel(x, y, orig);
+                    continue;
+                }
+                const double d = dist / maxDist;
+                const double ux = dx / dist;
+                const double uy = dy / dist;
+                const double shift = amount * d;
+                const Bitmap::Pixel rSample = sampleBilinear(source, x + ux * shift, y + uy * shift);
+                const Bitmap::Pixel bSample = sampleBilinear(source, x - ux * shift, y - uy * shift);
+                Bitmap::Pixel result{rSample.r, orig.g, bSample.b, orig.a};
+                image.setPixel(x, y, result);
+            }
+        }
+    });
+}
+
 }  // namespace
 
 void applyEffect(Bitmap& image, const Effect& effect, size_t frame) {
@@ -216,6 +518,24 @@ void applyEffect(Bitmap& image, const Effect& effect, size_t frame) {
             break;
         case EffectType::Shake:
             applyShake(image, resolved, frame);
+            break;
+        case EffectType::ColorCorrect:
+            applyColorCorrect(image, resolved);
+            break;
+        case EffectType::Diffusion:
+            applyDiffusion(image, resolved);
+            break;
+        case EffectType::RadialBlur:
+            applyRadialBlur(image, resolved);
+            break;
+        case EffectType::Vignette:
+            applyVignette(image, resolved);
+            break;
+        case EffectType::Grain:
+            applyGrain(image, resolved, frame);
+            break;
+        case EffectType::ChromAb:
+            applyChromAb(image, resolved);
             break;
     }
 }

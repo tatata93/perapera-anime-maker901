@@ -215,6 +215,239 @@ TEST_CASE("applyShake produces different offsets for different frames", "[core][
     REQUIRE(anyDifferent);
 }
 
+// --- ColorCorrect(色調補正) ---
+
+TEST_CASE("applyColorCorrect brightens with positive brightness", "[core][effect][colorcorrect]") {
+    core::Bitmap bmp(4, 4);
+    bmp.fill({100, 100, 100, 255});
+
+    core::Effect cc;
+    cc.type = core::EffectType::ColorCorrect;
+    cc.params = core::effectDefaultParams(core::EffectType::ColorCorrect);
+    cc.params["brightness"] = 50.0;
+    core::applyEffect(bmp, cc, 0);
+
+    const auto p = bmp.pixel(0, 0);
+    REQUIRE(p.r == 150);
+    REQUIRE(p.g == 150);
+    REQUIRE(p.b == 150);
+    REQUIRE(p.a == 255);
+}
+
+TEST_CASE("applyColorCorrect with saturation 0 turns a color pixel gray", "[core][effect][colorcorrect]") {
+    core::Bitmap bmp(4, 4);
+    bmp.fill({200, 50, 50, 255});
+
+    core::Effect cc;
+    cc.type = core::EffectType::ColorCorrect;
+    cc.params = core::effectDefaultParams(core::EffectType::ColorCorrect);
+    cc.params["saturation"] = 0.0;
+    core::applyEffect(bmp, cc, 0);
+
+    const auto p = bmp.pixel(0, 0);
+    REQUIRE(p.r == p.g);
+    REQUIRE(p.g == p.b);
+}
+
+TEST_CASE("applyColorCorrect skips fully transparent pixels", "[core][effect][colorcorrect]") {
+    core::Bitmap bmp(4, 4);
+    bmp.fill({0, 0, 0, 0});
+
+    core::Effect cc;
+    cc.type = core::EffectType::ColorCorrect;
+    cc.params = core::effectDefaultParams(core::EffectType::ColorCorrect);
+    cc.params["brightness"] = 100.0;
+    core::applyEffect(bmp, cc, 0);
+
+    REQUIRE(bmp.pixel(0, 0).a == 0);
+    REQUIRE(bmp.pixel(0, 0).r == 0);
+}
+
+// --- Diffusion(ディフュージョン) ---
+
+TEST_CASE("applyDiffusion spreads a bright area into transparent surroundings", "[core][effect][diffusion]") {
+    core::Bitmap bmp(41, 41);
+    bmp.fill({0, 0, 0, 0});
+    for (int y = 17; y <= 23; ++y) {
+        for (int x = 17; x <= 23; ++x) bmp.setPixel(x, y, {255, 255, 255, 255});
+    }
+
+    core::Effect diff;
+    diff.type = core::EffectType::Diffusion;
+    diff.params = core::effectDefaultParams(core::EffectType::Diffusion);  // radius=12, strength=0.5
+    core::applyEffect(bmp, diff, 0);
+
+    // 明部のすぐ外側(元は完全透明)がにじみ出て不透明度を持つはず
+    const auto neighbor = bmp.pixel(25, 20);
+    REQUIRE(neighbor.a > 0);
+}
+
+TEST_CASE("applyDiffusion is a no-op when strength is 0", "[core][effect][diffusion]") {
+    core::Bitmap bmp(16, 16);
+    bmp.fill({120, 60, 200, 255});
+    core::Bitmap before = bmp;
+
+    core::Effect diff;
+    diff.type = core::EffectType::Diffusion;
+    diff.params = {{"radius", 12.0}, {"strength", 0.0}};
+    core::applyEffect(bmp, diff, 0);
+
+    for (int y = 0; y < bmp.height(); ++y) {
+        for (int x = 0; x < bmp.width(); ++x) {
+            REQUIRE(bmp.pixel(x, y).r == before.pixel(x, y).r);
+            REQUIRE(bmp.pixel(x, y).a == before.pixel(x, y).a);
+        }
+    }
+}
+
+// --- RadialBlur(放射ブラー) ---
+
+TEST_CASE("applyRadialBlur leaves the exact center pixel unchanged", "[core][effect][radialblur]") {
+    core::Bitmap bmp(41, 41);
+    bmp.fill({0, 0, 0, 0});
+    for (int y = 0; y < 41; ++y) {
+        for (int x = 0; x < 41; ++x) bmp.setPixel(x, y, {static_cast<uint8_t>(x * 6 % 256), 40, 200, 255});
+    }
+    const auto centerBefore = bmp.pixel(20, 20);
+
+    core::Effect rb;
+    rb.type = core::EffectType::RadialBlur;
+    rb.params = core::effectDefaultParams(core::EffectType::RadialBlur);  // centerX/Y=0.5
+    rb.params["amount"] = 0.15;
+    core::applyEffect(bmp, rb, 0);
+
+    const auto centerAfter = bmp.pixel(20, 20);
+    REQUIRE(centerAfter.r == centerBefore.r);
+    REQUIRE(centerAfter.g == centerBefore.g);
+    REQUIRE(centerAfter.b == centerBefore.b);
+}
+
+TEST_CASE("applyRadialBlur blurs pixels away from the center", "[core][effect][radialblur]") {
+    core::Bitmap bmp(41, 41);
+    bmp.fill({0, 0, 0, 255});
+    bmp.setPixel(35, 20, {255, 255, 255, 255});  // 中心から離れた1点の目印
+    const auto before = bmp.pixel(35, 20);
+
+    core::Effect rb;
+    rb.type = core::EffectType::RadialBlur;
+    rb.params = core::effectDefaultParams(core::EffectType::RadialBlur);
+    rb.params["amount"] = 0.2;
+    core::applyEffect(bmp, rb, 0);
+
+    const auto after = bmp.pixel(35, 20);
+    REQUIRE(after.r < before.r);  // 縮小サンプリングで周辺の暗い色と混ざり薄まる
+}
+
+// --- Vignette(ビネット) ---
+
+TEST_CASE("applyVignette darkens the corners but leaves the exact center unchanged", "[core][effect][vignette]") {
+    core::Bitmap bmp(41, 41);
+    bmp.fill({200, 200, 200, 255});
+
+    core::Effect vg;
+    vg.type = core::EffectType::Vignette;
+    vg.params = core::effectDefaultParams(core::EffectType::Vignette);  // amount=0.4, softness=0.5
+    core::applyEffect(bmp, vg, 0);
+
+    const auto center = bmp.pixel(20, 20);
+    REQUIRE(center.r == 200);  // 中心(距離0)は不変
+
+    const auto corner = bmp.pixel(0, 0);
+    REQUIRE(corner.r < 200);  // 四隅は暗くなる
+}
+
+// --- Grain(グレイン) ---
+
+TEST_CASE("applyGrain is deterministic for the same frame and unchanged when amount is 0", "[core][effect][grain]") {
+    core::Bitmap bmpA(16, 16);
+    bmpA.fill({128, 128, 128, 255});
+    core::Bitmap bmpB = bmpA;
+    core::Bitmap bmpZero = bmpA;
+
+    core::Effect grain;
+    grain.type = core::EffectType::Grain;
+    grain.params = core::effectDefaultParams(core::EffectType::Grain);  // amount=0.15
+
+    core::applyEffect(bmpA, grain, 3);
+    core::applyEffect(bmpB, grain, 3);
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            REQUIRE(bmpA.pixel(x, y).r == bmpB.pixel(x, y).r);
+            REQUIRE(bmpA.pixel(x, y).g == bmpB.pixel(x, y).g);
+            REQUIRE(bmpA.pixel(x, y).b == bmpB.pixel(x, y).b);
+        }
+    }
+
+    // 決定論的ノイズなので、既定パラメータでは輝度が変化しているはず(全ピクセル完全一致ではない)
+    bool anyDifferent = false;
+    for (int y = 0; y < 16 && !anyDifferent; ++y) {
+        for (int x = 0; x < 16 && !anyDifferent; ++x) {
+            if (bmpA.pixel(x, y).r != 128) anyDifferent = true;
+        }
+    }
+    REQUIRE(anyDifferent);
+
+    core::Effect grainZero;
+    grainZero.type = core::EffectType::Grain;
+    grainZero.params = {{"amount", 0.0}, {"size", 1.0}};
+    core::applyEffect(bmpZero, grainZero, 3);
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) REQUIRE(bmpZero.pixel(x, y).r == 128);  // amount=0は不変
+    }
+}
+
+// --- ChromAb(色収差) ---
+
+TEST_CASE("applyChromAb leaves the exact center pixel unchanged", "[core][effect][chromab]") {
+    core::Bitmap bmp(41, 41);
+    for (int y = 0; y < 41; ++y) {
+        for (int x = 0; x < 41; ++x) {
+            bmp.setPixel(x, y, {static_cast<uint8_t>(x * 6 % 256), 128, static_cast<uint8_t>(y * 6 % 256), 255});
+        }
+    }
+    const auto centerBefore = bmp.pixel(20, 20);
+
+    core::Effect ca;
+    ca.type = core::EffectType::ChromAb;
+    ca.params = {{"amount", 8.0}};
+    core::applyEffect(bmp, ca, 0);
+
+    const auto centerAfter = bmp.pixel(20, 20);
+    REQUIRE(centerAfter.r == centerBefore.r);
+    REQUIRE(centerAfter.g == centerBefore.g);
+    REQUIRE(centerAfter.b == centerBefore.b);
+}
+
+TEST_CASE("applyChromAb shifts the R/B channels away from the center", "[core][effect][chromab]") {
+    // 横方向にR/Bが変化する縞模様(Gは一定)にすることで、周辺でのチャンネルずれを検出しやすくする
+    core::Bitmap bmp(41, 21);
+    for (int y = 0; y < 21; ++y) {
+        for (int x = 0; x < 41; ++x) {
+            const uint8_t stripeR = (x % 4 < 2) ? 255 : 0;
+            const uint8_t stripeB = (x % 4 < 2) ? 0 : 255;
+            bmp.setPixel(x, y, {stripeR, 128, stripeB, 255});
+        }
+    }
+    core::Bitmap before = bmp;
+
+    core::Effect ca;
+    ca.type = core::EffectType::ChromAb;
+    ca.params = {{"amount", 10.0}};
+    core::applyEffect(bmp, ca, 0);
+
+    // 右端付近(中心から離れた場所)でR/Bのいずれかが元の縞模様からずれているはず
+    bool anyDifferent = false;
+    for (int x = 35; x < 40 && !anyDifferent; ++x) {
+        const auto a = bmp.pixel(x, 10);
+        const auto b = before.pixel(x, 10);
+        if (a.r != b.r || a.b != b.b) anyDifferent = true;
+    }
+    REQUIRE(anyDifferent);
+
+    // Gチャンネルはどのピクセルでもそのまま(シフトされない)
+    for (int x = 0; x < 41; ++x) REQUIRE(bmp.pixel(x, 10).g == 128);
+}
+
 // --- Compositor統合 ---
 
 TEST_CASE("renderCutFrame is byte-identical when effects are empty", "[core][effect][compositor]") {
