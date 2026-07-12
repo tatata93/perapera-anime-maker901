@@ -235,6 +235,17 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& path, 
                                         {"focus", mp.camera.focusDistanceMm}}},
                                       {"samples", mp.samplesPerPixel},
                                       {"planes", std::move(jPlanes)}};
+                // 透過光(T光)。無効かつ既定値のままなら省略する
+                if (mp.backlight.enabled) {
+                    jCut["multiplane"]["backlight"] = {{"enabled", mp.backlight.enabled},
+                                                       {"intensity", mp.backlight.intensity},
+                                                       {"r", mp.backlight.colorR},
+                                                       {"g", mp.backlight.colorG},
+                                                       {"b", mp.backlight.colorB},
+                                                       {"tau", mp.backlight.paintTransmittance},
+                                                       {"bloomRadius", mp.backlight.bloomRadiusPx},
+                                                       {"bloomStrength", mp.backlight.bloomStrength}};
+                }
             }
             jCuts.push_back(std::move(jCut));
         }
@@ -568,6 +579,18 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                         mp.camera.focusDistanceMm = jCam.value("focus", 500.0);
                     }
                     mp.samplesPerPixel = jMp.value("samples", 8);
+                    // 透過光(T光)(任意、欠落時は既定=無効のまま)
+                    if (jMp.contains("backlight")) {
+                        const json& jBl = jMp.at("backlight");
+                        mp.backlight.enabled = jBl.value("enabled", false);
+                        mp.backlight.intensity = jBl.value("intensity", 4.0);
+                        mp.backlight.colorR = jBl.value("r", 1.0);
+                        mp.backlight.colorG = jBl.value("g", 0.92);
+                        mp.backlight.colorB = jBl.value("b", 0.78);
+                        mp.backlight.paintTransmittance = jBl.value("tau", 0.1);
+                        mp.backlight.bloomRadiusPx = jBl.value("bloomRadius", 24.0);
+                        mp.backlight.bloomStrength = jBl.value("bloomStrength", 0.5);
+                    }
                     if (jMp.contains("planes")) {
                         for (const json& jPlane : jMp.at("planes")) {
                             MultiplaneCelPlane plane;

@@ -6,6 +6,7 @@
 
 #include "EffectProcessor.h"
 #include "Multiplane.h"
+#include "Parallel.h"
 
 namespace core {
 
@@ -30,23 +31,25 @@ void applyEffectWithMask(Bitmap& image, const Effect& effect, size_t frame, int 
     const auto blend = [](uint8_t b, uint8_t a, float t) {
         return static_cast<uint8_t>(std::lround(b + (a - b) * t));
     };
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const int mx = x + offsetX;
-            const int my = y + offsetY;
-            uint8_t maskA = 0;
-            if (mx >= 0 && my >= 0 && mx < effect.mask.width() && my < effect.mask.height()) {
-                maskA = effect.mask.pixel(mx, my).a;
+    parallelForRows(0, h, [&](int rowBegin, int rowEnd) {
+        for (int y = rowBegin; y < rowEnd; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const int mx = x + offsetX;
+                const int my = y + offsetY;
+                uint8_t maskA = 0;
+                if (mx >= 0 && my >= 0 && mx < effect.mask.width() && my < effect.mask.height()) {
+                    maskA = effect.mask.pixel(mx, my).a;
+                }
+                if (maskA == 255) continue;  // 完全適用: image(適用後)のまま
+                const float t = maskA / 255.0f;
+                const Bitmap::Pixel bp = before.pixel(x, y);
+                const Bitmap::Pixel ap = image.pixel(x, y);
+                image.setPixel(x, y,
+                               {blend(bp.r, ap.r, t), blend(bp.g, ap.g, t), blend(bp.b, ap.b, t),
+                                blend(bp.a, ap.a, t)});
             }
-            if (maskA == 255) continue;  // 完全適用: image(適用後)のまま
-            const float t = maskA / 255.0f;
-            const Bitmap::Pixel bp = before.pixel(x, y);
-            const Bitmap::Pixel ap = image.pixel(x, y);
-            image.setPixel(x, y,
-                           {blend(bp.r, ap.r, t), blend(bp.g, ap.g, t), blend(bp.b, ap.b, t),
-                            blend(bp.a, ap.a, t)});
         }
-    }
+    });
 }
 
 // srcをdst(不透明前提)へ、(offsetX, offsetY)だけずらしてsrc-over合成する。
@@ -96,32 +99,34 @@ Bitmap applyCameraFrame(const Bitmap& src, const CameraFrameState& cam, int widt
     };
 
     Bitmap out(width, height);
-    for (int oy = 0; oy < height; ++oy) {
-        for (int ox = 0; ox < width; ++ox) {
-            // 出力ピクセル中心を切り出し矩形→元画像の座標へ写像する
-            const double u = (ox + 0.5) / width;
-            const double v = (oy + 0.5) / height;
-            const double sx = cropX0 + u * cropW - 0.5;
-            const double sy = cropY0 + v * cropH - 0.5;
+    parallelForRows(0, height, [&](int rowBegin, int rowEnd) {
+        for (int oy = rowBegin; oy < rowEnd; ++oy) {
+            for (int ox = 0; ox < width; ++ox) {
+                // 出力ピクセル中心を切り出し矩形→元画像の座標へ写像する
+                const double u = (ox + 0.5) / width;
+                const double v = (oy + 0.5) / height;
+                const double sx = cropX0 + u * cropW - 0.5;
+                const double sy = cropY0 + v * cropH - 0.5;
 
-            const int x0 = static_cast<int>(std::floor(sx));
-            const int y0 = static_cast<int>(std::floor(sy));
-            const double fx = sx - x0;
-            const double fy = sy - y0;
+                const int x0 = static_cast<int>(std::floor(sx));
+                const int y0 = static_cast<int>(std::floor(sy));
+                const double fx = sx - x0;
+                const double fy = sy - y0;
 
-            const Bitmap::Pixel p00 = samplePaper(x0, y0);
-            const Bitmap::Pixel p10 = samplePaper(x0 + 1, y0);
-            const Bitmap::Pixel p01 = samplePaper(x0, y0 + 1);
-            const Bitmap::Pixel p11 = samplePaper(x0 + 1, y0 + 1);
+                const Bitmap::Pixel p00 = samplePaper(x0, y0);
+                const Bitmap::Pixel p10 = samplePaper(x0 + 1, y0);
+                const Bitmap::Pixel p01 = samplePaper(x0, y0 + 1);
+                const Bitmap::Pixel p11 = samplePaper(x0 + 1, y0 + 1);
 
-            Bitmap::Pixel result;
-            result.r = lerpChannel(p00.r, p10.r, p01.r, p11.r, fx, fy);
-            result.g = lerpChannel(p00.g, p10.g, p01.g, p11.g, fx, fy);
-            result.b = lerpChannel(p00.b, p10.b, p01.b, p11.b, fx, fy);
-            result.a = lerpChannel(p00.a, p10.a, p01.a, p11.a, fx, fy);
-            out.setPixel(ox, oy, result);
+                Bitmap::Pixel result;
+                result.r = lerpChannel(p00.r, p10.r, p01.r, p11.r, fx, fy);
+                result.g = lerpChannel(p00.g, p10.g, p01.g, p11.g, fx, fy);
+                result.b = lerpChannel(p00.b, p10.b, p01.b, p11.b, fx, fy);
+                result.a = lerpChannel(p00.a, p10.a, p01.a, p11.a, fx, fy);
+                out.setPixel(ox, oy, result);
+            }
         }
-    }
+    });
     return out;
 }
 
@@ -202,7 +207,7 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
 
     int samples = setup.samplesPerPixel;
     if (options.multiplaneSampleCap > 0) samples = std::min(samples, options.multiplaneSampleCap);
-    Bitmap out = renderMultiplane(mplanes, setup.camera, width, height, samples, 1);
+    Bitmap out = renderMultiplane(mplanes, setup.camera, width, height, samples, 1, &setup.backlight);
 
     // 全平面合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
     for (const Effect& effect : cut.effects()) {

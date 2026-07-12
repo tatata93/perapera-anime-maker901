@@ -132,6 +132,14 @@ TEST_CASE("Multiplane setup round trips through ppam", "[core][io][multiplane]")
     mp.samplesPerPixel = 16;
     mp.planes.push_back({0, 500.0, 400.0});
     mp.planes.push_back({1, 300.0, 300.0});
+    mp.backlight.enabled = true;  // 透過光(T光)も往復させる
+    mp.backlight.intensity = 6.0;
+    mp.backlight.colorR = 1.0;
+    mp.backlight.colorG = 0.5;
+    mp.backlight.colorB = 0.25;
+    mp.backlight.paintTransmittance = 0.3;
+    mp.backlight.bloomRadiusPx = 32.0;
+    mp.backlight.bloomStrength = 0.7;
 
     // 比較用: マルチプレーンを持たないカット(既定値のまま)も一緒に往復させ、省略時の既定を確認する
     scene.addCut("Cut B");
@@ -155,11 +163,20 @@ TEST_CASE("Multiplane setup round trips through ppam", "[core][io][multiplane]")
     REQUIRE(loadedMp.planes[1].celIndex == 1);
     REQUIRE(loadedMp.planes[1].distanceMm == 300.0);
     REQUIRE(loadedMp.planes[1].widthMm == 300.0);
+    REQUIRE(loadedMp.backlight.enabled == true);
+    REQUIRE(loadedMp.backlight.intensity == 6.0);
+    REQUIRE(loadedMp.backlight.colorR == 1.0);
+    REQUIRE(loadedMp.backlight.colorG == 0.5);
+    REQUIRE(loadedMp.backlight.colorB == 0.25);
+    REQUIRE(loadedMp.backlight.paintTransmittance == 0.3);
+    REQUIRE(loadedMp.backlight.bloomRadiusPx == 32.0);
+    REQUIRE(loadedMp.backlight.bloomStrength == 0.7);
 
-    // マルチプレーン設定を持たないカットは既定(無効・段なし)のまま
+    // マルチプレーン設定を持たないカットは既定(無効・段なし・透過光無効)のまま
     const core::MultiplaneSetup& defaultMp = loaded->scene(0).cut(1).multiplane();
     REQUIRE_FALSE(defaultMp.enabled);
     REQUIRE(defaultMp.planes.empty());
+    REQUIRE_FALSE(defaultMp.backlight.enabled);
 
     std::filesystem::remove(path);
 }

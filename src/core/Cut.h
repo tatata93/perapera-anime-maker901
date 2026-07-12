@@ -33,6 +33,7 @@ struct MultiplaneSetup {
     MultiplaneCamera camera;
     std::vector<MultiplaneCelPlane> planes;  // 割付の無いセルは撮影されない
     int samplesPerPixel = 8;                 // プレビュー/書き出しのサンプル数
+    MultiplaneBacklight backlight;           // 透過光(T光)。既定は無効
 };
 
 // 制作進捗(編集/カッティング工程の進行管理用)

@@ -24,9 +24,30 @@ struct MultiplaneCamera {
     double focusDistanceMm = 500.0;   // ピントの合う平面距離
 };
 
+// 透過光(T光)=撮影台のバックライト。実際の透過光撮影の「二重露光」を再現する:
+// 通常露光(トップライト反射、紙=白)に加えて、下からの光源が全平面を色フィルターとして
+// 透過しレンズへ届く露光を加算する。各平面の画素は per-channel の透過率
+//   T_c = (1 - a) + a * (c_c) * paintTransmittance   (a,cは0〜1)
+// として掛け合わされる(Beer-Lambert式の色フィルターの積)。不透明な黒(c=0)は完全に遮光する
+// ため、「黒く塗ったセルに穴(未塗り部)を開けるとそこだけ光る」という実物と同じ使い方になる。
+// 透過光は反射光と同じレンズサンプル光線で計算されるため、ピント外れの穴は物理的に正しい
+// 玉ボケになる。bloomはフィルムのハレーション(強い光のにじみ)の近似
+struct MultiplaneBacklight {
+    bool enabled = false;
+    double intensity = 4.0;            // 紙白(=1.0)に対する光源の相対強度
+    double colorR = 1.0;               // 光源色(0〜1)
+    double colorG = 0.92;
+    double colorB = 0.78;              // 既定はやや電球色
+    double paintTransmittance = 0.1;   // 塗料の透過率(0=完全遮光、1=完全なカラーゲル)
+    double bloomRadiusPx = 24.0;       // ハレーションの広がり(出力px)
+    double bloomStrength = 0.5;        // ハレーションの強さ(0=なし)
+};
+
 // レイトレースで合成する。背景(全平面の奥)は白。samplesPerPixel>1でDoF/ジッタのモンテカルロ平均。
-// seedで決定論的(同じ入力なら同じ出力)
+// seedで決定論的(同じ入力なら同じ出力)。backlightがnullptrまたはenabled=falseなら透過光なし
+// (従来とバイト単位で同一)
 Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const MultiplaneCamera& camera, int width,
-                         int height, int samplesPerPixel = 1, uint32_t seed = 1);
+                         int height, int samplesPerPixel = 1, uint32_t seed = 1,
+                         const MultiplaneBacklight* backlight = nullptr);
 
 }  // namespace core

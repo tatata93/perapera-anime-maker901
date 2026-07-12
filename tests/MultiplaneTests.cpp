@@ -351,3 +351,126 @@ TEST_CASE("renderCutFrame classic multiplane draws a farther plane's marker clos
     // 中心(50px)からの距離: 遠い段のほうが小さい(中央寄り=縮小して写る)
     REQUIRE(std::abs(cxFar - 50.0) < std::abs(cxNear - 50.0));
 }
+
+// --- 透過光(T光、バックライトの二重露光) ---
+
+TEST_CASE("renderMultiplane backlight shines through a hole in an opaque black plane", "[core][multiplane][backlight]") {
+    // 黒く塗り潰した平面の中央に「穴」(透明部分)を開ける。バックライトONで穴だけ明るく光り、
+    // 塗った部分は遮光されて黒いまま=実物の透過光マスクと同じ挙動
+    core::Bitmap art(40, 40);
+    art.fill({0, 0, 0, 255});  // 不透明な黒(完全遮光)
+    for (int y = 18; y <= 21; ++y)
+        for (int x = 18; x <= 21; ++x) art.setPixel(x, y, {0, 0, 0, 0});  // 穴
+
+    core::MultiplanePlane plane;
+    plane.artwork = &art;
+    plane.distanceMm = 500.0;
+    plane.widthMm = 400.0;
+
+    core::MultiplaneCamera camera;  // 既定: focal50/sensor36/ピンホール/focus500
+
+    core::MultiplaneBacklight backlight;
+    backlight.enabled = true;
+    backlight.intensity = 4.0;
+    backlight.colorR = backlight.colorG = backlight.colorB = 1.0;
+    backlight.bloomStrength = 0.0;  // まずハレーション無しで透過そのものを検証
+
+    const core::Bitmap out = core::renderMultiplane({plane}, camera, 100, 100, 1, 1, &backlight);
+
+    // 穴の投影位置=画像中央: 紙白1.0+透過4.0でクランプ→真っ白
+    REQUIRE(out.pixel(50, 50).r == 255);
+    // 黒塗り部分(中央から離れた場所): 反射=黒、透過=0 → 暗いまま
+    REQUIRE(out.pixel(10, 10).r < 30);
+}
+
+TEST_CASE("renderMultiplane backlight bloom spreads light beyond the hole (halation)", "[core][multiplane][backlight]") {
+    core::Bitmap art(40, 40);
+    art.fill({0, 0, 0, 255});
+    for (int y = 18; y <= 21; ++y)
+        for (int x = 18; x <= 21; ++x) art.setPixel(x, y, {0, 0, 0, 0});
+
+    core::MultiplanePlane plane;
+    plane.artwork = &art;
+    plane.distanceMm = 500.0;
+    plane.widthMm = 400.0;
+    core::MultiplaneCamera camera;
+
+    core::MultiplaneBacklight noBloom;
+    noBloom.enabled = true;
+    noBloom.bloomStrength = 0.0;
+    core::MultiplaneBacklight withBloom = noBloom;
+    withBloom.bloomStrength = 1.0;
+    withBloom.bloomRadiusPx = 8.0;
+
+    const core::Bitmap outNo = core::renderMultiplane({plane}, camera, 100, 100, 1, 1, &noBloom);
+    const core::Bitmap outBloom = core::renderMultiplane({plane}, camera, 100, 100, 1, 1, &withBloom);
+
+    // 穴から少し離れた黒塗り部分: ブルーム無しでは暗く、ブルーム有りではにじみで明るくなる
+    const int sampleX = 50 + 10;  // 穴(中央、投影幅約10px)の外側
+    REQUIRE(outBloom.pixel(sampleX, 50).r > outNo.pixel(sampleX, 50).r);
+}
+
+TEST_CASE("renderMultiplane backlight through a colored gel transmits its color", "[core][multiplane][backlight]") {
+    // 赤いゲル(不透明な赤、透過率τ=1.0)を全面に敷く: 透過光は赤くなる(G,Bは遮断)
+    core::Bitmap art(40, 40);
+    art.fill({255, 0, 0, 255});
+
+    core::MultiplanePlane plane;
+    plane.artwork = &art;
+    plane.distanceMm = 500.0;
+    plane.widthMm = 2000.0;  // 画面全体を確実に覆う
+    core::MultiplaneCamera camera;
+
+    core::MultiplaneBacklight backlight;
+    backlight.enabled = true;
+    backlight.intensity = 2.0;
+    backlight.colorR = backlight.colorG = backlight.colorB = 1.0;
+    backlight.paintTransmittance = 1.0;  // 完全なカラーゲル
+    backlight.bloomStrength = 0.0;
+
+    const core::Bitmap out = core::renderMultiplane({plane}, camera, 60, 60, 1, 1, &backlight);
+    const core::Bitmap::Pixel center = out.pixel(30, 30);
+    // 反射光: 赤ゲル(255,0,0)そのまま。透過光: 赤チャンネルのみ2.0通過 → 赤が緑/青より明確に強い
+    REQUIRE(center.r > 200);
+    REQUIRE(center.g < 60);
+    REQUIRE(center.b < 60);
+}
+
+TEST_CASE("renderMultiplane backlight disabled matches no-backlight output byte for byte", "[core][multiplane][backlight]") {
+    core::Bitmap art(40, 40);
+    art.fill({0, 0, 0, 0});
+    art.setPixel(20, 20, {200, 30, 30, 255});
+    core::MultiplanePlane plane;
+    plane.artwork = &art;
+    plane.distanceMm = 500.0;
+    plane.widthMm = 400.0;
+    core::MultiplaneCamera camera;
+    camera.apertureFStop = 2.0;  // DoF+モンテカルロ経路も含めて比較する
+
+    core::MultiplaneBacklight disabled;  // enabled=false
+    const core::Bitmap a = core::renderMultiplane({plane}, camera, 80, 45, 8, 7, nullptr);
+    const core::Bitmap b = core::renderMultiplane({plane}, camera, 80, 45, 8, 7, &disabled);
+    REQUIRE(a.byteSize() == b.byteSize());
+    REQUIRE(std::memcmp(a.data(), b.data(), a.byteSize()) == 0);
+}
+
+TEST_CASE("renderMultiplane is deterministic across runs (parallel rows)", "[core][multiplane][parallel]") {
+    // 行並列化後も同じ入力・シードでバイト単位に同一の結果になること
+    core::Bitmap art(40, 40);
+    art.fill({0, 0, 0, 0});
+    for (int i = 5; i < 35; ++i) art.setPixel(i, i, {180, 40, 220, 255});
+    core::MultiplanePlane plane;
+    plane.artwork = &art;
+    plane.distanceMm = 400.0;
+    plane.widthMm = 400.0;
+    core::MultiplaneCamera camera;
+    camera.apertureFStop = 1.4;
+    camera.focusDistanceMm = 300.0;
+
+    core::MultiplaneBacklight backlight;
+    backlight.enabled = true;
+
+    const core::Bitmap a = core::renderMultiplane({plane}, camera, 160, 90, 8, 3, &backlight);
+    const core::Bitmap b = core::renderMultiplane({plane}, camera, 160, 90, 8, 3, &backlight);
+    REQUIRE(std::memcmp(a.data(), b.data(), a.byteSize()) == 0);
+}
