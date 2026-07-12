@@ -37,7 +37,14 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     toolLayout->addWidget(step2Button);
     toolLayout->addWidget(step3Button);
 
-    toolLayout->addSpacing(16);  // コマ打ちボタンとセル操作ボタンの間の区切り余白
+    toolLayout->addSpacing(16);  // コマ打ちボタンと動画操作ボタンの間の区切り余白
+
+    auto* drawingAddButton = new QPushButton(tr("動画追加"), container);
+    auto* drawingDeleteButton = new QPushButton(tr("動画削除"), container);
+    toolLayout->addWidget(drawingAddButton);
+    toolLayout->addWidget(drawingDeleteButton);
+
+    toolLayout->addSpacing(16);  // 動画操作ボタンとセル操作ボタンの間の区切り余白
 
     auto* celAddButton = new QPushButton(tr("セル追加"), container);
     auto* celRemoveButton = new QPushButton(tr("セル削除"), container);
@@ -67,6 +74,8 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     connect(step1Button, &QPushButton::clicked, this, [this] { emit stepPatternRequested(1); });
     connect(step2Button, &QPushButton::clicked, this, [this] { emit stepPatternRequested(2); });
     connect(step3Button, &QPushButton::clicked, this, [this] { emit stepPatternRequested(3); });
+    connect(drawingAddButton, &QPushButton::clicked, this, &XsheetPanel::addDrawingRequested);
+    connect(drawingDeleteButton, &QPushButton::clicked, this, &XsheetPanel::deleteDrawingRequested);
     connect(celAddButton, &QPushButton::clicked, this, &XsheetPanel::celAddRequested);
     connect(celRemoveButton, &QPushButton::clicked, this, &XsheetPanel::celRemoveRequested);
     connect(celRenameButton, &QPushButton::clicked, this, &XsheetPanel::celRenameRequested);

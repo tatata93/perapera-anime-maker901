@@ -30,6 +30,8 @@ signals:
     void cellClicked(int celIndex, int frame);
     void frameCountChanged(int frameCount);
     void stepPatternRequested(int step);  // step=1/2/3(コマ打ち)
+    void addDrawingRequested();     // 動画追加要求(FramePanelの動画追加と同じ処理をMainWindowで呼ぶ)
+    void deleteDrawingRequested();  // 動画削除要求(現在コマに割り付いている動画を対象にする)
     void celAddRequested();
     void celRemoveRequested();
     void celRenameRequested();

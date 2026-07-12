@@ -367,17 +367,29 @@ void MainWindow::deleteCurrentFrame() {
     updateWindowTitle();
 }
 
+// コマ打ちパターン適用(1/2/3コマ打ち)。XsheetPanelのボタンと「操作」メニューの数字キーで共有する
+void MainWindow::applyStepPattern(int step) {
+    if (m_playing) return;
+    activeCel().applyStepPattern(step, activeCut().frameCount());
+    markCutDirty(activeCut());
+    updateCanvasLayers();
+    updateOnionSkin();
+    updateFrameLabel();
+    updateXsheetPanel();
+    updateWindowTitle();
+}
+
 void MainWindow::togglePlayback() {
     m_playing = !m_playing;
     if (m_playing) {
-        m_playAction->setText(tr("停止"));
+        m_playAction->setText(tr("停止 (Space)"));
         m_canvas->setInputEnabled(false);
         updateOnionSkin();          // 再生中はオニオンスキンを消す
         m_canvas->setLightTable({});  // 再生中はライトテーブルも消す
         m_playTimer->start(1000 / std::max(1, m_fpsSpin->value()));
     } else {
         m_playTimer->stop();
-        m_playAction->setText(tr("再生"));
+        m_playAction->setText(tr("再生 (Space)"));
         m_canvas->setInputEnabled(true);
         updateOnionSkin();
         updateLightTable();  // 再生停止でライトテーブルを復元する
@@ -781,15 +793,15 @@ void MainWindow::setupPanels() {
         updateXsheetPanel();
         updateWindowTitle();
     });
-    connect(m_xsheetPanel, &XsheetPanel::stepPatternRequested, this, [this](int step) {
+    connect(m_xsheetPanel, &XsheetPanel::stepPatternRequested, this, &MainWindow::applyStepPattern);
+    // 動画追加/削除: FramePanel(動画パネル)の動画追加/動画削除ボタンと同じ処理を呼ぶ。
+    // 削除は動画パネルと違い一覧選択がないため、現在コマに割り付いている動画を対象にする
+    connect(m_xsheetPanel, &XsheetPanel::addDrawingRequested, this, &MainWindow::addFrameAfterCurrent);
+    connect(m_xsheetPanel, &XsheetPanel::deleteDrawingRequested, this, [this] {
         if (m_playing) return;
-        activeCel().applyStepPattern(step, activeCut().frameCount());
-        markCutDirty(activeCut());
-        updateCanvasLayers();
-        updateOnionSkin();
-        updateFrameLabel();
-        updateXsheetPanel();
-        updateWindowTitle();
+        const int idx = activeCel().exposure(m_currentFrame);
+        if (idx < 0) return;  // 現在コマが空欄なら対象なし
+        deleteDrawing(idx);
     });
     connect(m_xsheetPanel, &XsheetPanel::celAddRequested, this, &MainWindow::addCel);
     connect(m_xsheetPanel, &XsheetPanel::celRemoveRequested, this, &MainWindow::removeActiveCel);
@@ -1707,7 +1719,7 @@ void MainWindow::setupToolBar() {
     });
 
     QAction* addAction = toolBar->addAction(tr("動画追加"));
-    addAction->setShortcut(QKeySequence(Qt::Key_A));
+    // Key_Aは「操作」メニューのゲーム風ショートカット(前のコマ)に割り当てるため、ここでは単キーを持たせない
     connect(addAction, &QAction::triggered, this, &MainWindow::addFrameAfterCurrent);
 
     QAction* deleteAction = toolBar->addAction(tr("割付クリア"));
@@ -1732,7 +1744,7 @@ void MainWindow::setupToolBar() {
     toolBar->addSeparator();
 
     // --- 再生 ---
-    m_playAction = toolBar->addAction(tr("再生"));
+    m_playAction = toolBar->addAction(tr("再生 (Space)"));
     m_playAction->setShortcut(QKeySequence(Qt::Key_Space));
     connect(m_playAction, &QAction::triggered, this, &MainWindow::togglePlayback);
 
@@ -1745,6 +1757,75 @@ void MainWindow::setupToolBar() {
         if (m_playing) m_playTimer->start(1000 / std::max(1, fps));
     });
     toolBar->addWidget(m_fpsSpin);
+
+    // --- 操作メニュー(ゲーム風ショートカット) ---
+    // ユーザー要望: 「コマ送りにいちいちタイムシートをクリックするのが面倒。よく使う機能をWASDなどゲーム感覚で」
+    // よく使う操作を単キーに割り当てる。一覧として見えるようメニュー化する。
+    // 既にツールバー/メニューで使われているキー(P/E/F/V/Space等)と衝突する場合は、
+    // 新規ショートカットを持たせず既存アクションをそのままtrigger()する(表示は一覧化のためテキストにキーを明記)
+    QMenu* operationMenu = menuBar()->addMenu(tr("操作(&K)"));
+
+    QAction* prevFrameKeyAction = operationMenu->addAction(tr("前のコマ (A)"));
+    prevFrameKeyAction->setShortcut(QKeySequence(Qt::Key_A));
+    connect(prevFrameKeyAction, &QAction::triggered, prevAction, &QAction::trigger);
+
+    QAction* nextFrameKeyAction = operationMenu->addAction(tr("次のコマ (D)"));
+    nextFrameKeyAction->setShortcut(QKeySequence(Qt::Key_D));
+    connect(nextFrameKeyAction, &QAction::triggered, nextAction, &QAction::trigger);
+
+    operationMenu->addSeparator();
+
+    QAction* prevCelKeyAction = operationMenu->addAction(tr("上のセル (W)"));
+    prevCelKeyAction->setShortcut(QKeySequence(Qt::Key_W));
+    connect(prevCelKeyAction, &QAction::triggered, this, [this] {
+        if (m_playing) return;
+        setActiveCel(static_cast<int>(m_activeCel) - 1);
+    });
+
+    QAction* nextCelKeyAction = operationMenu->addAction(tr("下のセル (S)"));
+    nextCelKeyAction->setShortcut(QKeySequence(Qt::Key_S));
+    connect(nextCelKeyAction, &QAction::triggered, this, [this] {
+        if (m_playing) return;
+        setActiveCel(static_cast<int>(m_activeCel) + 1);
+    });
+
+    operationMenu->addSeparator();
+
+    QAction* playKeyAction = operationMenu->addAction(tr("再生/停止 (Space)"));
+    // Spaceは既にm_playActionが持っているため、新規ショートカットは持たせず同じアクションをtriggerする
+    connect(playKeyAction, &QAction::triggered, m_playAction, &QAction::trigger);
+
+    operationMenu->addSeparator();
+
+    QAction* step1KeyAction = operationMenu->addAction(tr("1コマ打ち (1)"));
+    step1KeyAction->setShortcut(QKeySequence(Qt::Key_1));
+    connect(step1KeyAction, &QAction::triggered, this, [this] { applyStepPattern(1); });
+
+    QAction* step2KeyAction = operationMenu->addAction(tr("2コマ打ち (2)"));
+    step2KeyAction->setShortcut(QKeySequence(Qt::Key_2));
+    connect(step2KeyAction, &QAction::triggered, this, [this] { applyStepPattern(2); });
+
+    QAction* step3KeyAction = operationMenu->addAction(tr("3コマ打ち (3)"));
+    step3KeyAction->setShortcut(QKeySequence(Qt::Key_3));
+    connect(step3KeyAction, &QAction::triggered, this, [this] { applyStepPattern(3); });
+
+    operationMenu->addSeparator();
+
+    QAction* penKeyAction = operationMenu->addAction(tr("ペン (B)"));
+    penKeyAction->setShortcut(QKeySequence(Qt::Key_B));
+    connect(penKeyAction, &QAction::triggered, penAction, &QAction::trigger);
+
+    QAction* eraserKeyAction = operationMenu->addAction(tr("消しゴム (E)"));
+    // Eは既にeraserActionが持っているため、新規ショートカットは持たせず同じアクションをtriggerする
+    connect(eraserKeyAction, &QAction::triggered, eraserAction, &QAction::trigger);
+
+    QAction* fillKeyAction = operationMenu->addAction(tr("塗りつぶし (G)"));
+    fillKeyAction->setShortcut(QKeySequence(Qt::Key_G));
+    connect(fillKeyAction, &QAction::triggered, fillAction, &QAction::trigger);
+
+    QAction* moveKeyAction = operationMenu->addAction(tr("移動 (V)"));
+    // Vは既にmoveActionが持っているため、新規ショートカットは持たせず同じアクションをtriggerする
+    connect(moveKeyAction, &QAction::triggered, moveAction, &QAction::trigger);
 }
 
 void MainWindow::debugSetupOnionDemo() {

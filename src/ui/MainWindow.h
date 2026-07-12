@@ -208,6 +208,8 @@ private:
     void onPlaybackTick();
     void updateOnionSkin();
     void updateFrameLabel();
+    // コマ打ちパターン適用(1/2/3コマ打ち)。XsheetPanelのボタンと「操作」メニューのショートカット(1/2/3)で共有する
+    void applyStepPattern(int step);
 
     // 動画(絵)管理操作
     void deleteDrawing(int idx);
