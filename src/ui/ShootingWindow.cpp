@@ -5,6 +5,7 @@
 #include <QBrush>
 #include <QColor>
 #include <QComboBox>
+#include <QDialog>
 #include <QDoubleSpinBox>
 #include <QFont>
 #include <QFormLayout>
@@ -17,6 +18,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTableWidget>
@@ -28,7 +30,9 @@
 #include <utility>
 
 #include "core/Compositor.h"
+#include "core/Effect.h"
 #include "core/Project.h"
+#include "render/GLCanvas.h"
 
 namespace {
 
@@ -62,6 +66,12 @@ QString effectRowLabel(const core::Effect& effect, const QStringList& celNames) 
 // CTI(現在コマ)列のハイライト色
 const QColor kCtiColumnColor(70, 110, 170);
 const QColor kCtiHeaderColor(90, 140, 210);
+
+// タイムラインのエフェクト見出し行: そのエフェクトが存在する範囲(常に全コマ)を示す薄い色帯
+const QColor kEffectBandColor(60, 75, 95);
+
+// マスク編集で使うペン色(赤=alphaがそのままエフェクト適用強度になるため塗った所が赤く見える)
+const QColor kMaskPenColor(255, 0, 0, 255);
 
 }  // namespace
 
@@ -359,6 +369,13 @@ QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringLis
     connect(removeButton, &QToolButton::clicked, this, [this, effectIndex] { removeEffect(effectIndex); });
     headerRow->addWidget(removeButton);
 
+    // 「特定の部分にエフェクトをかけたい」要望: ペンで塗った範囲だけにエフェクトを適用するマスクを編集する
+    auto* maskButton = new QToolButton(box);
+    maskButton->setText(tr("マスク編集"));
+    maskButton->setToolTip(tr("ペンで塗った範囲だけにこのエフェクトを適用する(AEのマスクと同様)"));
+    connect(maskButton, &QToolButton::clicked, this, [this, effectIndex] { openMaskEditDialog(effectIndex); });
+    headerRow->addWidget(maskButton);
+
     vlayout->addLayout(headerRow);
 
     // パラメータ行: [ストップウォッチ] [パラメータ名] [スピン] [◆キー有無/移動]
@@ -413,7 +430,168 @@ QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringLis
     return box;
 }
 
+void ShootingWindow::ensureMaskAllocated(core::Effect& effect) const {
+    if (!effect.mask.isEmpty()) return;
+    core::Bitmap mask(m_canvasWidth, m_canvasHeight);
+    mask.fill({0, 0, 0, 0});  // 全面透明(=描画前は非マスク=全面適用のまま)
+    effect.mask = std::move(mask);
+}
+
+void ShootingWindow::closeMaskEditDialogIfOpen() {
+    if (!m_maskEditDialog) return;
+    m_maskEditDialog->close();  // WA_DeleteOnCloseで破棄される。finishedハンドラでポインタもクリアされる
+}
+
+void ShootingWindow::openMaskEditDialog(int effectIndex) {
+    core::Cut* cut = currentCut();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+
+    closeMaskEditDialogIfOpen();  // 通常起きないが、念のため既存のダイアログを閉じてから開き直す
+
+    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
+    ensureMaskAllocated(effect);
+
+    QStringList celNames;
+    for (size_t ci = 0; ci < cut->celCount(); ++ci) celNames.append(QString::fromStdString(cut->cel(ci).name()));
+
+    auto* dialog = new QDialog(this);
+    dialog->setWindowTitle(tr("マスク編集 - %1").arg(effectRowLabel(effect, celNames)));
+    dialog->resize(960, 540);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    auto* layout = new QVBoxLayout(dialog);
+
+    // ツール行: ペン/消しゴムのトグル・太さスライダー・全消去・反転
+    auto* toolRow = new QHBoxLayout();
+    auto* penButton = new QToolButton(dialog);
+    penButton->setText(tr("ペン"));
+    penButton->setCheckable(true);
+    penButton->setChecked(true);
+    auto* eraserButton = new QToolButton(dialog);
+    eraserButton->setText(tr("消しゴム"));
+    eraserButton->setCheckable(true);
+    penButton->setAutoExclusive(true);
+    eraserButton->setAutoExclusive(true);
+    toolRow->addWidget(penButton);
+    toolRow->addWidget(eraserButton);
+
+    toolRow->addWidget(new QLabel(tr("太さ"), dialog));
+    constexpr int kMaskRadiusMin = 10;
+    constexpr int kMaskRadiusMax = 200;
+    constexpr int kMaskRadiusDefault = 40;
+    auto* radiusSlider = new QSlider(Qt::Horizontal, dialog);
+    radiusSlider->setRange(kMaskRadiusMin, kMaskRadiusMax);
+    radiusSlider->setValue(kMaskRadiusDefault);
+    radiusSlider->setFixedWidth(160);
+    toolRow->addWidget(radiusSlider);
+    auto* radiusValueLabel = new QLabel(QString::number(kMaskRadiusDefault), dialog);
+    radiusValueLabel->setFixedWidth(32);
+    toolRow->addWidget(radiusValueLabel);
+
+    auto* clearButton = new QPushButton(tr("全消去"), dialog);
+    toolRow->addWidget(clearButton);
+    auto* invertButton = new QPushButton(tr("反転"), dialog);
+    toolRow->addWidget(invertButton);
+    toolRow->addStretch(1);
+    layout->addLayout(toolRow);
+
+    auto* canvas = new GLCanvas(dialog);
+    canvas->setCanvasSize(m_canvasWidth, m_canvasHeight);
+    canvas->setTool(GLCanvas::Tool::Pen);
+    canvas->setPenColor(kMaskPenColor);
+    canvas->setPenRadius(static_cast<float>(kMaskRadiusDefault));
+    canvas->setEraserRadius(static_cast<float>(kMaskRadiusDefault));
+    canvas->setBitmap(&effect.mask);
+    layout->addWidget(canvas, 1);
+
+    // 下敷き: このエフェクトを一時的に無効化した状態の現在コマ合成画像を薄く表示し、塗る目安にする
+    {
+        const bool originalEnabled = effect.enabled;
+        effect.enabled = false;
+        core::RenderOptions options;
+        options.multiplaneSampleCap = 4;
+        const core::Bitmap under =
+            core::renderCutFrame(*cut, static_cast<size_t>(m_koma), m_canvasWidth, m_canvasHeight, options);
+        effect.enabled = originalEnabled;
+        // QImageはunder(ローカル変数)のバッファを参照するだけなので、copy()して寿命を切り離してから渡す
+        const QImage underImage =
+            QImage(under.data(), under.width(), under.height(), QImage::Format_RGBA8888).copy();
+        canvas->setUnderlayImage(underImage);
+        canvas->setUnderlayOpacity(0.5f);
+    }
+
+    connect(penButton, &QToolButton::toggled, canvas, [canvas, radiusSlider](bool checked) {
+        if (!checked) return;
+        canvas->setTool(GLCanvas::Tool::Pen);
+        canvas->setPenRadius(static_cast<float>(radiusSlider->value()));
+    });
+    connect(eraserButton, &QToolButton::toggled, canvas, [canvas, radiusSlider](bool checked) {
+        if (!checked) return;
+        canvas->setTool(GLCanvas::Tool::Eraser);
+        canvas->setEraserRadius(static_cast<float>(radiusSlider->value()));
+    });
+    connect(radiusSlider, &QSlider::valueChanged, dialog, [canvas, radiusValueLabel, penButton](int value) {
+        radiusValueLabel->setText(QString::number(value));
+        if (penButton->isChecked()) {
+            canvas->setPenRadius(static_cast<float>(value));
+        } else {
+            canvas->setEraserRadius(static_cast<float>(value));
+        }
+    });
+
+    connect(clearButton, &QPushButton::clicked, this, [this, effectIndex, canvas] {
+        core::Cut* c = currentCut();
+        if (!c || effectIndex < 0 || effectIndex >= static_cast<int>(c->effects().size())) return;
+        core::Effect& e = c->effects()[static_cast<size_t>(effectIndex)];
+        e.mask = core::Bitmap();  // 空に戻す(core::renderCutFrame上は「空=全面適用」になる)
+        ensureMaskAllocated(e);   // 引き続きこのダイアログで塗れるよう、透明ビットマップを確保し直す
+        canvas->setBitmap(&e.mask);
+        canvas->clearTextureCache();
+        markEdited();
+    });
+
+    connect(invertButton, &QPushButton::clicked, this, [this, effectIndex, canvas] {
+        core::Cut* c = currentCut();
+        if (!c || effectIndex < 0 || effectIndex >= static_cast<int>(c->effects().size())) return;
+        core::Effect& e = c->effects()[static_cast<size_t>(effectIndex)];
+        if (e.mask.isEmpty()) return;
+        for (int y = 0; y < e.mask.height(); ++y) {
+            for (int x = 0; x < e.mask.width(); ++x) {
+                core::Bitmap::Pixel p = e.mask.pixel(x, y);
+                p.r = kMaskPenColor.red();
+                p.g = kMaskPenColor.green();
+                p.b = kMaskPenColor.blue();
+                p.a = static_cast<uint8_t>(255 - p.a);
+                e.mask.setPixel(x, y, p);
+            }
+        }
+        canvas->clearTextureCache();
+        canvas->update();
+        markEdited();
+    });
+
+    // ストローク完了ごとにプレビュー更新+edited通知(Undoコマンド自体はここでは使わない)
+    canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command>) { markEdited(); });
+
+    m_maskEditDialog = dialog;
+    m_maskEditEffectIndex = effectIndex;
+    connect(dialog, &QDialog::finished, this, [this, dialog] {
+        if (m_maskEditDialog == dialog) {
+            m_maskEditDialog = nullptr;
+            m_maskEditEffectIndex = -1;
+        }
+    });
+
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
 void ShootingWindow::rebuildEffectControls() {
+    // エフェクトの追加/削除/並べ替え/対象変更でCut::effects()が再配置されうるため、
+    // マスク編集ダイアログがeffect.maskへ束縛している生ポインタが無効化する前に閉じる(簡易な安全策)
+    closeMaskEditDialogIfOpen();
+
     m_updating = true;
     m_paramRows.clear();
 
@@ -472,14 +650,27 @@ void ShootingWindow::rebuildTimeline() {
     QStringList celNames;
     for (size_t ci = 0; ci < cut->celCount(); ++ci) celNames.append(QString::fromStdString(cut->cel(ci).name()));
 
+    // After Effectsのレイヤータイムライン風: エフェクトごとに「見出し行」1つ+その直下に
+    // キー持ちパラメータの「プロパティ行」をインデントして並べる
     QStringList rowLabels;
     for (int i = 0; i < static_cast<int>(cut->effects().size()); ++i) {
         const core::Effect& effect = cut->effects()[static_cast<size_t>(i)];
-        // hasCurveなパラメータ(paramCurvesに空でない曲線を持つもの)だけを行にする
+
+        TimelineRow headerRow;
+        headerRow.kind = TimelineRow::Kind::Header;
+        headerRow.effectIndex = i;
+        m_timelineRows.push_back(headerRow);
+        rowLabels.append(effectRowLabel(effect, celNames));
+
+        // hasCurveなパラメータ(paramCurvesに空でない曲線を持つもの)だけをプロパティ行にする
         for (const auto& [key, curve] : effect.paramCurves) {
             if (curve.empty()) continue;
-            m_timelineRows.emplace_back(i, key);
-            rowLabels.append(QStringLiteral("%1 / %2").arg(effectRowLabel(effect, celNames), paramLabel(key)));
+            TimelineRow paramRow;
+            paramRow.kind = TimelineRow::Kind::Param;
+            paramRow.effectIndex = i;
+            paramRow.key = key;
+            m_timelineRows.push_back(paramRow);
+            rowLabels.append(QStringLiteral("   └ %1").arg(paramLabel(key)));  // "  └ パラメータ名"
         }
     }
 
@@ -494,13 +685,28 @@ void ShootingWindow::rebuildTimeline() {
     m_timeline->setHorizontalHeaderLabels(colLabels);
 
     for (int r = 0; r < rows; ++r) {
-        const core::Effect& effect = cut->effects()[static_cast<size_t>(m_timelineRows[static_cast<size_t>(r)].first)];
-        const std::string& key = m_timelineRows[static_cast<size_t>(r)].second;
-        for (int c = 0; c < cols; ++c) {
-            const bool hasKey = effect.hasKeyAt(key, static_cast<size_t>(c));
-            auto* item = new QTableWidgetItem(hasKey ? QStringLiteral("◆") : QString());
-            item->setTextAlignment(Qt::AlignCenter);
-            m_timeline->setItem(r, c, item);
+        const TimelineRow& rowInfo = m_timelineRows[static_cast<size_t>(r)];
+        const core::Effect& effect = cut->effects()[static_cast<size_t>(rowInfo.effectIndex)];
+
+        if (rowInfo.kind == TimelineRow::Kind::Header) {
+            // 見出し行: セルにテキストは置かず、そのエフェクトが存在する範囲(常に全コマ)を
+            // refreshTimelineHighlight()で薄い色帯として塗る。有効/無効は行ヘッダの文字色で示す
+            for (int c = 0; c < cols; ++c) {
+                m_timeline->setItem(r, c, new QTableWidgetItem());
+            }
+            if (QTableWidgetItem* vHeader = m_timeline->verticalHeaderItem(r)) {
+                QFont f = vHeader->font();
+                f.setBold(true);
+                vHeader->setFont(f);
+                vHeader->setForeground(effect.enabled ? QBrush() : QBrush(QColor(140, 140, 140)));
+            }
+        } else {
+            for (int c = 0; c < cols; ++c) {
+                const bool hasKey = effect.hasKeyAt(rowInfo.key, static_cast<size_t>(c));
+                auto* item = new QTableWidgetItem(hasKey ? QStringLiteral("◆") : QString());
+                item->setTextAlignment(Qt::AlignCenter);
+                m_timeline->setItem(r, c, item);
+            }
         }
     }
 
@@ -524,7 +730,15 @@ void ShootingWindow::refreshTimelineHighlight() {
         for (int r = 0; r < rows; ++r) {
             QTableWidgetItem* item = m_timeline->item(r, c);
             if (!item) continue;
-            item->setBackground(isCurrent ? QBrush(kCtiColumnColor) : QBrush());
+            const bool isHeaderRow = static_cast<size_t>(r) < m_timelineRows.size() &&
+                                      m_timelineRows[static_cast<size_t>(r)].kind == TimelineRow::Kind::Header;
+            if (isCurrent) {
+                item->setBackground(QBrush(kCtiColumnColor));
+            } else if (isHeaderRow) {
+                item->setBackground(QBrush(kEffectBandColor));
+            } else {
+                item->setBackground(QBrush());
+            }
         }
     }
 }
@@ -703,18 +917,22 @@ void ShootingWindow::onTimelineCellClicked(int row, int column) {
 
 void ShootingWindow::onTimelineCellDoubleClicked(int row, int column) {
     if (row < 0 || row >= static_cast<int>(m_timelineRows.size()) || column < 0) return;
-    core::Cut* cut = currentCut();
-    if (!cut) return;
-    const auto [effectIndex, key] = m_timelineRows[static_cast<size_t>(row)];
-    if (effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
-    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
-    const size_t frame = static_cast<size_t>(column);
+    const TimelineRow& rowInfo = m_timelineRows[static_cast<size_t>(row)];
 
     setKoma(column);  // ダブルクリックでもCTIを移動させておく(見た目の一貫性)
-    if (effect.hasKeyAt(key, frame)) {
-        effect.removeKey(key, frame);
+
+    if (rowInfo.kind != TimelineRow::Kind::Param) return;  // 見出し行のダブルクリックはCTI移動のみ(キー操作なし)
+
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    if (rowInfo.effectIndex < 0 || rowInfo.effectIndex >= static_cast<int>(cut->effects().size())) return;
+    core::Effect& effect = cut->effects()[static_cast<size_t>(rowInfo.effectIndex)];
+    const size_t frame = static_cast<size_t>(column);
+
+    if (effect.hasKeyAt(rowInfo.key, frame)) {
+        effect.removeKey(rowInfo.key, frame);
     } else {
-        effect.setKey(key, frame, effect.valueAt(key, frame));
+        effect.setKey(rowInfo.key, frame, effect.valueAt(rowInfo.key, frame));
     }
     rebuildEffectControls();
     rebuildTimeline();
@@ -753,6 +971,10 @@ void ShootingWindow::onPlaybackTick() {
 }
 
 void ShootingWindow::debugSelectKoma(int koma) { setKoma(koma); }
+
+void ShootingWindow::debugOpenMaskEditDialog(int effectIndex) { openMaskEditDialog(effectIndex); }
+
+QWidget* ShootingWindow::maskEditDialogWidget() const { return m_maskEditDialog; }
 
 void ShootingWindow::markEdited() {
     requestPreview();

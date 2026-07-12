@@ -1790,8 +1790,8 @@ void MainWindow::debugSetupCameraDemo() {
 
 void MainWindow::debugSetupShootingDemo() {
     // 撮影ウィンドウ確認用: ストローク1本(矩形枠)を描いて尺24の止めにし、
-    // 全体ブラー(コマ0=半径0→コマ23=半径10のキー)+全体パラ(キー無し)を組んで
-    // 撮影ウィンドウを開き、シートのコマ12を選択する
+    // 全体ブラー(コマ0=半径0→コマ23=半径10のキー、画面右半分だけに効くマスク付き)+全体パラ
+    // (キー無し)を組んで撮影ウィンドウを開き、シートのコマ12を選択する
     debugSetupFillDemo();  // 目印になる矩形枠をアクティブセル(セル0)に描く
 
     core::Cut& cut = activeCut();
@@ -1807,6 +1807,16 @@ void MainWindow::debugSetupShootingDemo() {
     blur.params = core::effectDefaultParams(core::EffectType::Blur);
     blur.setKey("radius", 0, 0.0);    // 冒頭はボケなし
     blur.setKey("radius", 23, 10.0);  // 末尾へ向けてボケていく(フォーカスアウト)
+
+    // マスク編集(「特定の部分にエフェクトをかけたい」要望)確認用: 画面の右半分だけを赤(alpha255)で
+    // 塗ったマスクを設定する。プレビューでは右半分だけボケる見え方になる
+    core::Bitmap blurMask(kCanvasWidth, kCanvasHeight);
+    blurMask.fill({0, 0, 0, 0});
+    for (int y = 0; y < kCanvasHeight; ++y) {
+        for (int x = kCanvasWidth / 2; x < kCanvasWidth; ++x) blurMask.setPixel(x, y, {255, 0, 0, 255});
+    }
+    blur.mask = std::move(blurMask);
+
     cut.effects().push_back(blur);
 
     core::Effect para;

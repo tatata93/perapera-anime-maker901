@@ -8,6 +8,7 @@
 #include <vector>
 
 class QComboBox;
+class QDialog;
 class QDoubleSpinBox;
 class QGroupBox;
 class QLabel;
@@ -19,6 +20,7 @@ class QTimer;
 class QToolButton;
 class QVBoxLayout;
 class QWidget;
+class GLCanvas;
 
 namespace core {
 class Cut;
@@ -48,6 +50,10 @@ public:
 
     // 動作確認用: 現在コマ(CTI)を直接指定する
     void debugSelectKoma(int koma);
+    // 動作確認用: 指定エフェクトのマスク編集ダイアログを開く(既存が開いていれば閉じてから開き直す)
+    void debugOpenMaskEditDialog(int effectIndex);
+    // 動作確認用: 現在開いているマスク編集ダイアログ(未オープンならnullptr)
+    QWidget* maskEditDialogWidget() const;
 
 signals:
     void edited();  // エフェクトの構成/有効/対象/パラメータ/キーのいずれかが変更された
@@ -62,10 +68,28 @@ private:
         QToolButton* diamond = nullptr;
     };
 
+    // タイムライン1行分の意味づけ。エフェクトごとに「見出し行」1つ+その直下に
+    // キー持ちパラメータの「プロパティ行」が並ぶ(After Effectsのレイヤータイムライン風)
+    struct TimelineRow {
+        enum class Kind { Header, Param };
+        Kind kind = Kind::Param;
+        int effectIndex = -1;
+        std::string key;  // Param行のみ使用
+    };
+
     core::Cut* currentCut() const;
 
     // エフェクト1個分のGroupBoxを作る(対象コンボ・上下/削除ボタン・パラメータ行群)
     QGroupBox* buildEffectGroupBox(int effectIndex, const QStringList& celNames);
+
+    // 指定エフェクトのマスク(適用範囲)をペンで塗るモードレスダイアログを開く。
+    // 既に開いていれば閉じてから開き直す
+    void openMaskEditDialog(int effectIndex);
+    // マスク編集ダイアログが開いていれば閉じる(エフェクト構成が変わるrebuildEffectControls
+    // の直前に呼び、GLCanvasが束縛しているeffect.maskへの生ポインタが無効化するのを防ぐ)
+    void closeMaskEditDialogIfOpen();
+    // 対象エフェクトのmaskが空(未設定)なら、キャンバスサイズの透明ビットマップを確保する
+    void ensureMaskAllocated(core::Effect& effect) const;
 
     void rebuildEffectControls();  // 左「エフェクトコントロール」パネルをカットの内容で作り直す(構造が変わる時)
     void refreshParamRowValues();  // 構造は変えずスピン値/◆表示だけを現在コマに合わせて更新する(軽量、再生中用)
@@ -138,10 +162,15 @@ private:
     QTimer* m_previewTimer = nullptr;  // プレビュー更新のデバウンス用(singleShot)
     bool m_playing = false;            // 再生中はプレビューをデバウンスせず各コマ直接描く
 
-    // 下段: タイムライン(行=キー持ちプロパティ、列=コマ)
+    // 下段: タイムライン(After Effects風「エフェクトレイヤー」形式。行=エフェクト見出し+
+    // キー持ちプロパティ、列=コマ)
     QTableWidget* m_timeline = nullptr;
-    // タイムライン行 → (エフェクトindex, パラメータキー)。hasCurveな行のみ生成される
-    std::vector<std::pair<int, std::string>> m_timelineRows;
+    // タイムライン行の意味づけ一覧(m_timelineの行indexと対応)
+    std::vector<TimelineRow> m_timelineRows;
+
+    // マスク編集ダイアログ(開いていなければnullptr)。QDialogはWA_DeleteOnCloseで自動破棄される
+    QDialog* m_maskEditDialog = nullptr;
+    int m_maskEditEffectIndex = -1;  // ダイアログが対象としているエフェクトindex
 
     // エフェクトコントロールパネルの現在のパラメータ行(コマ移動時の軽量更新に使う)
     std::vector<ParamRowWidgets> m_paramRows;

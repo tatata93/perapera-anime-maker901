@@ -752,6 +752,23 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --shooting-mask-test <出力PNG> で撮影デモ(--shooting-testと同じ、ブラーに
+    // 画面右半分マスク付き)を組んでから、そのブラー(エフェクトindex0)のマスク編集ダイアログ
+    // (GLCanvas+ツール行)を開いた状態を保存して終了する
+    const int shootingMaskIndex = args.indexOf("--shooting-mask-test");
+    if (shootingMaskIndex >= 0 && shootingMaskIndex + 1 < args.size()) {
+        const QString outputPath = args.at(shootingMaskIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupShootingDemo();
+            window.shootingWindow()->debugOpenMaskEditDialog(0);  // ブラー(index0)のマスク編集ダイアログを開く
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                QWidget* dialog = window.shootingWindow()->maskEditDialogWidget();
+                if (dialog) dialog->grab().save(outputPath);
+                QApplication::exit(dialog ? 0 : 1);  // quit()はcloseEvent経由のためexit()で直接終了する
+            });
+        });
+    }
+
     // 動作確認用: --classic-test <出力PNG> でクラシック撮影(マルチプレーン撮影台)デモ
     // (セルA=赤い矩形枠[距離500mm]・セルB=左寄り緑丸[距離300mm]、f/2.0・フォーカス500mm・
     // samples=8)を組み、撮影ウィンドウ(クラシック撮影グループON+プレビュー)を保存して終了する
