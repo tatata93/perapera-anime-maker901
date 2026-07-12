@@ -1,6 +1,7 @@
 #include "Compositor.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <vector>
 
@@ -130,6 +131,89 @@ Bitmap applyCameraFrame(const Bitmap& src, const CameraFrameState& cam, int widt
     return out;
 }
 
+// このセルに(このdrawingで)可視かつ非空のColorTraceレイヤーがあるか。
+// エフェクト無しセルの高速経路(レイヤーを直接画面へblendOverする経路)でも、色トレス線の
+// 同化処理(buildCelComposite)を通す必要があるかどうかの判定に使う
+bool celHasVisibleColorTrace(const Cel& cel, int drawing) {
+    for (size_t li = 0; li < cel.layerCount(); ++li) {
+        const Layer& layer = cel.layer(li);
+        if (!layer.visible()) continue;
+        if (layer.role() != LayerRole::ColorTrace) continue;
+        if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
+        if (!layer.frame(static_cast<size_t>(drawing)).bitmap().isEmpty()) return true;
+    }
+    return false;
+}
+
+// 最終合成でColorTraceレイヤーを除外した場合に、そのセルの「線が通っていた場所」を示す
+// マスクを作る(celImageと同じセルローカル座標、celW×celH)。ColorTraceレイヤーが複数あれば
+// 全て重ね合わせる。レイヤーのビットマップがcelImageより小さい/大きい場合は共通部分のみ見る
+std::vector<bool> buildColorTraceMask(const Cel& cel, int drawing, int celW, int celH) {
+    std::vector<bool> mask(static_cast<size_t>(celW) * static_cast<size_t>(celH), false);
+    for (size_t li = 0; li < cel.layerCount(); ++li) {
+        const Layer& layer = cel.layer(li);
+        if (!layer.visible()) continue;  // 非表示のトレス線は同化対象にしない(buildCelCompositeの除外と揃える)
+        if (layer.role() != LayerRole::ColorTrace) continue;
+        if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
+        const Bitmap& src = layer.frame(static_cast<size_t>(drawing)).bitmap();
+        if (src.isEmpty()) continue;
+
+        const int w = std::min(src.width(), celW);
+        const int h = std::min(src.height(), celH);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                if (src.pixel(x, y).a > 0) mask[static_cast<size_t>(y) * celW + x] = true;
+            }
+        }
+    }
+    return mask;
+}
+
+// 塗分け線(色トレス線)の白化修正: 最終合成では色トレス線レイヤーを除外するが、塗り(彩色)は
+// 線の途中までしか届いていないため、線のあった場所が透明のまま残り紙の白として見えてしまう。
+// 業界標準どおり、色トレス線は仕上げでその領域の塗り色に同化させる: traceMask内でまだ不透明
+// でないピクセルを、隣接する不透明ピクセルの色の平均で埋めていく。
+// Jacobi方式(各パスは直前パスのスナップショットだけを読む)なので実行順に依存せず決定論的。
+// 変化が無くなるか最大64パスで打ち切る(境界は両側から同時に埋まっていくため線の中央付近になる)
+void dissolveColorTraceLines(Bitmap& celImage, const std::vector<bool>& traceMask, int celW, int celH) {
+    constexpr int kMaxPasses = 64;
+    constexpr int kDx[4] = {-1, 1, 0, 0};
+    constexpr int kDy[4] = {0, 0, -1, 1};
+
+    for (int pass = 0; pass < kMaxPasses; ++pass) {
+        const Bitmap snapshot = celImage;  // 前パスの状態(このパス中はこれだけを読む)
+        std::atomic<bool> changed{false};
+        parallelForRows(0, celH, [&](int rowBegin, int rowEnd) {
+            for (int y = rowBegin; y < rowEnd; ++y) {
+                for (int x = 0; x < celW; ++x) {
+                    if (!traceMask[static_cast<size_t>(y) * celW + x]) continue;
+                    if (snapshot.pixel(x, y).a == 255) continue;  // 既に不透明(同化済み)
+
+                    int sumR = 0, sumG = 0, sumB = 0, count = 0;
+                    for (int k = 0; k < 4; ++k) {
+                        const int nx = x + kDx[k];
+                        const int ny = y + kDy[k];
+                        if (nx < 0 || ny < 0 || nx >= celW || ny >= celH) continue;
+                        const Bitmap::Pixel np = snapshot.pixel(nx, ny);
+                        if (np.a != 255) continue;  // 不透明な隣接ピクセルの色だけを使う
+                        sumR += np.r;
+                        sumG += np.g;
+                        sumB += np.b;
+                        ++count;
+                    }
+                    if (count == 0) continue;  // まだ埋める材料が無い(次パス以降で埋まる可能性あり)
+
+                    celImage.setPixel(x, y,
+                                       {static_cast<uint8_t>(sumR / count), static_cast<uint8_t>(sumG / count),
+                                        static_cast<uint8_t>(sumB / count), 255});
+                    changed = true;
+                }
+            }
+        });
+        if (!changed) break;  // これ以上埋まらない(収束)
+    }
+}
+
 // セルの可視レイヤーを重ねた透明合成ビットマップ(セルローカル座標、0,0起点)を作る。
 // レイヤーが1枚も無ければ空のBitmapを返す。デジタル合成(セル別エフェクト適用)と
 // クラシック撮影(マルチプレーンのアートワーク)の両方から使う共通処理
@@ -155,6 +239,16 @@ Bitmap buildCelComposite(const Cel& cel, int drawing, const RenderOptions& optio
     Bitmap celImage(celW, celH);
     celImage.fill({0, 0, 0, 0});
     for (const Bitmap* src : visibleLayers) blendOver(celImage, *src, 0, 0);
+
+    // 色トレス線を除外した合成で、かつこのセルに実際に色トレス線があるときだけ同化処理を行う
+    // (線が無いセルは従来どおり一切変化しない)
+    if (!options.includeColorTrace) {
+        const std::vector<bool> traceMask = buildColorTraceMask(cel, drawing, celW, celH);
+        if (std::any_of(traceMask.begin(), traceMask.end(), [](bool b) { return b; })) {
+            dissolveColorTraceLines(celImage, traceMask, celW, celH);
+        }
+    }
+
     return celImage;
 }
 
@@ -188,7 +282,7 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
         const int celOffsetX = static_cast<int>(std::lround(position.x));
         const int celOffsetY = static_cast<int>(std::lround(position.y));
         for (const Effect& effect : cut.effects()) {
-            if (effect.enabled && effect.targetCel == p.celIndex)
+            if (effect.enabled && effect.activeAt(frame) && effect.targetCel == p.celIndex)
                 applyEffectWithMask(celImage, effect, frame, celOffsetX, celOffsetY);
         }
 
@@ -211,7 +305,8 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
 
     // 全平面合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
     for (const Effect& effect : cut.effects()) {
-        if (effect.enabled && effect.targetCel == -1) applyEffectWithMask(out, effect, frame, 0, 0);
+        if (effect.enabled && effect.activeAt(frame) && effect.targetCel == -1)
+            applyEffectWithMask(out, effect, frame, 0, 0);
     }
 
     if (const auto cam = cut.cameraFrameAt(frame)) {
@@ -247,11 +342,18 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
         // このセルをtargetCelとする有効な撮影エフェクトを集める(スタック順)
         std::vector<const Effect*> celEffects;
         for (const Effect& effect : cut.effects()) {
-            if (effect.enabled && effect.targetCel == static_cast<int>(ci)) celEffects.push_back(&effect);
+            if (effect.enabled && effect.activeAt(frame) && effect.targetCel == static_cast<int>(ci))
+                celEffects.push_back(&effect);
         }
 
-        if (celEffects.empty()) {
-            // 従来経路: レイヤーを直接outへblendOverする(エフェクト無しの場合の性能維持、バイト同一を保証)
+        // エフェクトが無くても、除外される色トレス線(白化修正の同化処理が必要)を持つセルは
+        // 高速経路を使えない(buildCelCompositeを通す必要がある)
+        const bool needsCelComposite =
+            !celEffects.empty() || (!options.includeColorTrace && celHasVisibleColorTrace(cel, drawing));
+
+        if (!needsCelComposite) {
+            // 従来経路: レイヤーを直接outへblendOverする(エフェクト・トレス同化が無い場合の性能維持、
+            // バイト同一を保証)
             for (size_t li = 0; li < cel.layerCount(); ++li) {
                 const Layer& layer = cel.layer(li);
                 if (!layer.visible()) continue;
@@ -278,7 +380,8 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
 
     // 全セル合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
     for (const Effect& effect : cut.effects()) {
-        if (effect.enabled && effect.targetCel == -1) applyEffectWithMask(out, effect, frame, 0, 0);
+        if (effect.enabled && effect.activeAt(frame) && effect.targetCel == -1)
+            applyEffectWithMask(out, effect, frame, 0, 0);
     }
 
     // カメラフレーム(画面に写る範囲)が指定されていればクロップ+リサンプルする。

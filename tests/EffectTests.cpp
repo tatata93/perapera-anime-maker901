@@ -713,6 +713,108 @@ TEST_CASE("Effect mask round trips through ppam", "[core][io][effect][mask]") {
     std::filesystem::remove_all(path);
 }
 
+// --- 適用範囲のコマ(in/out点) ---
+
+TEST_CASE("Effect::activeAt honors default and explicit in/out points", "[core][effect][range]") {
+    core::Effect effect;
+    effect.type = core::EffectType::Blur;
+
+    SECTION("既定(0,-1)は常にtrue") {
+        REQUIRE(effect.activeAt(0));
+        REQUIRE(effect.activeAt(50));
+        REQUIRE(effect.activeAt(9999));
+    }
+
+    SECTION("範囲指定: in点より前とout点より後はfalse") {
+        effect.startFrame = 5;
+        effect.endFrame = 10;
+        REQUIRE_FALSE(effect.activeAt(4));
+        REQUIRE(effect.activeAt(5));
+        REQUIRE(effect.activeAt(7));
+        REQUIRE(effect.activeAt(10));
+        REQUIRE_FALSE(effect.activeAt(11));
+    }
+
+    SECTION("out点=-1のみ指定: in点以降は末尾まで常にtrue") {
+        effect.startFrame = 3;
+        effect.endFrame = -1;
+        REQUIRE_FALSE(effect.activeAt(2));
+        REQUIRE(effect.activeAt(3));
+        REQUIRE(effect.activeAt(9999));
+    }
+}
+
+TEST_CASE("renderCutFrame respects an effect's in/out points", "[core][effect][range][compositor]") {
+    core::Cut cut("Cut 1");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("線画");
+    addDrawingWithDot(layer, 20, 20, {0, 0, 0, 255}, 41, 41);
+    cut.setFrameCount(12);
+    for (size_t f = 0; f < 12; ++f) cel.setExposure(f, 0);  // 全コマ同じ動画をホールド
+
+    core::Effect blur;
+    blur.type = core::EffectType::Blur;
+    blur.targetCel = -1;  // 全体
+    blur.params = {{"radius", 3.0}};
+    blur.startFrame = 5;
+    blur.endFrame = 10;
+    cut.effects().push_back(blur);
+
+    // コマ4(in点より前): エフェクト無しとバイト同一(比較用に別カットで生成)
+    core::Cut noEffectCut("Cut 1 (no effect)");
+    core::Cel& noEffectCel = noEffectCut.addCel("A");
+    addDrawingWithDot(noEffectCel.addLayer("線画"), 20, 20, {0, 0, 0, 255}, 41, 41);
+    noEffectCut.setFrameCount(12);
+    for (size_t f = 0; f < 12; ++f) noEffectCel.setExposure(f, 0);
+    const auto refAt4 = core::renderCutFrame(noEffectCut, 4, 41, 41);
+    const auto outAt4 = core::renderCutFrame(cut, 4, 41, 41);
+    for (int y = 0; y < 41; ++y) {
+        for (int x = 0; x < 41; ++x) {
+            REQUIRE(outAt4.pixel(x, y).r == refAt4.pixel(x, y).r);
+            REQUIRE(outAt4.pixel(x, y).a == refAt4.pixel(x, y).a);
+        }
+    }
+
+    // コマ7(範囲内): ブラーが効いて黒点周辺が滲む
+    const auto outAt7 = core::renderCutFrame(cut, 7, 41, 41);
+    REQUIRE(outAt7.pixel(21, 20).r < 255);
+    REQUIRE(outAt7.pixel(21, 20).r > 0);
+}
+
+TEST_CASE("Effect startFrame/endFrame round trip through ppam", "[core][io][effect][range]") {
+    core::Project project("P");
+    core::Scene& scene = project.addScene("S");
+    core::Cut& cut = scene.addCut("Cut A");
+    cut.addCel("A").addLayer("L").addFrame();
+
+    core::Effect blur;
+    blur.type = core::EffectType::Blur;
+    blur.params = {{"radius", 4.0}};
+    blur.startFrame = 5;
+    blur.endFrame = 20;
+    cut.effects().push_back(blur);
+
+    core::Effect defaultRange;
+    defaultRange.type = core::EffectType::Shake;
+    defaultRange.params = core::effectDefaultParams(core::EffectType::Shake);
+    cut.effects().push_back(defaultRange);  // 既定(0,-1)のまま
+
+    const auto path = std::filesystem::temp_directory_path() / "ppam_effect_range_test.ppproj";
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const auto& effects = loaded->scene(0).cut(0).effects();
+    REQUIRE(effects.size() == 2);
+    REQUIRE(effects[0].startFrame == 5);
+    REQUIRE(effects[0].endFrame == 20);
+    REQUIRE(effects[1].startFrame == 0);
+    REQUIRE(effects[1].endFrame == -1);
+
+    std::filesystem::remove_all(path);
+}
+
 TEST_CASE("Effect paramCurves round trip through ppam", "[core][io][effect][keys]") {
     core::Project project("P");
     core::Scene& scene = project.addScene("S");

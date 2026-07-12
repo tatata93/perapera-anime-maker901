@@ -90,6 +90,100 @@ TEST_CASE("renderCutFrame excludes trace/correction roles by default", "[core][c
     REQUIRE(check.pixel(3, 3).g == 0);
 }
 
+namespace {
+
+// 塗分け線(色トレス線)の同化テスト用セルを組み立てる: 彩色レイヤー(左半分x0-7=赤、
+// 右半分x12-19=青、中央に幅4px[x8-11]の縦の透明ギャップ)+そのギャップを覆う幅4pxの
+// 縦の色トレス線(黒、不透明)を持つセル
+void addColorTraceGapCel(core::Cut& cut) {
+    core::Cel& cel = cut.addCel("A");
+
+    core::Layer& paint = cel.addLayer("彩色");
+    core::Bitmap art(20, 8);
+    art.fill({0, 0, 0, 0});
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) art.setPixel(x, y, {255, 0, 0, 255});
+        for (int x = 12; x < 20; ++x) art.setPixel(x, y, {0, 0, 255, 255});
+    }
+    paint.addFrame().bitmap() = std::move(art);
+
+    core::Layer& trace = cel.addLayer("トレス");
+    trace.setRole(core::LayerRole::ColorTrace);
+    core::Bitmap traceArt(20, 8);
+    traceArt.fill({0, 0, 0, 0});
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 8; x < 12; ++x) traceArt.setPixel(x, y, {0, 0, 0, 255});
+    }
+    trace.addFrame().bitmap() = std::move(traceArt);
+
+    cut.setFrameCount(1);
+    cel.setExposure(0, 0);
+}
+
+}  // namespace
+
+TEST_CASE("renderCutFrame dissolves excluded color-trace lines into the surrounding fill color",
+          "[core][compositor][colortrace]") {
+    core::Cut cut("Cut 1");
+    addColorTraceGapCel(cut);
+
+    // 既定(トレス除外): 線の下は白(紙)のまま残らず、両側の塗り色(赤/青)のどちらかで埋まる
+    const core::Bitmap out = core::renderCutFrame(cut, 0, 20, 8);
+    for (int x = 8; x < 12; ++x) {
+        const auto p = out.pixel(x, 4);
+        REQUIRE(p.a == 255);
+        const bool isRed = (p.r == 255 && p.g == 0 && p.b == 0);
+        const bool isBlue = (p.r == 0 && p.g == 0 && p.b == 255);
+        REQUIRE((isRed || isBlue));  // 白((255,255,255))にはならない
+    }
+    // 境界の左寄り(x8,9)は赤、右寄り(x10,11)は青に寄る(両側から同時に埋まる=線の中央付近が境界)
+    REQUIRE(out.pixel(8, 4).r == 255);
+    REQUIRE(out.pixel(11, 4).b == 255);
+}
+
+TEST_CASE("renderCutFrame keeps the raw color-trace line when includeColorTrace is true",
+          "[core][compositor][colortrace]") {
+    core::Cut cut("Cut 1");
+    addColorTraceGapCel(cut);
+
+    core::RenderOptions withTrace;
+    withTrace.includeColorTrace = true;
+    const core::Bitmap out = core::renderCutFrame(cut, 0, 20, 8, withTrace);
+    for (int x = 8; x < 12; ++x) {
+        const auto p = out.pixel(x, 4);
+        REQUIRE(p.r == 0);
+        REQUIRE(p.g == 0);
+        REQUIRE(p.b == 0);
+        REQUIRE(p.a == 255);
+    }
+}
+
+TEST_CASE("renderCutFrame leaves cels without a ColorTrace layer byte-identical (no dissolve)",
+          "[core][compositor][colortrace]") {
+    core::Cut cut("Cut 1");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& paint = cel.addLayer("彩色");
+    core::Bitmap art(20, 8);
+    art.fill({0, 0, 0, 0});
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) art.setPixel(x, y, {255, 0, 0, 255});
+        for (int x = 12; x < 20; ++x) art.setPixel(x, y, {0, 0, 255, 255});
+    }
+    paint.addFrame().bitmap() = std::move(art);
+    cut.setFrameCount(1);
+    cel.setExposure(0, 0);
+
+    const core::Bitmap out = core::renderCutFrame(cut, 0, 20, 8);
+    // ColorTraceレイヤーが無いので同化は起きず、ギャップ(x8-11)は従来どおり紙の白のまま
+    for (int x = 8; x < 12; ++x) {
+        const auto p = out.pixel(x, 4);
+        REQUIRE(p.r == 255);
+        REQUIRE(p.g == 255);
+        REQUIRE(p.b == 255);
+        REQUIRE(p.a == 255);
+    }
+}
+
 TEST_CASE("renderCutFrame onlyCel exports a single cel", "[core][compositor]") {
     core::Cut cut("Cut 1");
     core::Cel& celA = cut.addCel("A");

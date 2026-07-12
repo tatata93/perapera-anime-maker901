@@ -92,6 +92,10 @@ private:
     void ensureMaskAllocated(core::Effect& effect) const;
 
     void rebuildEffectControls();  // 左「エフェクトコントロール」パネルをカットの内容で作り直す(構造が変わる時)
+    // パネル+タイムラインの作り直しを次のイベントループへ遅延させる(連続要求は1回にまとめる)。
+    // ウィジェットのシグナル処理中にrebuildEffectControls()を直接呼ぶと発信元ウィジェットを
+    // delete してしまいクラッシュするため、シグナルハンドラからは必ずこちらを使うこと
+    void scheduleRebuild();
     void refreshParamRowValues();  // 構造は変えずスピン値/◆表示だけを現在コマに合わせて更新する(軽量、再生中用)
     void rebuildTimeline();        // 下段タイムライン(キー持ちプロパティのみ行を作る)を作り直す
     void refreshTimelineHighlight();  // 行の作り直し無しでCTI列のハイライトだけ更新する
@@ -108,6 +112,11 @@ private:
     void moveEffect(int effectIndex, int delta);
     void onEffectEnabledChanged(int effectIndex, bool enabled);
     void onEffectTargetChanged(int effectIndex, int comboIndex);
+    // 開始/終了コマ(in/out点)スピンの変更。表示は1始まりなので内部の0始まりへ変換する。
+    // 再構築は不要(タイムラインの色帯だけ更新すれば見た目に反映される)
+    void onEffectStartFrameChanged(int effectIndex, int displayValue);
+    // 終了コマ: 0(specialValueText「末尾」)は内部-1(カット末尾まで)
+    void onEffectEndFrameChanged(int effectIndex, int displayValue);
     // ストップウォッチのON/OFF。ONで現在コマに現在値のキーを1個打つ、OFFで全キーを消す
     void onStopwatchToggled(int effectIndex, const std::string& key, bool checked);
     // スピンの値変更。hasCurveなら現在コマへ自動でキーを打つ、そうでなければ基本値を直接更新
@@ -191,4 +200,5 @@ private:
     int m_canvasWidth = 1920;
     int m_canvasHeight = 1080;
     bool m_updating = false;  // 表示反映中はシグナル・編集処理を抑止する
+    bool m_rebuildScheduled = false;  // scheduleRebuild()の多重予約防止
 };

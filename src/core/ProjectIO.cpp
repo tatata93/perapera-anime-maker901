@@ -341,6 +341,9 @@ bool buildCutJson(const Cut& cut, json* jCutOut, std::vector<unsigned char>* blo
                             {"enabled", effect.enabled},
                             {"targetCel", effect.targetCel},
                             {"params", std::move(jParams)}};
+            // 適用範囲のコマ(in/out点)。既定値(0/-1)なら省略する
+            if (effect.startFrame != 0) jEffect["startFrame"] = effect.startFrame;
+            if (effect.endFrame != -1) jEffect["endFrame"] = effect.endFrame;
             // パラメータ単位のキーフレーム曲線(パラメータ名→[{コマ,値}])。空なら省略する
             if (!effect.paramCurves.empty()) {
                 json jCurves = json::object();
@@ -472,6 +475,8 @@ bool parseCutJson(const json& jCut, Cut& cut, const unsigned char* blobBase, uin
             effect.type = static_cast<EffectType>(jEffect.value("type", 0));
             effect.enabled = jEffect.value("enabled", true);
             effect.targetCel = jEffect.value("targetCel", -1);
+            effect.startFrame = jEffect.value("startFrame", 0);
+            effect.endFrame = jEffect.value("endFrame", -1);
             if (jEffect.contains("params")) {
                 for (auto it = jEffect.at("params").begin(); it != jEffect.at("params").end(); ++it) {
                     effect.params[it.key()] = it.value().get<double>();

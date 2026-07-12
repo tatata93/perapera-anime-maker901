@@ -354,7 +354,7 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     // プレビュー更新のデバウンス: 値編集やスクラブが連続しても、止まってから1回だけ重い合成を走らせる
     m_previewTimer = new QTimer(this);
     m_previewTimer->setSingleShot(true);
-    m_previewTimer->setInterval(140);
+    m_previewTimer->setInterval(200);
     connect(m_previewTimer, &QTimer::timeout, this, &ShootingWindow::renderPreviewNow);
 
     connect(m_timeline, &QTableWidget::cellClicked, this, &ShootingWindow::onTimelineCellClicked);
@@ -486,6 +486,33 @@ QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringLis
     headerRow->addWidget(maskButton);
 
     vlayout->addLayout(headerRow);
+
+    // 適用範囲行(After Effectsのin/out点): 開始コマ〜終了コマの間だけこのエフェクトを適用する。
+    // 表示は1始まり(内部は0始まり)、終了コマは0=「末尾」(内部-1)
+    auto* rangeRow = new QHBoxLayout();
+    rangeRow->addWidget(new QLabel(tr("開始コマ:"), box));
+    auto* startSpin = new QSpinBox(box);
+    startSpin->setRange(1, 9999);
+    startSpin->setValue(effect.startFrame + 1);
+    startSpin->setFocusPolicy(Qt::ClickFocus);
+    startSpin->setKeyboardTracking(false);  // 入力途中で合成を走らせない(確定時のみ)
+    connect(startSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this, effectIndex](int v) { onEffectStartFrameChanged(effectIndex, v); });
+    rangeRow->addWidget(startSpin);
+
+    rangeRow->addWidget(new QLabel(tr("終了コマ:"), box));
+    auto* endSpin = new QSpinBox(box);
+    endSpin->setRange(0, 9999);
+    endSpin->setSpecialValueText(tr("末尾"));  // 0=カット末尾まで(内部endFrame=-1)
+    endSpin->setValue(effect.endFrame < 0 ? 0 : effect.endFrame + 1);
+    endSpin->setFocusPolicy(Qt::ClickFocus);
+    endSpin->setKeyboardTracking(false);
+    connect(endSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this, effectIndex](int v) { onEffectEndFrameChanged(effectIndex, v); });
+    rangeRow->addWidget(endSpin);
+    rangeRow->addStretch(1);
+
+    vlayout->addLayout(rangeRow);
 
     // パラメータ行: [ストップウォッチ] [パラメータ名] [スピン] [◆キー有無/移動]
     const std::map<std::string, double> shown = effect.paramsAt(static_cast<size_t>(m_koma));
@@ -826,6 +853,7 @@ void ShootingWindow::rebuildTimeline() {
 
 void ShootingWindow::refreshTimelineHighlight() {
     if (!m_timeline) return;
+    core::Cut* cut = currentCut();
     const int cols = m_timeline->columnCount();
     const int rows = m_timeline->rowCount();
     for (int c = 0; c < cols; ++c) {
@@ -845,7 +873,13 @@ void ShootingWindow::refreshTimelineHighlight() {
             if (isCurrent) {
                 item->setBackground(QBrush(kCtiColumnColor));
             } else if (isHeaderRow) {
-                item->setBackground(QBrush(kEffectBandColor));
+                // 色帯(kEffectBandColor)は適用範囲(in/out点)のコマだけに塗る。範囲外は無地
+                const int effectIndex = m_timelineRows[static_cast<size_t>(r)].effectIndex;
+                const bool inRange = cut && effectIndex >= 0 &&
+                                      effectIndex < static_cast<int>(cut->effects().size()) &&
+                                      cut->effects()[static_cast<size_t>(effectIndex)].activeAt(
+                                          static_cast<size_t>(c));
+                item->setBackground(inRange ? QBrush(kEffectBandColor) : QBrush());
             } else {
                 item->setBackground(QBrush());
             }
@@ -904,6 +938,19 @@ void ShootingWindow::setKoma(int koma) {
     updateTransportLabel();
 }
 
+// パネル+タイムラインの作り直しを次のイベントループへ遅延させる(連続要求は1回にまとめる)。
+// シグナル処理中にrebuildEffectControls()を直接呼ぶと、発信元のボタン/コンボ自身を
+// deleteしてしまいクラッシュするため、シグナルハンドラからは必ずこちらを使う
+void ShootingWindow::scheduleRebuild() {
+    if (m_rebuildScheduled) return;
+    m_rebuildScheduled = true;
+    QTimer::singleShot(0, this, [this] {
+        m_rebuildScheduled = false;
+        rebuildEffectControls();
+        rebuildTimeline();
+    });
+}
+
 void ShootingWindow::addEffectOfType(int typeInt) {
     core::Cut* cut = currentCut();
     if (!cut) return;
@@ -913,8 +960,7 @@ void ShootingWindow::addEffectOfType(int typeInt) {
     effect.targetCel = -1;  // 既定は全体
     effect.params = core::effectDefaultParams(effect.type);
     cut->effects().push_back(std::move(effect));
-    rebuildEffectControls();
-    rebuildTimeline();
+    scheduleRebuild();
     markEdited();
 }
 
@@ -922,8 +968,7 @@ void ShootingWindow::removeEffect(int effectIndex) {
     core::Cut* cut = currentCut();
     if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
     cut->effects().erase(cut->effects().begin() + effectIndex);
-    rebuildEffectControls();
-    rebuildTimeline();
+    scheduleRebuild();
     markEdited();
 }
 
@@ -933,8 +978,7 @@ void ShootingWindow::moveEffect(int effectIndex, int delta) {
     const int newIndex = effectIndex + delta;
     if (effectIndex < 0 || newIndex < 0 || newIndex >= static_cast<int>(cut->effects().size())) return;
     std::swap(cut->effects()[static_cast<size_t>(effectIndex)], cut->effects()[static_cast<size_t>(newIndex)]);
-    rebuildEffectControls();
-    rebuildTimeline();
+    scheduleRebuild();
     markEdited();
 }
 
@@ -951,8 +995,25 @@ void ShootingWindow::onEffectTargetChanged(int effectIndex, int comboIndex) {
     core::Cut* cut = currentCut();
     if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
     cut->effects()[static_cast<size_t>(effectIndex)].targetCel = comboIndex <= 0 ? -1 : comboIndex - 1;
-    rebuildEffectControls();  // タイトルの対象表示が変わるので作り直す
-    rebuildTimeline();        // タイムライン行ラベルの対象表示も追従させる
+    scheduleRebuild();  // タイトル・タイムライン行ラベルの対象表示が変わるので作り直す(遅延)
+    markEdited();
+}
+
+void ShootingWindow::onEffectStartFrameChanged(int effectIndex, int displayValue) {
+    if (m_updating) return;
+    core::Cut* cut = currentCut();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    cut->effects()[static_cast<size_t>(effectIndex)].startFrame = displayValue - 1;  // 表示1始まり→内部0始まり
+    refreshTimelineHighlight();  // 見出し行の色帯(適用範囲)を更新する(再構築は不要)
+    markEdited();
+}
+
+void ShootingWindow::onEffectEndFrameChanged(int effectIndex, int displayValue) {
+    if (m_updating) return;
+    core::Cut* cut = currentCut();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    cut->effects()[static_cast<size_t>(effectIndex)].endFrame = displayValue <= 0 ? -1 : displayValue - 1;
+    refreshTimelineHighlight();
     markEdited();
 }
 
@@ -970,8 +1031,7 @@ void ShootingWindow::onStopwatchToggled(int effectIndex, const std::string& key,
         // 全キーを消す(以後は基本値=paramsを使う)
         effect.paramCurves[key].clear();
     }
-    rebuildEffectControls();
-    rebuildTimeline();
+    scheduleRebuild();
     markEdited();
 }
 
@@ -1014,8 +1074,7 @@ void ShootingWindow::onKeyDiamondClicked(int effectIndex, const std::string& key
     } else {
         effect.setKey(key, frame, effect.valueAt(key, frame));
     }
-    rebuildEffectControls();
-    rebuildTimeline();
+    scheduleRebuild();
     markEdited();
 }
 
@@ -1044,8 +1103,7 @@ void ShootingWindow::onTimelineCellDoubleClicked(int row, int column) {
     } else {
         effect.setKey(rowInfo.key, frame, effect.valueAt(rowInfo.key, frame));
     }
-    rebuildEffectControls();
-    rebuildTimeline();
+    scheduleRebuild();
     markEdited();
 }
 

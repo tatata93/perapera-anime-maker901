@@ -21,6 +21,14 @@ struct Effect {
     int targetCel = -1;  // -1=画面全体、0以上=そのセルのみに適用
     std::map<std::string, double> params;  // 種類ごとの既定はeffectDefaultParams(type)で取得
 
+    // 適用範囲のコマ(After Effectsのin/out点)。startFrame以上endFrame以下のコマだけ適用する。
+    // endFrame=-1は「カット末尾まで」
+    int startFrame = 0;
+    int endFrame = -1;
+
+    // コマframeでこのエフェクトが適用範囲内か(enabledは見ない)
+    bool activeAt(size_t frame) const;
+
     // 適用範囲のマスク(After Effectsのマスク相当)。空=全面に適用。
     // 非空なら画面(キャンバス)座標のグレースケール: 各ピクセルのアルファ(a)を適用強度とし、
     // 「エフェクト適用前/適用後」をマスク濃度でブレンドする(a=0は元のまま、a=255は完全適用)。

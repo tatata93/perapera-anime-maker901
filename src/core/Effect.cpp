@@ -34,6 +34,12 @@ std::map<std::string, double> Effect::paramsAt(size_t frame) const {
     return result;
 }
 
+bool Effect::activeAt(size_t frame) const {
+    if (frame < static_cast<size_t>(startFrame)) return false;               // in点より前
+    if (endFrame >= 0 && frame > static_cast<size_t>(endFrame)) return false;  // out点より後
+    return true;
+}
+
 bool Effect::hasCurve(const std::string& key) const {
     const auto it = paramCurves.find(key);
     return it != paramCurves.end() && !it->second.empty();
