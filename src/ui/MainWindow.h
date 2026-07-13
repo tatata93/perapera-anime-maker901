@@ -25,6 +25,7 @@ class ShootingWindow;
 class StoryboardWindow;
 class TapPanel;
 class XsheetPanel;
+class QCheckBox;
 class QCloseEvent;
 class QComboBox;
 class QDialog;
@@ -343,6 +344,8 @@ private:
     QSpinBox* m_fpsSpin = nullptr;
     QAction* m_playAction = nullptr;
     QAction* m_onionAction = nullptr;
+    QAction* m_pressureAction = nullptr;   // 表示メニューの筆圧検知トグル(ツールバーの筆圧チェックと同期)
+    QCheckBox* m_pressureCheck = nullptr;  // ツールバーの筆圧チェック
     QComboBox* m_cutCombo = nullptr;  // カットバーのカット選択
     FramePanel* m_framePanel = nullptr;
     LayerPanel* m_layerPanel = nullptr;

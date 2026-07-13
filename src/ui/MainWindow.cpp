@@ -1463,6 +1463,18 @@ void MainWindow::setupMenus() {
     mirrorAction->setShortcut(QKeySequence(Qt::Key_H));
     connect(mirrorAction, &QAction::toggled, this, [this](bool checked) { m_canvas->setMirrorView(checked); });
 
+    // 筆圧検知のon/off(ツールバーの「筆圧」チェックと双方向同期)。offで線幅一定
+    m_pressureAction = viewMenu->addAction(tr("筆圧検知(&P)"));
+    m_pressureAction->setCheckable(true);
+    m_pressureAction->setChecked(m_canvas->pressureEnabled());
+    connect(m_pressureAction, &QAction::toggled, this, [this](bool checked) {
+        m_canvas->setPressureEnabled(checked);
+        if (m_pressureCheck) {
+            QSignalBlocker blocker(m_pressureCheck);
+            m_pressureCheck->setChecked(checked);
+        }
+    });
+
     QAction* resetViewAction = viewMenu->addAction(tr("ビューをリセット(&R)"));
     resetViewAction->setShortcut(QKeySequence(tr("Ctrl+0")));
     connect(resetViewAction, &QAction::triggered, this, [this] { m_canvas->resetView(); });
@@ -1771,13 +1783,21 @@ void MainWindow::setupToolBar() {
     toolBar->addWidget(stabilizerSpin);
 
     // 筆圧検知のon/off。offにするとペン圧を無視して常に最大筆圧(線幅一定)で描く。
-    // 筆圧非対応ペンや、意図せず筆圧で細くなるのを避けたいときに使う
-    auto* pressureCheck = new QCheckBox(tr("筆圧"), this);
-    pressureCheck->setChecked(m_canvas->pressureEnabled());
-    pressureCheck->setFocusPolicy(Qt::ClickFocus);
-    pressureCheck->setToolTip(tr("筆圧検知(offで線幅一定)"));
-    connect(pressureCheck, &QCheckBox::toggled, this, [this](bool checked) { m_canvas->setPressureEnabled(checked); });
-    toolBar->addWidget(pressureCheck);
+    // 筆圧非対応ペンや、意図せず筆圧で細くなるのを避けたいときに使う。
+    // 表示メニューの「筆圧検知」と双方向で同期する(ツールバーが画面幅に収まらず隠れても
+    // メニューから必ず操作できるようにするため)
+    m_pressureCheck = new QCheckBox(tr("筆圧"), this);
+    m_pressureCheck->setChecked(m_canvas->pressureEnabled());
+    m_pressureCheck->setFocusPolicy(Qt::ClickFocus);
+    m_pressureCheck->setToolTip(tr("筆圧検知(offで線幅一定)"));
+    connect(m_pressureCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_canvas->setPressureEnabled(checked);
+        if (m_pressureAction) {
+            QSignalBlocker blocker(m_pressureAction);
+            m_pressureAction->setChecked(checked);
+        }
+    });
+    toolBar->addWidget(m_pressureCheck);
 
     toolBar->addSeparator();
 
