@@ -19,6 +19,22 @@ double param(const Effect& effect, const std::string& key, double fallback) {
     return it != effect.params.end() ? it->second : fallback;
 }
 
+// (a, b, c, d)から無相関な擬似乱数[0,1)を作る決定論的ハッシュ(splitmix64系のアバランシェ)。
+// std::minstd_rand等のLCGは初期シードに対して初回出力が線形になりやすく、
+// シードを frame*A + x*B + y*C のように組み立てても「フレーム間でパターンが一様にずれるだけ」で
+// 真に無相関なノイズにならない。ここでは入力をXOR+乗算で十分に混ぜてから上位ビットを取り出すことで、
+// 入力が少しでも変わればビット単位で無関係な出力になるようにする(決定論的=同じ入力なら常に同じ結果)
+inline double hashNoise01(uint64_t a, uint64_t b, uint64_t c, uint64_t d = 0) {
+    uint64_t h = a * 0x9E3779B97F4A7C15ull ^ b * 0xBF58476D1CE4E5B9ull ^ c * 0x94D049BB133111EBull ^
+                 d * 0xD6E8FEB86659FD93ull;
+    h ^= h >> 30;
+    h *= 0xBF58476D1CE4E5B9ull;
+    h ^= h >> 27;
+    h *= 0x94D049BB133111EBull;
+    h ^= h >> 31;
+    return (h >> 11) * (1.0 / 9007199254740992.0);  // 上位53bit→[0,1)
+}
+
 // ブラー: プリマルチプライドアルファ空間で箱ぼかしを3回かけてから戻す。
 // 透明な部分は色に寄与しないため、不透明な縁が透明側へ滲んでも色が黒ずまない(アルファ加重平均)
 void applyBlur(Bitmap& image, const Effect& effect) {
@@ -425,7 +441,9 @@ void applyVignette(Bitmap& image, const Effect& effect) {
 }
 
 // グレイン(フィルム粒状感): コマ番号+粒座標(ピクセル座標をsize単位に丸めたブロック)から
-// std::minstd_randを決定論的に初期化し、輝度へ±ノイズを加減算する。同コマなら常に同じ結果になる
+// hashNoise01で決定論的な擬似乱数を作り、輝度へ±ノイズを加減算する。同コマなら常に同じ結果になる。
+// (frame, bx, by)をアバランシェハッシュへ直接渡すため、フレームが1つ違うだけでもブロックごとに
+// 無相関な新しいパターンになる(std::minstd_randの初回出力はシードに線形なため使わない)
 void applyGrain(Bitmap& image, const Effect& effect, size_t frame) {
     const double amount = std::clamp(param(effect, "amount", 0.15), 0.0, 1.0);
     const double size = std::clamp(param(effect, "size", 1.0), 1.0, 4.0);
@@ -440,13 +458,10 @@ void applyGrain(Bitmap& image, const Effect& effect, size_t frame) {
                 Bitmap::Pixel p = image.pixel(x, y);
                 if (p.a == 0) continue;
                 const int bx = static_cast<int>(x / size);
-                uint32_t seedValue = static_cast<uint32_t>(frame) * 2654435761u +
-                                      static_cast<uint32_t>(bx) * 668265263u +
-                                      static_cast<uint32_t>(by) * 374761393u + 1u;
-                if (seedValue == 0) seedValue = 1;  // minstd_randは0シードだと縮退する
-                std::minstd_rand rng(seedValue);
-                const uint32_t r1 = static_cast<uint32_t>(rng());
-                const double noise = (static_cast<double>(r1 % 2000001u) / 1000000.0) - 1.0;  // -1.0〜1.0
+                const double noise =
+                    hashNoise01(static_cast<uint64_t>(frame), static_cast<uint64_t>(bx), static_cast<uint64_t>(by)) *
+                        2.0 -
+                    1.0;  // -1.0〜1.0
                 const double delta = noise * amount * 127.5;
                 p.r = static_cast<uint8_t>(std::lround(std::clamp(p.r + delta, 0.0, 255.0)));
                 p.g = static_cast<uint8_t>(std::lround(std::clamp(p.g + delta, 0.0, 255.0)));
@@ -496,6 +511,85 @@ void applyChromAb(Bitmap& image, const Effect& effect) {
     });
 }
 
+// フィルム: 色温度・分光クロストーク・露出・特性曲線(S字)・黒浮き・チャンネル独立の粒状を
+// この順に重ねてフィルムらしい発色と粒状感を再現する。色は0〜1のdoubleで処理し最後に量子化する。
+// 透明ピクセル(a==0)はスキップして余白を汚さない
+void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
+    const double exposureEV = std::clamp(param(effect, "exposure", 0.0), -2.0, 2.0);
+    const double contrast = std::clamp(param(effect, "contrast", 0.35), 0.0, 1.0);
+    const double fade = std::clamp(param(effect, "fade", 0.04), 0.0, 0.3);
+    const double warmth = std::clamp(param(effect, "warmth", 0.1), -1.0, 1.0);
+    const double crosstalk = std::clamp(param(effect, "crosstalk", 0.08), 0.0, 0.5);
+    const double grain = std::clamp(param(effect, "grain", 0.25), 0.0, 1.0);
+    const double grainSize = std::clamp(param(effect, "grainSize", 1.6), 1.0, 4.0);
+    const int w = image.width();
+    const int h = image.height();
+    if (w <= 0 || h <= 0) return;
+
+    const double exposureMul = std::pow(2.0, exposureEV);
+
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const int by = static_cast<int>(y / grainSize);
+            for (int x = 0; x < w; ++x) {
+                Bitmap::Pixel p = image.pixel(x, y);
+                if (p.a == 0) continue;
+                const int bx = static_cast<int>(x / grainSize);
+
+                double r = p.r / 255.0, g = p.g / 255.0, b = p.b / 255.0;
+
+                // 1. 色温度(タングステン/デイライトの近似): 暖色よりでR上げ・B下げ(warmth>0)
+                r *= 1.0 + 0.15 * warmth;
+                b *= 1.0 - 0.15 * warmth;
+
+                // 2. 分光クロストーク(フィルム色素の感度重なり): 行正規化行列で混色する。
+                // k=0で恒等、kが大きいほど混色して彩度が落ちる
+                const double k = crosstalk;
+                const double rr = (1.0 - 2.0 * k) * r + k * g + k * b;
+                const double gg = k * r + (1.0 - 2.0 * k) * g + k * b;
+                const double bb = k * r + k * g + (1.0 - 2.0 * k) * b;
+                r = rr;
+                g = gg;
+                b = bb;
+
+                // 3. 露出(EV)
+                r *= exposureMul;
+                g *= exposureMul;
+                b *= exposureMul;
+
+                double channels[3] = {r, g, b};
+                for (int c = 0; c < 3; ++c) {
+                    // 4. 特性曲線: smoothstepでS字(トウ+ショルダー)を掛ける
+                    const double xClamped = std::clamp(channels[c], 0.0, 1.0);
+                    const double s = xClamped * xClamped * (3.0 - 2.0 * xClamped);
+                    double y = xClamped + (s - xClamped) * contrast;
+
+                    // 5. 黒浮き(フィルムの最小濃度Dmin)
+                    y = fade + (1.0 - fade) * y;
+
+                    // 6. 粒状(RGB各チャンネル独立、中間調で最大・黒白で0の重み)。
+                    // (frame, bx, by, c)から作るハッシュノイズはフレーム間・チャンネル間で無相関
+                    if (grain > 0.0) {
+                        const double noise = hashNoise01(static_cast<uint64_t>(frame), static_cast<uint64_t>(bx),
+                                                          static_cast<uint64_t>(by), static_cast<uint64_t>(c)) *
+                                                  2.0 -
+                                              1.0;
+                        const double weight = 4.0 * y * (1.0 - y);
+                        y += noise * grain * 0.25 * weight;
+                    }
+
+                    channels[c] = std::clamp(y, 0.0, 1.0);
+                }
+
+                p.r = static_cast<uint8_t>(std::lround(channels[0] * 255.0));
+                p.g = static_cast<uint8_t>(std::lround(channels[1] * 255.0));
+                p.b = static_cast<uint8_t>(std::lround(channels[2] * 255.0));
+                image.setPixel(x, y, p);
+            }
+        }
+    });
+}
+
 }  // namespace
 
 void applyEffect(Bitmap& image, const Effect& effect, size_t frame, double pixelScale) {
@@ -518,6 +612,7 @@ void applyEffect(Bitmap& image, const Effect& effect, size_t frame, double pixel
         scaleIf("amplitudeY");
         if (resolved.type == EffectType::ChromAb) scaleIf("amount");  // 色収差のずれ量(px)
         if (resolved.type == EffectType::Grain) scaleIf("size");      // 粒サイズ(px)
+        if (resolved.type == EffectType::Film) scaleIf("grainSize");  // フィルム粒サイズ(px)
     }
 
     switch (resolved.type) {
@@ -550,6 +645,9 @@ void applyEffect(Bitmap& image, const Effect& effect, size_t frame, double pixel
             break;
         case EffectType::ChromAb:
             applyChromAb(image, resolved);
+            break;
+        case EffectType::Film:
+            applyFilm(image, resolved, frame);
             break;
     }
 }

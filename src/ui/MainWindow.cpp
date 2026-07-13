@@ -2147,6 +2147,48 @@ void MainWindow::debugSetupBacklightDemo() {
     openShootingWindow();
 }
 
+void MainWindow::debugSetupFilmDemo() {
+    // フィルムエフェクト確認用: グレー地にカラーバー風の縦帯数本を描いた止めセルを尺4で組み、
+    // 全体にフィルムエフェクト(既定値、粒状を目視しやすくするためgrain=0.5)をかけて撮影ウィンドウを開く
+    core::Cut& cut = activeCut();
+    core::Bitmap& bitmap = activeLayer().frame(m_currentFrame).bitmap();
+    bitmap.fill({128, 128, 128, 255});  // グレー地
+
+    const core::Bitmap::Pixel kBars[] = {
+        {230, 40, 40, 255}, {230, 200, 40, 255}, {40, 200, 60, 255}, {40, 140, 230, 255}, {200, 40, 200, 255},
+    };
+    const int barCount = static_cast<int>(sizeof(kBars) / sizeof(kBars[0]));
+    const int barWidth = kCanvasWidth / (barCount + 2);  // 左右に余白(グレー地)を残す
+    for (int i = 0; i < barCount; ++i) {
+        const int x0 = barWidth + i * barWidth;
+        const int x1 = std::min(kCanvasWidth, x0 + barWidth);
+        for (int y = kCanvasHeight / 4; y < kCanvasHeight * 3 / 4; ++y) {
+            for (int x = x0; x < x1; ++x) bitmap.setPixel(x, y, kBars[i]);
+        }
+    }
+
+    cut.setFrameCount(4);
+    core::Cel& cel = activeCel();
+    for (size_t t = 0; t < 4; ++t) cel.setExposure(t, 0);  // 止め(全コマで同じ絵を表示)
+    cut.effects().clear();
+
+    core::Effect film;
+    film.type = core::EffectType::Film;
+    film.enabled = true;
+    film.targetCel = -1;  // 全体
+    film.params = core::effectDefaultParams(core::EffectType::Film);
+    film.params["grain"] = 0.5;  // 粒状を目視しやすいよう強めにする
+    cut.effects().push_back(film);
+
+    m_canvas->clearTextureCache();
+    updateCanvasLayers();
+    markCutDirty(cut);
+    updateWindowTitle();
+    updateXsheetPanel();
+
+    openShootingWindow();
+}
+
 void MainWindow::debugBuildFullDemo() {
     // これまで実装した全機能を1本の作品として統合したデモを、newDocument()相当から
     // プログラム的に構築する(作画は手描きできないためBrushEngineで幾何図形を描く)。

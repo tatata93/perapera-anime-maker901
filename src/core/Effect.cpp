@@ -83,6 +83,9 @@ std::map<std::string, double> effectDefaultParams(EffectType type) {
             return {{"amount", 0.15}, {"size", 1.0}};
         case EffectType::ChromAb:
             return {{"amount", 2.0}};
+        case EffectType::Film:
+            return {{"exposure", 0.0},  {"contrast", 0.35}, {"fade", 0.04},    {"warmth", 0.1},
+                     {"crosstalk", 0.08}, {"grain", 0.25},     {"grainSize", 1.6}};
     }
     return {};
 }
@@ -109,6 +112,8 @@ const char* effectTypeName(EffectType type) {
             return "グレイン";
         case EffectType::ChromAb:
             return "色収差";
+        case EffectType::Film:
+            return "フィルム";
     }
     return "";
 }

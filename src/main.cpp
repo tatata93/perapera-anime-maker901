@@ -856,6 +856,30 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --film-test <出力PNG0> <出力PNG1> でフィルムエフェクトデモ(グレー地+カラーバー風の
+    // 縦帯数本を描いた止めセル、尺4、フィルムエフェクト[既定値、grain=0.5]を全体に適用)を組み、
+    // コマ1・コマ2をdebugSelectKomaで切り替えてそれぞれ撮影ウィンドウを保存する。粒状ノイズが
+    // フレームごとに変わっている(無相関な擬似乱数)ことを2枚のPNGを見比べて確認するためのもの
+    const int filmIndex = args.indexOf("--film-test");
+    if (filmIndex >= 0 && filmIndex + 2 < args.size()) {
+        const QString out0 = args.at(filmIndex + 1);
+        const QString out1 = args.at(filmIndex + 2);
+        QTimer::singleShot(500, &window, [&window, out0, out1] {
+            window.debugSetupFilmDemo();
+            QTimer::singleShot(400, &window, [&window, out0, out1] {
+                window.shootingWindow()->debugSelectKoma(1);
+                QTimer::singleShot(300, &window, [&window, out0, out1] {
+                    window.shootingWindow()->grab().save(out0);
+                    window.shootingWindow()->debugSelectKoma(2);
+                    QTimer::singleShot(300, &window, [&window, out1] {
+                        window.shootingWindow()->grab().save(out1);
+                        QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                    });
+                });
+            });
+        });
+    }
+
     // 動作確認用: --fulldemo <出力mp4パス> でこれまで実装した全機能を統合した4カットデモ
     // (カット0: プリビズなぞり作画 / カット1: PAN+T.U.+グロー / カット2: クラシック撮影DoF+黒パラ /
     // カット3: シェイク+オレンジパラ)を組み、全カットを連結した通しmp4へ書き出す。

@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 #include <filesystem>
 
 #include "core/Compositor.h"
@@ -394,6 +395,180 @@ TEST_CASE("applyGrain is deterministic for the same frame and unchanged when amo
     for (int y = 0; y < 16; ++y) {
         for (int x = 0; x < 16; ++x) REQUIRE(bmpZero.pixel(x, y).r == 128);  // amount=0は不変
     }
+}
+
+TEST_CASE("applyGrain produces a different pattern for a different frame", "[core][effect][grain]") {
+    core::Bitmap base(16, 16);
+    base.fill({128, 128, 128, 255});
+
+    core::Effect grain;
+    grain.type = core::EffectType::Grain;
+    grain.params = core::effectDefaultParams(core::EffectType::Grain);  // amount=0.15
+
+    core::Bitmap atFrame0 = base;
+    core::applyEffect(atFrame0, grain, 0);
+    core::Bitmap atFrame1 = base;
+    core::applyEffect(atFrame1, grain, 1);
+
+    bool anyDifferent = false;
+    for (int y = 0; y < 16 && !anyDifferent; ++y) {
+        for (int x = 0; x < 16 && !anyDifferent; ++x) {
+            if (atFrame0.pixel(x, y).r != atFrame1.pixel(x, y).r) anyDifferent = true;
+        }
+    }
+    REQUIRE(anyDifferent);
+}
+
+TEST_CASE("applyGrain frame-to-frame noise is uncorrelated across blocks (not a uniform shift)",
+          "[core][effect][grain]") {
+    // バグ修正前(minstd_randへシードを線形に渡すだけ)は、フレームを1つ進めたときの
+    // ノイズ変化がブロック間でほぼ一様なシフトになってしまっていた。ハッシュノイズへの
+    // 置き換え後は、離れた2ブロックでの「フレーム0→1の変化量」が一致しない(無相関)ことを確認する
+    core::Bitmap base(32, 32);
+    base.fill({128, 128, 128, 255});
+
+    core::Effect grain;
+    grain.type = core::EffectType::Grain;
+    grain.params = {{"amount", 0.5}, {"size", 1.0}};  // 各ピクセルが独立ブロック(size=1)
+
+    core::Bitmap atFrame0 = base;
+    core::applyEffect(atFrame0, grain, 100);
+    core::Bitmap atFrame1 = base;
+    core::applyEffect(atFrame1, grain, 101);
+
+    // 十分離れた2ブロック(A, B)について、フレーム0→1での輝度変化量を比較する
+    const int deltaA = static_cast<int>(atFrame1.pixel(3, 5).r) - static_cast<int>(atFrame0.pixel(3, 5).r);
+    const int deltaB = static_cast<int>(atFrame1.pixel(27, 21).r) - static_cast<int>(atFrame0.pixel(27, 21).r);
+    REQUIRE(deltaA != deltaB);  // 一様ずれ(全ブロックで同じdelta)であれば一致してしまうはず
+}
+
+// --- Film(フィルム) ---
+
+TEST_CASE("applyFilm is byte-identical when all parameters are identity", "[core][effect][film]") {
+    core::Bitmap bmp(6, 6);
+    bmp.fill({0, 0, 0, 0});
+    for (int y = 0; y < 6; ++y) {
+        for (int x = 0; x < 6; ++x) {
+            bmp.setPixel(x, y, {static_cast<uint8_t>(x * 40), static_cast<uint8_t>(y * 40), 90, 255});
+        }
+    }
+    core::Bitmap before = bmp;
+
+    core::Effect film;
+    film.type = core::EffectType::Film;
+    film.params = {{"exposure", 0.0}, {"contrast", 0.0}, {"fade", 0.0}, {"warmth", 0.0},
+                    {"crosstalk", 0.0}, {"grain", 0.0},    {"grainSize", 1.0}};
+    core::applyEffect(bmp, film, 0);
+
+    for (int y = 0; y < 6; ++y) {
+        for (int x = 0; x < 6; ++x) {
+            REQUIRE(bmp.pixel(x, y).r == before.pixel(x, y).r);
+            REQUIRE(bmp.pixel(x, y).g == before.pixel(x, y).g);
+            REQUIRE(bmp.pixel(x, y).b == before.pixel(x, y).b);
+            REQUIRE(bmp.pixel(x, y).a == before.pixel(x, y).a);
+        }
+    }
+}
+
+TEST_CASE("applyFilm crosstalk mixes pure red toward green/blue (row-normalized)", "[core][effect][film]") {
+    core::Bitmap bmp(2, 2);
+    bmp.fill({255, 0, 0, 255});
+
+    core::Effect film;
+    film.type = core::EffectType::Film;
+    film.params = {{"exposure", 0.0}, {"contrast", 0.0}, {"fade", 0.0}, {"warmth", 0.0},
+                    {"crosstalk", 0.2}, {"grain", 0.0},    {"grainSize", 1.0}};
+    core::applyEffect(bmp, film, 0);
+
+    const auto p = bmp.pixel(0, 0);
+    REQUIRE(p.r < 255);  // Rは減る
+    REQUIRE(p.g > 0);    // Gは増える
+    REQUIRE(p.b > 0);    // Bは増える
+}
+
+TEST_CASE("applyFilm characteristic curve applies an S-curve and fade lifts black", "[core][effect][film]") {
+    auto runGray = [](uint8_t level, double contrast, double fade) {
+        core::Bitmap bmp(2, 2);
+        bmp.fill({level, level, level, 255});
+        core::Effect film;
+        film.type = core::EffectType::Film;
+        film.params = {{"exposure", 0.0}, {"contrast", contrast}, {"fade", fade}, {"warmth", 0.0},
+                        {"crosstalk", 0.0}, {"grain", 0.0},         {"grainSize", 1.0}};
+        core::applyEffect(bmp, film, 0);
+        return bmp.pixel(0, 0).r;
+    };
+
+    // contrast=1でS字: 中間調(128)はほぼ不変、暗部(32)はより暗く、明部(224)はより明るくなる
+    const uint8_t mid = runGray(128, 1.0, 0.0);
+    REQUIRE(std::abs(static_cast<int>(mid) - 128) <= 2);
+    REQUIRE(runGray(32, 1.0, 0.0) < 32);
+    REQUIRE(runGray(224, 1.0, 0.0) > 224);
+
+    // fade=0.1で黒(0)が持ち上がる
+    REQUIRE(runGray(0, 0.0, 0.1) > 0);
+}
+
+TEST_CASE("applyFilm grain leaves black/white unchanged and varies midtones, independently per channel",
+          "[core][effect][film]") {
+    core::Effect film;
+    film.type = core::EffectType::Film;
+    film.params = {{"exposure", 0.0}, {"contrast", 0.0}, {"fade", 0.0}, {"warmth", 0.0},
+                    {"crosstalk", 0.0}, {"grain", 1.0},    {"grainSize", 1.0}};
+
+    // 黒(0)・白(255)は中間調重み(4y(1-y))が0になるため不変
+    core::Bitmap black(4, 4);
+    black.fill({0, 0, 0, 255});
+    core::applyEffect(black, film, 7);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x) REQUIRE(black.pixel(x, y).r == 0);
+
+    core::Bitmap white(4, 4);
+    white.fill({255, 255, 255, 255});
+    core::applyEffect(white, film, 7);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x) REQUIRE(white.pixel(x, y).r == 255);
+
+    // 中間調(128)は変化する
+    core::Bitmap mid(4, 4);
+    mid.fill({128, 128, 128, 255});
+    core::Bitmap midBefore = mid;
+    core::applyEffect(mid, film, 7);
+    bool midChanged = false;
+    for (int y = 0; y < 4 && !midChanged; ++y) {
+        for (int x = 0; x < 4 && !midChanged; ++x) {
+            if (mid.pixel(x, y).r != midBefore.pixel(x, y).r) midChanged = true;
+        }
+    }
+    REQUIRE(midChanged);
+
+    // RGB独立: 十分広い中間調の面で、あるピクセルはRとGのノイズ符号が異なるはず
+    core::Bitmap grid(24, 24);
+    grid.fill({128, 128, 128, 255});
+    core::applyEffect(grid, film, 7);
+    bool foundDivergentSign = false;
+    for (int y = 0; y < 24 && !foundDivergentSign; ++y) {
+        for (int x = 0; x < 24 && !foundDivergentSign; ++x) {
+            const auto p = grid.pixel(x, y);
+            const int dr = static_cast<int>(p.r) - 128;
+            const int dg = static_cast<int>(p.g) - 128;
+            if ((dr > 0 && dg < 0) || (dr < 0 && dg > 0)) foundDivergentSign = true;
+        }
+    }
+    REQUIRE(foundDivergentSign);
+
+    // フレーム0と1で粒パターンが異なる
+    core::Bitmap gridFrame0(16, 16);
+    gridFrame0.fill({128, 128, 128, 255});
+    core::Bitmap gridFrame1 = gridFrame0;
+    core::applyEffect(gridFrame0, film, 0);
+    core::applyEffect(gridFrame1, film, 1);
+    bool frameDifferent = false;
+    for (int y = 0; y < 16 && !frameDifferent; ++y) {
+        for (int x = 0; x < 16 && !frameDifferent; ++x) {
+            if (gridFrame0.pixel(x, y).r != gridFrame1.pixel(x, y).r) frameDifferent = true;
+        }
+    }
+    REQUIRE(frameDifferent);
 }
 
 // --- ChromAb(色収差) ---

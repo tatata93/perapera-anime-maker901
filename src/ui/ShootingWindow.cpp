@@ -55,7 +55,10 @@ QString paramLabel(const std::string& key) {
         {"hue", QObject::tr("色相")},             {"centerX", QObject::tr("中心X")},
         {"centerY", QObject::tr("中心Y")},        {"amount", QObject::tr("量")},
         {"taps", QObject::tr("タップ数")},        {"size", QObject::tr("粒サイズ")},
-        {"softness", QObject::tr("柔らかさ")},
+        {"softness", QObject::tr("柔らかさ")},    {"exposure", QObject::tr("露出(EV)")},
+        {"fade", QObject::tr("黒浮き")},          {"warmth", QObject::tr("色温度")},
+        {"crosstalk", QObject::tr("分光クロストーク")}, {"grain", QObject::tr("粒状")},
+        {"grainSize", QObject::tr("粒サイズ")},
     };
     const auto it = kLabels.find(key);
     if (it != kLabels.end()) return it->second;
@@ -65,7 +68,8 @@ QString paramLabel(const std::string& key) {
 // 濃度系パラメータ(0〜1程度の細かい調整が必要)はステップ0.05、それ以外(半径・角度系)は1.0
 bool isDensityParam(const std::string& key) {
     return key == "top" || key == "bottom" || key == "strength" || key == "amount" || key == "softness" ||
-           key == "centerX" || key == "centerY";
+           key == "centerX" || key == "centerY" || key == "exposure" || key == "fade" || key == "warmth" ||
+           key == "crosstalk" || key == "grain";
 }
 
 bool isRgbParam(const std::string& key) { return key == "r" || key == "g" || key == "b"; }
@@ -75,11 +79,19 @@ bool isRgbParam(const std::string& key) { return key == "r" || key == "g" || key
 std::pair<double, double> paramRange(core::EffectType type, const std::string& key) {
     if (key == "brightness") return {-255.0, 255.0};
     if (key == "hue") return {-180.0, 180.0};
-    if (key == "contrast" || key == "saturation") return {0.0, 3.0};
+    if (key == "contrast") return type == core::EffectType::Film ? std::pair<double, double>{0.0, 1.0}
+                                                                   : std::pair<double, double>{0.0, 3.0};
+    if (key == "saturation") return {0.0, 3.0};
     if (key == "centerX" || key == "centerY") return {0.0, 1.0};
     if (key == "softness") return {0.05, 1.0};
     if (key == "taps") return {2.0, 32.0};
     if (key == "size") return {1.0, 4.0};
+    if (key == "exposure") return {-2.0, 2.0};
+    if (key == "fade") return {0.0, 0.3};
+    if (key == "warmth") return {-1.0, 1.0};
+    if (key == "crosstalk") return {0.0, 0.5};
+    if (key == "grain") return {0.0, 1.0};
+    if (key == "grainSize") return {1.0, 4.0};
     if (key == "amount") {
         switch (type) {
             case core::EffectType::RadialBlur:
@@ -189,6 +201,7 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
         {core::EffectType::Vignette, "ビネット"},
         {core::EffectType::Grain, "グレイン"},
         {core::EffectType::ChromAb, "色収差"},
+        {core::EffectType::Film, "フィルム"},
     };
     for (const auto& entry : kTypes) {
         QAction* action = addMenu->addAction(QString::fromUtf8(entry.label));
@@ -696,7 +709,7 @@ QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringLis
         const auto range = paramRange(effect.type, key);
         spin->setRange(range.first, range.second);
         spin->setDecimals(2);
-        spin->setSingleStep(isDensityParam(key) ? 0.05 : 1.0);
+        spin->setSingleStep(key == "grainSize" ? 0.1 : (isDensityParam(key) ? 0.05 : 1.0));
         spin->setValue(value);
         spin->setFocusPolicy(Qt::ClickFocus);
         spin->setKeyboardTracking(false);  // 入力途中で合成を走らせない(確定時のみ)
@@ -1167,9 +1180,11 @@ QString ShootingWindow::frameFingerprint(const core::Cut& cut, int koma) const {
         fp += active ? QStringLiteral("1,") : QStringLiteral("0,");
         fp += QString::number(effect.targetCel);
         fp += effect.mask.isEmpty() ? QStringLiteral(",0,") : QStringLiteral(",1,");
-        // Shake/Grainは有効かつ適用範囲内ならコマごとに乱数(seed+koma)が変わるため、komaそのものを含める
+        // Shake/Grain/Filmは有効かつ適用範囲内ならコマごとに乱数(seed+koma)が変わるため、
+        // komaそのものを含める(Filmは粒状パラメータがフレーム依存のハッシュノイズを使うため)
         if (active && effect.enabled &&
-            (effect.type == core::EffectType::Shake || effect.type == core::EffectType::Grain)) {
+            (effect.type == core::EffectType::Shake || effect.type == core::EffectType::Grain ||
+             effect.type == core::EffectType::Film)) {
             fp += QStringLiteral("k");
             fp += QString::number(koma);
             fp += QLatin1Char(',');
