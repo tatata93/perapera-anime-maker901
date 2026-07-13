@@ -47,8 +47,10 @@ public:
     // ドラッグ移動の対象モデル(モデル一覧の選択。-1=なし)
     void setSelectedModel(int index);
 
-    // 下敷き用: 表示モードに関係なくカメラ視点で描画した画像を返す
-    QImage renderCameraViewImage();
+    // 下敷き用: 表示モードに関係なくカメラ視点で描画した画像を返す。
+    // aspectWOverH: 出力画像(・投影)の幅/高さ比(既定16:9)。呼び出し側のキャンバスの
+    // アスペクト比を渡すと、下敷きが引き伸ばされずキャンバスにぴったり合う
+    QImage renderCameraViewImage(float aspectWOverH = 16.0f / 9.0f);
 
     // モデルファイルの読み込みキャッシュを破棄する(モデル削除・差し替え時)
     void clearMeshCache();

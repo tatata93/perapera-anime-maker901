@@ -38,6 +38,7 @@
 #include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/CameraPanel.h"
+#include "ui/CanvasSizeDialog.h"
 #include "ui/CelPanel.h"
 #include "ui/CelSizeDialog.h"
 #include "ui/EditWindow.h"
@@ -53,8 +54,6 @@
 #include "ui/XsheetPanel.h"
 
 namespace {
-constexpr int kCanvasWidth = 1920;
-constexpr int kCanvasHeight = 1080;
 constexpr int kDefaultFps = 24;  // タイムシートは24fps基準
 
 // 自動保存: フォルダ名と保存間隔(3分)
@@ -62,25 +61,26 @@ const QString kAutosaveFileName = QStringLiteral("autosave.ppproj");
 constexpr int kAutosaveIntervalMs = 180 * 1000;
 
 // 透明なセル(作画用紙)。紙の白はGLCanvasが背景として描画する。
-// width/heightを省略するとキャンバスサイズになる
-core::Bitmap makeTransparentCel(int width = kCanvasWidth, int height = kCanvasHeight) {
+// width/heightは呼び出し側でプロジェクトのキャンバスサイズ(MainWindow::canvasWidth/Height())を渡す
+core::Bitmap makeTransparentCel(int width, int height) {
     core::Bitmap bitmap(width, height);
     bitmap.fill({0, 0, 0, 0});
     return bitmap;
 }
 
 // 引きセル対応: 指定セルの用紙サイズ(0ならキャンバスサイズ)で透明ビットマップを作る。
-// 既存セルへ動画やレイヤーを追加する際、既にリサイズ済みの用紙サイズに合わせるために使う
-core::Bitmap makeTransparentCelForCel(const core::Cel& cel) {
-    const int w = cel.paperWidth() > 0 ? cel.paperWidth() : kCanvasWidth;
-    const int h = cel.paperHeight() > 0 ? cel.paperHeight() : kCanvasHeight;
+// 既存セルへ動画やレイヤーを追加する際、既にリサイズ済みの用紙サイズに合わせるために使う。
+// canvasW/canvasHは呼び出し側の現在のキャンバスサイズ(セルのpaperサイズが0=既定のときに使う)
+core::Bitmap makeTransparentCelForCel(const core::Cel& cel, int canvasW, int canvasH) {
+    const int w = cel.paperWidth() > 0 ? cel.paperWidth() : canvasW;
+    const int h = cel.paperHeight() > 0 ? cel.paperHeight() : canvasH;
     return makeTransparentCel(w, h);
 }
-// 新規カットの最小構成(セルA+レイヤー1+動画1、尺1コマ)を作る
-void initializeCut(core::Cut& cut) {
+// 新規カットの最小構成(セルA+レイヤー1+動画1、尺1コマ)を作る。canvasW/canvasHは新規セルのサイズに使う
+void initializeCut(core::Cut& cut, int canvasW, int canvasH) {
     core::Cel& cel = cut.addCel("A");
     core::Layer& layer = cel.addLayer("レイヤー 1");
-    layer.addFrame().bitmap() = makeTransparentCel();
+    layer.addFrame().bitmap() = makeTransparentCel(canvasW, canvasH);
     cut.setFrameCount(1);
     cel.setExposure(0, 0);
 }
@@ -164,7 +164,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("perapera-anime-maker901");
 
     m_canvas = new GLCanvas(this);
-    m_canvas->setCanvasSize(kCanvasWidth, kCanvasHeight);
+    m_canvas->setCanvasSize(canvasWidth(), canvasHeight());
     setCentralWidget(m_canvas);
     m_canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
         m_commands.push(std::move(command));  // pushは冪等なexecute(after画素の再書き込み)を伴う
@@ -310,12 +310,14 @@ void MainWindow::createNewDocument() {
     m_project = std::make_unique<core::Project>("Untitled");
     core::Scene& scene = m_project->addScene("Scene 1");
     core::Cut& cut = scene.addCut("カット 1");
-    initializeCut(cut);
+    initializeCut(cut, canvasWidth(), canvasHeight());
 
     m_currentFrame = 0;
     m_activeCut = 0;
     m_activeCel = 0;
     m_activeLayer = 0;
+    // 新規プロジェクトのキャンバスサイズ(既定1920x1080)へ作画キャンバスを合わせる
+    m_canvas->setCanvasSize(canvasWidth(), canvasHeight());
     updateCanvasLayers();
     updateOnionSkin();
 }
@@ -340,7 +342,7 @@ void MainWindow::addFrameAfterCurrent() {
     core::Cel& cel = activeCel();
     const int newDrawing = static_cast<int>(cel.drawingCount());
     for (size_t li = 0; li < cel.layerCount(); ++li) {
-        cel.layer(li).addFrame().bitmap() = makeTransparentCelForCel(cel);
+        cel.layer(li).addFrame().bitmap() = makeTransparentCelForCel(cel, canvasWidth(), canvasHeight());
     }
     const bool currentIsEmpty = cel.exposure(m_currentFrame) == -1;
     const size_t target = currentIsEmpty ? m_currentFrame : m_currentFrame + 1;
@@ -542,7 +544,8 @@ void MainWindow::updateUnderlay() {
     // プリビズ下敷き: プリビズカメラの現在コマの絵をそのまま透かす(なぞり作画)
     if (m_previzUnderlay && m_previzWindow) {
         m_previzWindow->setFrame(m_currentFrame);
-        m_canvas->setUnderlayImage(m_previzWindow->viewport()->renderCameraViewImage());
+        m_canvas->setUnderlayImage(
+            m_previzWindow->viewport()->renderCameraViewImage(static_cast<float>(canvasWidth()) / canvasHeight()));
         return;
     }
 
@@ -637,7 +640,7 @@ void MainWindow::addCut() {
     if (m_playing) return;
     core::Scene& scene = m_project->scene(0);
     core::Cut& cut = scene.addCut(tr("カット %1").arg(scene.cutCount() + 1).toStdString());
-    initializeCut(cut);
+    initializeCut(cut, canvasWidth(), canvasHeight());
     markProjectDirty();  // シーンのカット構成(cutIds)が変わる
     markCutDirty(cut);
     updateWindowTitle();
@@ -947,7 +950,7 @@ void MainWindow::addLayerToActiveCel() {
     const size_t frameCount = activeLayer().frameCount();
     core::Layer& layer = cel.addLayer(tr("レイヤー %1").arg(cel.layerCount() + 1).toStdString());
     for (size_t fi = 0; fi < frameCount; ++fi) {
-        layer.addFrame().bitmap() = makeTransparentCelForCel(cel);  // 既存レイヤーとコマ数(・用紙サイズ)を揃える
+        layer.addFrame().bitmap() = makeTransparentCelForCel(cel, canvasWidth(), canvasHeight());  // 既存レイヤーとコマ数(・用紙サイズ)を揃える
     }
     m_activeLayer = cel.layerCount() - 1;
     m_commands.clear();
@@ -1086,7 +1089,7 @@ void MainWindow::updateCameraPanel() {
     if (camera) {
         m_cameraPanel->setValues(camera->center.x, camera->center.y, camera->scale * 100.0);
     } else {
-        m_cameraPanel->setValues(kCanvasWidth / 2.0, kCanvasHeight / 2.0, 100.0);
+        m_cameraPanel->setValues(canvasWidth() / 2.0, canvasHeight() / 2.0, 100.0);
     }
 
     const bool hasKeyOnFrame = cut.cameraKeys().count(m_currentFrame) > 0;
@@ -1105,8 +1108,8 @@ void MainWindow::updateCameraOverlay() {
         return;
     }
     const double scale = std::max(0.05, m_cameraPanel->scalePercent() / 100.0);
-    const double w = kCanvasWidth * scale;
-    const double h = kCanvasHeight * scale;
+    const double w = canvasWidth() * scale;
+    const double h = canvasHeight() * scale;
     const double cx = m_cameraPanel->centerX();
     const double cy = m_cameraPanel->centerY();
     m_canvas->setCameraFrameOverlay(QRectF(cx - w / 2.0, cy - h / 2.0, w, h));
@@ -1122,7 +1125,7 @@ void MainWindow::addCel() {
 
     core::Cel& cel = cut.addCel(name.toStdString());
     core::Layer& layer = cel.addLayer(tr("レイヤー 1").toStdString());
-    layer.addFrame().bitmap() = makeTransparentCel();
+    layer.addFrame().bitmap() = makeTransparentCel(canvasWidth(), canvasHeight());
     cel.setExposure(m_currentFrame, 0);  // 現在コマに動画1を割り付け、すぐ描ける状態にする
     m_activeCel = static_cast<size_t>(index);
 
@@ -1177,14 +1180,14 @@ void MainWindow::openCelSizeDialog() {
     if (m_playing) return;
     core::Cel& cel = activeCel();
 
-    CelSizeDialog dialog(cel.paperWidth(), cel.paperHeight(), kCanvasWidth, kCanvasHeight, this);
+    CelSizeDialog dialog(cel.paperWidth(), cel.paperHeight(), canvasWidth(), canvasHeight(), this);
     if (dialog.exec() != QDialog::Accepted) return;
 
     const int newW = dialog.paperWidth();
     const int newH = dialog.paperHeight();
     // 現在有効なサイズ(0ならキャンバスサイズ)と比較し、実質変更なしなら何もしない
-    const int effectiveW = cel.paperWidth() > 0 ? cel.paperWidth() : kCanvasWidth;
-    const int effectiveH = cel.paperHeight() > 0 ? cel.paperHeight() : kCanvasHeight;
+    const int effectiveW = cel.paperWidth() > 0 ? cel.paperWidth() : canvasWidth();
+    const int effectiveH = cel.paperHeight() > 0 ? cel.paperHeight() : canvasHeight();
     if (newW == effectiveW && newH == effectiveH) return;
 
     cel.resizePaper(newW, newH);
@@ -1195,6 +1198,46 @@ void MainWindow::openCelSizeDialog() {
     updateCanvasLayers();
     updateOnionSkin();
     updateWindowTitle();
+}
+
+// プロジェクトのキャンバス解像度・アスペクト比を変更するダイアログを開く(ファイルメニューから)。
+// OKで確定した場合、これから描く紙のサイズ(新規セル・合成・書き出し)だけが変わる。
+// 既存の作画セルのビットマップはリサイズしない(paperサイズを持つ場合はそのまま引きセル扱いになる)
+void MainWindow::openCanvasSizeDialog() {
+    if (!m_project) return;
+
+    CanvasSizeDialog dialog(canvasWidth(), canvasHeight(), this);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const int newW = dialog.canvasWidth();
+    const int newH = dialog.canvasHeight();
+    if (newW == canvasWidth() && newH == canvasHeight()) return;
+
+    debugSetCanvasSize(newW, newH);
+    updateWindowTitle();
+}
+
+// 解像度設定確認用/内部共通処理: プロジェクトのキャンバスサイズを変更し、
+// 作画キャンバス・撮影/編集ウィンドウ・プリビズ下敷きへ反映する(ダイアログは出さない)
+void MainWindow::debugSetCanvasSize(int width, int height) {
+    if (!m_project) return;
+    m_project->setCanvasSize(width, height);
+
+    m_canvas->setCanvasSize(canvasWidth(), canvasHeight());
+    updateCanvasLayers();
+    if (m_editWindow) m_editWindow->setCanvasSize(canvasWidth(), canvasHeight());
+    if (m_shootingWindow) m_shootingWindow->setCanvasSize(canvasWidth(), canvasHeight());
+    if (m_previzUnderlay) updateUnderlay();  // 下敷きのアスペクトを新キャンバスサイズへ合わせて再計算する
+    markProjectDirty();
+}
+
+// 解像度設定確認用: 「プロジェクト設定...」ダイアログを非モーダルで開き、そのポインタを返す
+// (呼び出し側でウィンドウ全体+ダイアログを合成してスクリーンショットするために使う)
+QDialog* MainWindow::debugOpenCanvasSizeDialog() {
+    auto* dialog = new CanvasSizeDialog(canvasWidth(), canvasHeight(), this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
+    return dialog;
 }
 
 // アクティブセルの重なり順を移動する(delta=-1:下/奥へ、+1:上/手前へ)
@@ -1332,6 +1375,11 @@ void MainWindow::setupMenus() {
     QAction* exportAction = fileMenu->addAction(tr("書き出し(&E)..."));
     exportAction->setShortcut(QKeySequence(tr("Ctrl+E")));
     connect(exportAction, &QAction::triggered, this, &MainWindow::openExportDialog);
+
+    fileMenu->addSeparator();
+
+    QAction* canvasSizeAction = fileMenu->addAction(tr("プロジェクト設定(&R)..."));
+    connect(canvasSizeAction, &QAction::triggered, this, &MainWindow::openCanvasSizeDialog);
 
     // 編集メニュー
     QMenu* editMenu = menuBar()->addMenu(tr("編集(&E)"));
@@ -1550,6 +1598,10 @@ bool MainWindow::loadFromFile(const QString& path) {
     m_activeCut = 0;
     m_activeCel = 0;
     m_activeLayer = 0;
+    // 読み込んだプロジェクトのキャンバスサイズへ作画キャンバス・撮影/編集ウィンドウを合わせる
+    m_canvas->setCanvasSize(canvasWidth(), canvasHeight());
+    if (m_editWindow) m_editWindow->setCanvasSize(canvasWidth(), canvasHeight());
+    if (m_shootingWindow) m_shootingWindow->setCanvasSize(canvasWidth(), canvasHeight());
     m_canvas->clearTextureCache();
     if (m_previzWindow) m_previzWindow->setScene(&activeCut().previz());  // 旧シーンへのポインタを差し替え
     if (m_storyboardWindow) {
@@ -1833,7 +1885,7 @@ void MainWindow::debugSetupOnionDemo() {
     core::Layer& layer = activeLayer();
     while (layer.frameCount() < 3) {
         core::Frame& frame = layer.addFrame();
-        frame.bitmap() = makeTransparentCel();
+        frame.bitmap() = makeTransparentCel(canvasWidth(), canvasHeight());
     }
 
     core::BrushEngine engine;
@@ -1841,9 +1893,9 @@ void MainWindow::debugSetupOnionDemo() {
     engine.settings().color = {0, 0, 0, 255};
     for (int i = 0; i < 3; ++i) {
         core::Bitmap& bitmap = layer.frame(static_cast<size_t>(i)).bitmap();
-        const float x = kCanvasWidth * (0.30f + 0.20f * static_cast<float>(i));
-        engine.beginStroke(bitmap, x, kCanvasHeight * 0.25f, 0.9f);
-        engine.continueStroke(bitmap, x, kCanvasHeight * 0.75f, 0.9f);
+        const float x = canvasWidth() * (0.30f + 0.20f * static_cast<float>(i));
+        engine.beginStroke(bitmap, x, canvasHeight() * 0.25f, 0.9f);
+        engine.continueStroke(bitmap, x, canvasHeight() * 0.75f, 0.9f);
         engine.endStroke();
     }
 
@@ -1867,14 +1919,14 @@ void MainWindow::debugSetupLayerDemo() {
 
     core::Bitmap& bottom = cel.layer(0).frame(m_currentFrame).bitmap();
     engine.settings().color = {200, 40, 40, 255};
-    engine.beginStroke(bottom, kCanvasWidth * 0.4f, kCanvasHeight * 0.25f, 0.9f);
-    engine.continueStroke(bottom, kCanvasWidth * 0.4f, kCanvasHeight * 0.75f, 0.9f);
+    engine.beginStroke(bottom, canvasWidth() * 0.4f, canvasHeight() * 0.25f, 0.9f);
+    engine.continueStroke(bottom, canvasWidth() * 0.4f, canvasHeight() * 0.75f, 0.9f);
     engine.endStroke();
 
     core::Bitmap& top = cel.layer(1).frame(m_currentFrame).bitmap();
     engine.settings().color = {40, 40, 200, 255};
-    engine.beginStroke(top, kCanvasWidth * 0.25f, kCanvasHeight * 0.5f, 0.9f);
-    engine.continueStroke(top, kCanvasWidth * 0.75f, kCanvasHeight * 0.5f, 0.9f);
+    engine.beginStroke(top, canvasWidth() * 0.25f, canvasHeight() * 0.5f, 0.9f);
+    engine.continueStroke(top, canvasWidth() * 0.75f, canvasHeight() * 0.5f, 0.9f);
     engine.endStroke();
 
     m_canvas->clearTextureCache();
@@ -1898,7 +1950,7 @@ void MainWindow::debugSetupOversizeDemo() {
     // 引きセル: アクティブセルをキャンバス幅の2倍(横パン用の背景セル)にリサイズする。
     // 既存の(キャンバスサイズの)動画1は中央基準で新サイズへ移し替えられる(元々空なので実害なし)
     core::Cel& cel = activeCel();
-    cel.resizePaper(kCanvasWidth * 2, kCanvasHeight);
+    cel.resizePaper(canvasWidth() * 2, canvasHeight());
     m_canvas->clearTextureCache();
 
     // 用紙全域(縦方向は上〜下いっぱい)に、左半分=赤・右半分=青の縦線を描く
@@ -1907,15 +1959,15 @@ void MainWindow::debugSetupOversizeDemo() {
     engine.settings().radius = 20.0f;
 
     engine.settings().color = {220, 30, 30, 255};  // 左半分: 赤
-    const float leftX = kCanvasWidth * 0.5f;
-    engine.beginStroke(bitmap, leftX, kCanvasHeight * 0.1f, 1.0f);
-    engine.continueStroke(bitmap, leftX, kCanvasHeight * 0.9f, 1.0f);
+    const float leftX = canvasWidth() * 0.5f;
+    engine.beginStroke(bitmap, leftX, canvasHeight() * 0.1f, 1.0f);
+    engine.continueStroke(bitmap, leftX, canvasHeight() * 0.9f, 1.0f);
     engine.endStroke();
 
     engine.settings().color = {30, 60, 220, 255};  // 右半分: 青
-    const float rightX = kCanvasWidth * 1.5f;
-    engine.beginStroke(bitmap, rightX, kCanvasHeight * 0.1f, 1.0f);
-    engine.continueStroke(bitmap, rightX, kCanvasHeight * 0.9f, 1.0f);
+    const float rightX = canvasWidth() * 1.5f;
+    engine.beginStroke(bitmap, rightX, canvasHeight() * 0.1f, 1.0f);
+    engine.continueStroke(bitmap, rightX, canvasHeight() * 0.9f, 1.0f);
     engine.endStroke();
 
     // 位置キー: コマ0=オフセット0(左半分の赤がキャンバス内)、
@@ -1924,7 +1976,7 @@ void MainWindow::debugSetupOversizeDemo() {
     cut.setFrameCount(3);
     for (size_t t = 0; t < 3; ++t) cel.setExposure(t, 0);  // 止め(同じ動画をコマ0〜2に表示)
     cel.setPositionKey(0, {0.0f, 0.0f});
-    cel.setPositionKey(2, {static_cast<float>(-kCanvasWidth), 0.0f});
+    cel.setPositionKey(2, {static_cast<float>(-canvasWidth()), 0.0f});
 
     markCutDirty(cut);
     updateWindowTitle();
@@ -1939,8 +1991,8 @@ void MainWindow::debugSetupCameraDemo() {
     core::Cel& cel = activeCel();
     cut.setFrameCount(24);
     for (size_t t = 0; t < 24; ++t) cel.setExposure(t, 0);  // 止め(全コマで同じ絵を表示)
-    cut.setCameraKey(0, core::CameraFrameState{{kCanvasWidth / 2.0f, kCanvasHeight / 2.0f}, 1.0});
-    cut.setCameraKey(23, core::CameraFrameState{{kCanvasWidth * 0.3f, kCanvasHeight * 0.3f}, 0.5});
+    cut.setCameraKey(0, core::CameraFrameState{{canvasWidth() / 2.0f, canvasHeight() / 2.0f}, 1.0});
+    cut.setCameraKey(23, core::CameraFrameState{{canvasWidth() * 0.3f, canvasHeight() * 0.3f}, 0.5});
     markCutDirty(cut);
     updateWindowTitle();
     setCurrentFrame(12);
@@ -1968,10 +2020,10 @@ void MainWindow::debugSetupShootingDemo() {
 
     // マスク編集(「特定の部分にエフェクトをかけたい」要望)確認用: 画面の右半分だけを赤(alpha255)で
     // 塗ったマスクを設定する。プレビューでは右半分だけボケる見え方になる
-    core::Bitmap blurMask(kCanvasWidth, kCanvasHeight);
+    core::Bitmap blurMask(canvasWidth(), canvasHeight());
     blurMask.fill({0, 0, 0, 0});
-    for (int y = 0; y < kCanvasHeight; ++y) {
-        for (int x = kCanvasWidth / 2; x < kCanvasWidth; ++x) blurMask.setPixel(x, y, {255, 0, 0, 255});
+    for (int y = 0; y < canvasHeight(); ++y) {
+        for (int x = canvasWidth() / 2; x < canvasWidth(); ++x) blurMask.setPixel(x, y, {255, 0, 0, 255});
     }
     blur.mask = std::move(blurMask);
 
@@ -2003,8 +2055,8 @@ void MainWindow::debugSetupClassicDemo() {
     core::BrushEngine engineA;
     engineA.settings().radius = 10.0f;
     engineA.settings().color = {210, 30, 30, 255};
-    const float ax0 = kCanvasWidth * 0.30f, ax1 = kCanvasWidth * 0.70f;
-    const float ay0 = kCanvasHeight * 0.30f, ay1 = kCanvasHeight * 0.70f;
+    const float ax0 = canvasWidth() * 0.30f, ax1 = canvasWidth() * 0.70f;
+    const float ay0 = canvasHeight() * 0.30f, ay1 = canvasHeight() * 0.70f;
     engineA.beginStroke(bitmapA, ax0, ay0, 1.0f);
     engineA.continueStroke(bitmapA, ax1, ay0, 1.0f);
     engineA.continueStroke(bitmapA, ax1, ay1, 1.0f);
@@ -2019,7 +2071,7 @@ void MainWindow::debugSetupClassicDemo() {
     core::BrushEngine engineB;
     engineB.settings().radius = 80.0f;
     engineB.settings().color = {30, 180, 60, 255};
-    engineB.beginStroke(bitmapB, kCanvasWidth * 0.25f, kCanvasHeight * 0.5f, 1.0f);
+    engineB.beginStroke(bitmapB, canvasWidth() * 0.25f, canvasHeight() * 0.5f, 1.0f);
     engineB.endStroke();
 
     // クラシック撮影(マルチプレーン)を有効化
@@ -2070,8 +2122,8 @@ void MainWindow::debugSetupBacklightDemo() {
         {0.0f, 0.0f}, {90.0f, -60.0f}, {-90.0f, -60.0f}, {70.0f, 80.0f}, {-70.0f, 80.0f},
     };
     for (const auto& hole : kHoles) {
-        const float hx = kCanvasWidth * 0.5f + hole.dx;
-        const float hy = kCanvasHeight * 0.5f + hole.dy;
+        const float hx = canvasWidth() * 0.5f + hole.dx;
+        const float hy = canvasHeight() * 0.5f + hole.dy;
         holeEngine.beginStroke(bitmap, hx, hy, 1.0f);
         holeEngine.endStroke();
     }
@@ -2113,10 +2165,10 @@ void MainWindow::debugSetupBacklightDemo() {
     coloredLight.colorG = 0.8;
     coloredLight.colorB = 1.0;
     {
-        core::Bitmap mask(kCanvasWidth, kCanvasHeight);
+        core::Bitmap mask(canvasWidth(), canvasHeight());
         mask.fill({0, 0, 0, 0});  // 全面透明(未塗り部=遮光)
-        for (int y = 0; y < kCanvasHeight; ++y) {
-            for (int x = 0; x < kCanvasWidth / 2; ++x) {
+        for (int y = 0; y < canvasHeight(); ++y) {
+            for (int x = 0; x < canvasWidth() / 2; ++x) {
                 mask.setPixel(x, y, {255, 0, 0, 255});  // 左半分だけ塗って光を通す
             }
         }
@@ -2158,11 +2210,11 @@ void MainWindow::debugSetupFilmDemo() {
         {230, 40, 40, 255}, {230, 200, 40, 255}, {40, 200, 60, 255}, {40, 140, 230, 255}, {200, 40, 200, 255},
     };
     const int barCount = static_cast<int>(sizeof(kBars) / sizeof(kBars[0]));
-    const int barWidth = kCanvasWidth / (barCount + 2);  // 左右に余白(グレー地)を残す
+    const int barWidth = canvasWidth() / (barCount + 2);  // 左右に余白(グレー地)を残す
     for (int i = 0; i < barCount; ++i) {
         const int x0 = barWidth + i * barWidth;
-        const int x1 = std::min(kCanvasWidth, x0 + barWidth);
-        for (int y = kCanvasHeight / 4; y < kCanvasHeight * 3 / 4; ++y) {
+        const int x1 = std::min(canvasWidth(), x0 + barWidth);
+        for (int y = canvasHeight() / 4; y < canvasHeight() * 3 / 4; ++y) {
             for (int x = x0; x < x1; ++x) bitmap.setPixel(x, y, kBars[i]);
         }
     }
@@ -2236,13 +2288,13 @@ void MainWindow::debugBuildFullDemo() {
     {
         core::SettingBoard board;
         board.name = "キャラ設定";
-        board.image = core::Bitmap(kCanvasWidth, kCanvasHeight);
+        board.image = core::Bitmap(canvasWidth(), canvasHeight());
         board.image.fill({0, 0, 0, 0});
         core::BrushEngine boardEngine;
         boardEngine.settings().radius = 8.0f;
         boardEngine.settings().color = {90, 70, 60, 255};
-        boardEngine.beginStroke(board.image, kCanvasWidth * 0.3f, kCanvasHeight * 0.3f, 1.0f);
-        boardEngine.continueStroke(board.image, kCanvasWidth * 0.7f, kCanvasHeight * 0.7f, 1.0f);
+        boardEngine.beginStroke(board.image, canvasWidth() * 0.3f, canvasHeight() * 0.3f, 1.0f);
+        boardEngine.continueStroke(board.image, canvasWidth() * 0.7f, canvasHeight() * 0.7f, 1.0f);
         boardEngine.endStroke();
         board.colorSpecs.push_back({"肌", {255, 224, 196, 255}});
         board.colorSpecs.push_back({"影", {200, 170, 150, 255}});
@@ -2267,13 +2319,14 @@ void MainWindow::debugBuildFullDemo() {
     if (!m_previzWindow) openPrevizWindow();
     m_previzWindow->setScene(&cut0.previz());  // 空シーンには箱モデルが自動追加される(PrevizWindow::setScene)
     m_previzWindow->setTimeline(0, cut0.frameCount());
-    const QImage previzImage = m_previzWindow->viewport()->renderCameraViewImage();
+    const QImage previzImage =
+        m_previzWindow->viewport()->renderCameraViewImage(static_cast<float>(canvasWidth()) / canvasHeight());
 
     // 背景セル(プリビズ下敷き): カメラ画像をキャンバスサイズへアスペクト維持でスケールし、
     // アルファを下げて淡く焼き込む。全コマ止め
     core::Cel& previzBgCel = cut0.cel(0);
     previzBgCel.setName("プリビズ下敷き");
-    previzBgCel.layer(0).frame(0).bitmap() = makeFaintPrevizBitmap(previzImage, kCanvasWidth, kCanvasHeight, 0.35f);
+    previzBgCel.layer(0).frame(0).bitmap() = makeFaintPrevizBitmap(previzImage, canvasWidth(), canvasHeight(), 0.35f);
     for (size_t t = 0; t < cut0.frameCount(); ++t) previzBgCel.setExposure(t, 0);
 
     // キャラセル(筆圧ペンでなぞり線): 箱の投影位置は厳密でなくてよいので、画面中央付近に
@@ -2281,10 +2334,10 @@ void MainWindow::debugBuildFullDemo() {
     core::Cel& tracingCel = cut0.addCel("なぞり線");
     core::Layer& tracingLayer = tracingCel.addLayer("レイヤー 1");
     core::Bitmap& tracingBitmap = tracingLayer.addFrame().bitmap();
-    tracingBitmap = makeTransparentCel();
+    tracingBitmap = makeTransparentCel(canvasWidth(), canvasHeight());
     {
-        const float x0 = kCanvasWidth * 0.32f, x1 = kCanvasWidth * 0.68f;
-        const float y0 = kCanvasHeight * 0.30f, y1 = kCanvasHeight * 0.72f;
+        const float x0 = canvasWidth() * 0.32f, x1 = canvasWidth() * 0.68f;
+        const float y0 = canvasHeight() * 0.30f, y1 = canvasHeight() * 0.72f;
         const QColor penColor(30, 30, 40);
         // 箱の輪郭をなぞった風の矩形
         drawPenStroke(tracingBitmap, {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}, {x0, y0}}, penColor, 14.0f);
@@ -2298,7 +2351,7 @@ void MainWindow::debugBuildFullDemo() {
     // カット1「PAN + T.U. + グロー」(尺48コマ)
     // ==================================================================
     core::Cut& cut1 = scene.addCut("カット1 PAN+TU+グロー");
-    initializeCut(cut1);
+    initializeCut(cut1, canvasWidth(), canvasHeight());
     cut1.setAction("背景が左へパンしながらキャラが歩く。カメラがゆっくり寄る(T.U.)。");
     cut1.setDialogue("行くぞ!");
     cut1.setStatus(core::CutStatus::Done);
@@ -2307,27 +2360,27 @@ void MainWindow::debugBuildFullDemo() {
     // 背景セル(引きセル): 横2倍にリサイズしてから地平線+縦グリッド線を描く
     core::Cel& bgCel = cut1.cel(0);
     bgCel.setName("背景");
-    bgCel.resizePaper(kCanvasWidth * 2, kCanvasHeight);
+    bgCel.resizePaper(canvasWidth() * 2, canvasHeight());
     {
         core::Bitmap& bgBitmap = bgCel.layer(0).frame(0).bitmap();
         core::BrushEngine bgEngine;
         bgEngine.settings().radius = 6.0f;
         bgEngine.settings().color = {70, 70, 85, 255};
         // 地平線
-        bgEngine.beginStroke(bgBitmap, 0.0f, kCanvasHeight * 0.6f, 1.0f);
-        bgEngine.continueStroke(bgBitmap, static_cast<float>(kCanvasWidth * 2), kCanvasHeight * 0.6f, 1.0f);
+        bgEngine.beginStroke(bgBitmap, 0.0f, canvasHeight() * 0.6f, 1.0f);
+        bgEngine.continueStroke(bgBitmap, static_cast<float>(canvasWidth() * 2), canvasHeight() * 0.6f, 1.0f);
         bgEngine.endStroke();
         // 縦グリッド線(地面の遠近感)
         for (int i = 0; i <= 16; ++i) {
-            const float x = static_cast<float>(kCanvasWidth * 2) * (static_cast<float>(i) / 16.0f);
-            bgEngine.beginStroke(bgBitmap, x, kCanvasHeight * 0.6f, 1.0f);
-            bgEngine.continueStroke(bgBitmap, x, static_cast<float>(kCanvasHeight), 1.0f);
+            const float x = static_cast<float>(canvasWidth() * 2) * (static_cast<float>(i) / 16.0f);
+            bgEngine.beginStroke(bgBitmap, x, canvasHeight() * 0.6f, 1.0f);
+            bgEngine.continueStroke(bgBitmap, x, static_cast<float>(canvasHeight()), 1.0f);
             bgEngine.endStroke();
         }
     }
     for (size_t t = 0; t < 48; ++t) bgCel.setExposure(t, 0);  // 止め(1枚絵をPANで動かす)
     bgCel.setPositionKey(0, {0.0f, 0.0f});
-    bgCel.setPositionKey(47, {-static_cast<float>(kCanvasWidth), 0.0f});  // 左へPAN
+    bgCel.setPositionKey(47, {-static_cast<float>(canvasWidth()), 0.0f});  // 左へPAN
 
     // キャラセル(通常サイズ): 3枚の動画で歩きのパラパラ(2コマ打ち、明るいハイライト付き=グロー確認用)
     core::Cel& charCel = cut1.addCel("キャラ");
@@ -2335,10 +2388,10 @@ void MainWindow::debugBuildFullDemo() {
     constexpr int kCharDrawings = 3;
     for (int i = 0; i < kCharDrawings; ++i) {
         core::Bitmap& bmp = charLayer.addFrame().bitmap();
-        bmp = makeTransparentCel();
+        bmp = makeTransparentCel(canvasWidth(), canvasHeight());
         core::BrushEngine charEngine;
-        const float cx = kCanvasWidth * 0.5f;
-        const float cy = kCanvasHeight * 0.55f + (i == 1 ? -20.0f : 0.0f);  // 中割りだけ跳ねる
+        const float cx = canvasWidth() * 0.5f;
+        const float cy = canvasHeight() * 0.55f + (i == 1 ? -20.0f : 0.0f);  // 中割りだけ跳ねる
 
         // 頭(円)
         charEngine.settings().radius = 60.0f;
@@ -2370,8 +2423,8 @@ void MainWindow::debugBuildFullDemo() {
     }
 
     // カメラフレームキー: コマ0=中心100%、コマ47=やや上へ寄って60%(T.U.=画面が寄っていく)
-    cut1.setCameraKey(0, core::CameraFrameState{{kCanvasWidth / 2.0f, kCanvasHeight / 2.0f}, 1.0});
-    cut1.setCameraKey(47, core::CameraFrameState{{kCanvasWidth * 0.5f, kCanvasHeight * 0.4f}, 0.6});
+    cut1.setCameraKey(0, core::CameraFrameState{{canvasWidth() / 2.0f, canvasHeight() / 2.0f}, 1.0});
+    cut1.setCameraKey(47, core::CameraFrameState{{canvasWidth() * 0.5f, canvasHeight() * 0.4f}, 0.6});
 
     // エフェクト: グロー(だんだん発光)
     {
@@ -2389,7 +2442,7 @@ void MainWindow::debugBuildFullDemo() {
     // カット2「クラシック撮影(マルチプレーン)DoF」(尺36コマ)
     // ==================================================================
     core::Cut& cut2 = scene.addCut("カット2 クラシック撮影DoF");
-    initializeCut(cut2);
+    initializeCut(cut2, canvasWidth(), canvasHeight());
     cut2.setAction("マルチプレーン撮影(クラシック)。手前のキャラにピントを合わせ、奥の背景をぼかす。");
     cut2.setDialogue("");
     cut2.setStatus(core::CutStatus::Shooting);
@@ -2403,7 +2456,7 @@ void MainWindow::debugBuildFullDemo() {
         core::BrushEngine engineA2;
         engineA2.settings().radius = 120.0f;
         engineA2.settings().color = {230, 90, 60, 255};
-        engineA2.beginStroke(bitmapA2, kCanvasWidth * 0.5f, kCanvasHeight * 0.5f, 1.0f);
+        engineA2.beginStroke(bitmapA2, canvasWidth() * 0.5f, canvasHeight() * 0.5f, 1.0f);
         engineA2.endStroke();
     }
     for (size_t t = 0; t < 36; ++t) celA2.setExposure(t, 0);
@@ -2413,20 +2466,20 @@ void MainWindow::debugBuildFullDemo() {
     core::Layer& layerB2 = celB2.addLayer("レイヤー 1");
     {
         core::Bitmap& bitmapB2 = layerB2.addFrame().bitmap();
-        bitmapB2 = makeTransparentCel();
+        bitmapB2 = makeTransparentCel(canvasWidth(), canvasHeight());
         core::BrushEngine engineB2;
         engineB2.settings().radius = 8.0f;
         engineB2.settings().color = {120, 150, 190, 255};
         for (int i = 0; i <= 8; ++i) {
-            const float x = kCanvasWidth * (static_cast<float>(i) / 8.0f);
+            const float x = canvasWidth() * (static_cast<float>(i) / 8.0f);
             engineB2.beginStroke(bitmapB2, x, 0.0f, 1.0f);
-            engineB2.continueStroke(bitmapB2, x, static_cast<float>(kCanvasHeight), 1.0f);
+            engineB2.continueStroke(bitmapB2, x, static_cast<float>(canvasHeight()), 1.0f);
             engineB2.endStroke();
         }
         for (int j = 0; j <= 4; ++j) {
-            const float y = kCanvasHeight * (static_cast<float>(j) / 4.0f);
+            const float y = canvasHeight() * (static_cast<float>(j) / 4.0f);
             engineB2.beginStroke(bitmapB2, 0.0f, y, 1.0f);
-            engineB2.continueStroke(bitmapB2, static_cast<float>(kCanvasWidth), y, 1.0f);
+            engineB2.continueStroke(bitmapB2, static_cast<float>(canvasWidth()), y, 1.0f);
             engineB2.endStroke();
         }
     }
@@ -2472,7 +2525,7 @@ void MainWindow::debugBuildFullDemo() {
     // カット3「シェイク + カラーパラ」(尺24コマ)
     // ==================================================================
     core::Cut& cut3 = scene.addCut("カット3 シェイク+カラーパラ");
-    initializeCut(cut3);
+    initializeCut(cut3, canvasWidth(), canvasHeight());
     cut3.setAction("爆発の衝撃でカメラが激しく揺れ、徐々に収まる。オレンジのパラで画面を焼く。");
     cut3.setDialogue("うわあっ!");
     cut3.setStatus(core::CutStatus::Finishing);
@@ -2488,12 +2541,12 @@ void MainWindow::debugBuildFullDemo() {
         engine3.settings().color = {255, 200, 40, 255};
         constexpr double kTau = 6.283185307179586;
         constexpr int kRays = 12;
-        const float cx3 = kCanvasWidth * 0.5f;
-        const float cy3 = kCanvasHeight * 0.5f;
+        const float cx3 = canvasWidth() * 0.5f;
+        const float cy3 = canvasHeight() * 0.5f;
         for (int i = 0; i < kRays; ++i) {
             const double angle = kTau * static_cast<double>(i) / static_cast<double>(kRays);
-            const float ex = cx3 + static_cast<float>(std::cos(angle)) * kCanvasWidth * 0.4f;
-            const float ey = cy3 + static_cast<float>(std::sin(angle)) * kCanvasWidth * 0.4f;
+            const float ex = cx3 + static_cast<float>(std::cos(angle)) * canvasWidth() * 0.4f;
+            const float ey = cy3 + static_cast<float>(std::sin(angle)) * canvasWidth() * 0.4f;
             engine3.beginStroke(bitmap3, cx3, cy3, 1.0f);
             engine3.continueStroke(bitmap3, ex, ey, 1.0f);
             engine3.endStroke();
@@ -2540,8 +2593,8 @@ void MainWindow::debugSetupFillDemo() {
     engine.settings().radius = 8.0f;
     engine.settings().color = {0, 0, 0, 255};
 
-    const float x0 = kCanvasWidth * 0.30f, x1 = kCanvasWidth * 0.70f;
-    const float y0 = kCanvasHeight * 0.30f, y1 = kCanvasHeight * 0.70f;
+    const float x0 = canvasWidth() * 0.30f, x1 = canvasWidth() * 0.70f;
+    const float y0 = canvasHeight() * 0.30f, y1 = canvasHeight() * 0.70f;
     engine.beginStroke(bitmap, x0, y0, 1.0f);
     engine.continueStroke(bitmap, x1, y0, 1.0f);
     engine.continueStroke(bitmap, x1, y1, 1.0f);
@@ -2564,8 +2617,8 @@ void MainWindow::debugSetupColorTraceDemo() {
     core::BrushEngine engine;
     engine.settings().radius = 6.0f;
     engine.settings().color = {220, 30, 30, 255};  // 色トレス線(赤)
-    engine.beginStroke(trace, kCanvasWidth * 0.5f, kCanvasHeight * 0.25f, 1.0f);
-    engine.continueStroke(trace, kCanvasWidth * 0.5f, kCanvasHeight * 0.75f, 1.0f);
+    engine.beginStroke(trace, canvasWidth() * 0.5f, canvasHeight() * 0.25f, 1.0f);
+    engine.continueStroke(trace, canvasWidth() * 0.5f, canvasHeight() * 0.75f, 1.0f);
     engine.endStroke();
 
     // 3. 彩色用レイヤーを追加してアクティブに(塗り先)
@@ -2610,15 +2663,15 @@ void MainWindow::debugSetupCelDemo() {
     core::Cel& celA = cut.cel(0);
     core::Bitmap& bitmapA = celA.layer(0).frame(0).bitmap();
     engine.settings().color = {200, 40, 40, 255};
-    engine.beginStroke(bitmapA, kCanvasWidth * 0.4f, kCanvasHeight * 0.25f, 0.9f);
-    engine.continueStroke(bitmapA, kCanvasWidth * 0.4f, kCanvasHeight * 0.75f, 0.9f);
+    engine.beginStroke(bitmapA, canvasWidth() * 0.4f, canvasHeight() * 0.25f, 0.9f);
+    engine.continueStroke(bitmapA, canvasWidth() * 0.4f, canvasHeight() * 0.75f, 0.9f);
     engine.endStroke();
 
     core::Cel& celB = cut.cel(1);
     core::Bitmap& bitmapB = celB.layer(0).frame(0).bitmap();
     engine.settings().color = {40, 40, 200, 255};
-    engine.beginStroke(bitmapB, kCanvasWidth * 0.25f, kCanvasHeight * 0.5f, 0.9f);
-    engine.continueStroke(bitmapB, kCanvasWidth * 0.75f, kCanvasHeight * 0.5f, 0.9f);
+    engine.beginStroke(bitmapB, canvasWidth() * 0.25f, canvasHeight() * 0.5f, 0.9f);
+    engine.continueStroke(bitmapB, canvasWidth() * 0.75f, canvasHeight() * 0.5f, 0.9f);
     engine.endStroke();
 
     celA.setExposure(0, 0);
@@ -2748,7 +2801,7 @@ void MainWindow::openStoryboardWindow() {
                 [this](const QString& cutLabel, int totalFrames) {
                     core::Scene& scene = m_project->scene(0);
                     core::Cut& cut = scene.addCut((QStringLiteral("カット ") + cutLabel).toStdString());
-                    initializeCut(cut);
+                    initializeCut(cut, canvasWidth(), canvasHeight());
                     cut.setFrameCount(static_cast<size_t>(std::max(1, totalFrames)));
                     markProjectDirty();  // シーンのカット構成(cutIds)が変わる
                     markCutDirty(cut);
@@ -2879,14 +2932,14 @@ void MainWindow::debugSetupSettingBoardDemo() {
 
     core::SettingBoard board1;
     board1.name = "キャラ: 主人公";
-    board1.image = core::Bitmap(kCanvasWidth, kCanvasHeight);  // 設定ボードウィンドウと同じ寸法(1920x1080)
+    board1.image = core::Bitmap(canvasWidth(), canvasHeight());  // 設定ボードウィンドウと同じ寸法(キャンバスサイズ)
     board1.image.fill({0, 0, 0, 0});
 
     core::BrushEngine engine;
     engine.settings().radius = 10.0f;
     engine.settings().color = {220, 30, 30, 255};
-    engine.beginStroke(board1.image, kCanvasWidth * 0.2f, kCanvasHeight * 0.2f, 1.0f);
-    engine.continueStroke(board1.image, kCanvasWidth * 0.8f, kCanvasHeight * 0.8f, 1.0f);
+    engine.beginStroke(board1.image, canvasWidth() * 0.2f, canvasHeight() * 0.2f, 1.0f);
+    engine.continueStroke(board1.image, canvasWidth() * 0.8f, canvasHeight() * 0.8f, 1.0f);
     engine.endStroke();
 
     // 色指定(色指定書): 「肌」「肌 影」「髪」の3色を見本として登録する
@@ -2896,7 +2949,7 @@ void MainWindow::debugSetupSettingBoardDemo() {
 
     core::SettingBoard board2;
     board2.name = "美術: 教室";
-    board2.image = core::Bitmap(kCanvasWidth, kCanvasHeight);
+    board2.image = core::Bitmap(canvasWidth(), canvasHeight());
     board2.image.fill({0, 0, 0, 0});
 
     boards.push_back(std::move(board1));
@@ -2919,7 +2972,7 @@ void MainWindow::openEditWindow() {
         });
         connect(m_editWindow, &EditWindow::cutActivated, this, [this](int index) { setActiveCut(index); });
     }
-    m_editWindow->setCanvasSize(kCanvasWidth, kCanvasHeight);
+    m_editWindow->setCanvasSize(canvasWidth(), canvasHeight());
     m_editWindow->setProject(m_project.get());
     m_editWindow->refresh();
     m_editWindow->show();
@@ -2944,7 +2997,7 @@ void MainWindow::openShootingWindow() {
             if (m_editWindow) m_editWindow->refresh();  // 通しプレビューのキャッシュを捨てて反映する
         });
     }
-    m_shootingWindow->setCanvasSize(kCanvasWidth, kCanvasHeight);
+    m_shootingWindow->setCanvasSize(canvasWidth(), canvasHeight());
     m_shootingWindow->setProject(m_project.get());
     m_shootingWindow->setCutIndex(static_cast<int>(m_activeCut));
     m_shootingWindow->refresh();
@@ -2973,13 +3026,13 @@ void MainWindow::debugSetupEditDemo() {
     for (size_t t = 0; t < scene.cut(0).frameCount(); ++t) scene.cut(0).cel(0).setExposure(t, 0);
 
     core::Cut& cut2 = scene.addCut("カット 2");
-    initializeCut(cut2);
+    initializeCut(cut2, canvasWidth(), canvasHeight());
     cut2.setFrameCount(24);
     cut2.setStatus(core::CutStatus::Layout);  // レイアウト
     for (size_t t = 0; t < cut2.frameCount(); ++t) cut2.cel(0).setExposure(t, 0);
 
     core::Cut& cut3 = scene.addCut("カット 3");
-    initializeCut(cut3);
+    initializeCut(cut3, canvasWidth(), canvasHeight());
     cut3.setFrameCount(12);
     cut3.setStatus(core::CutStatus::NotStarted);  // 未着手
     for (size_t t = 0; t < cut3.frameCount(); ++t) cut3.cel(0).setExposure(t, 0);
@@ -2990,15 +3043,15 @@ void MainWindow::debugSetupEditDemo() {
     // カット1: 赤ストローク
     engine.settings().color = {220, 30, 30, 255};
     core::Bitmap& bmp1 = scene.cut(0).cel(0).layer(0).frame(0).bitmap();
-    engine.beginStroke(bmp1, kCanvasWidth * 0.2f, kCanvasHeight * 0.2f, 1.0f);
-    engine.continueStroke(bmp1, kCanvasWidth * 0.8f, kCanvasHeight * 0.8f, 1.0f);
+    engine.beginStroke(bmp1, canvasWidth() * 0.2f, canvasHeight() * 0.2f, 1.0f);
+    engine.continueStroke(bmp1, canvasWidth() * 0.8f, canvasHeight() * 0.8f, 1.0f);
     engine.endStroke();
 
     // カット2: 青ストローク(赤とは別の位置・向き)
     engine.settings().color = {30, 30, 220, 255};
     core::Bitmap& bmp2 = cut2.cel(0).layer(0).frame(0).bitmap();
-    engine.beginStroke(bmp2, kCanvasWidth * 0.8f, kCanvasHeight * 0.2f, 1.0f);
-    engine.continueStroke(bmp2, kCanvasWidth * 0.2f, kCanvasHeight * 0.8f, 1.0f);
+    engine.beginStroke(bmp2, canvasWidth() * 0.8f, canvasHeight() * 0.2f, 1.0f);
+    engine.continueStroke(bmp2, canvasWidth() * 0.2f, canvasHeight() * 0.8f, 1.0f);
     engine.endStroke();
 
     // 複数カットを作り直した上でストロークも描いており波及範囲が広いため安全側(全書き)に倒す
@@ -3057,6 +3110,11 @@ bool MainWindow::exportSequence(const QString& dir, int from, int to, const core
 
     core::Cut& cut = activeCut();
 
+    // mp4書き出し(libx264+yuv420p)は奇数解像度だと失敗するため、書き出しサイズは常に2の倍数へ
+    // 切り下げる(連番PNG単体の書き出しでも同じサイズに揃えることで挙動を一貫させる)
+    const int outW = canvasWidth() & ~1;
+    const int outH = canvasHeight() & ~1;
+
     QProgressDialog progress(tr("書き出し中..."), tr("キャンセル"), 0, total, this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(0);
@@ -3066,7 +3124,7 @@ bool MainWindow::exportSequence(const QString& dir, int from, int to, const core
         if (progress.wasCanceled()) return false;
 
         const size_t frame = static_cast<size_t>(from + i);
-        const core::Bitmap bitmap = core::renderCutFrame(cut, frame, kCanvasWidth, kCanvasHeight, opts);
+        const core::Bitmap bitmap = core::renderCutFrame(cut, frame, outW, outH, opts);
         // コピーせずbitmapのデータへ直接QImageを被せてsave()する(bitmapの寿命内なので安全)
         const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
         const QString path = outDir.filePath(QStringLiteral("frame_%1.png").arg(i + 1, 4, 10, QChar('0')));
@@ -3140,6 +3198,10 @@ bool MainWindow::exportAllCutsMovie(const QString& mp4Path, int fps) {
 
     const core::RenderOptions opts;  // 既定=最終画(色トレス線/作監修正は含めない)
 
+    // mp4書き出し(libx264+yuv420p)は奇数解像度だと失敗するため、書き出しサイズは常に2の倍数へ切り下げる
+    const int outW = canvasWidth() & ~1;
+    const int outH = canvasHeight() & ~1;
+
     int globalFrame = 0;
     for (size_t ci = 0; ci < scene.cutCount(); ++ci) {
         core::Cut& cut = scene.cut(ci);
@@ -3148,7 +3210,7 @@ bool MainWindow::exportAllCutsMovie(const QString& mp4Path, int fps) {
         const size_t midFrame = (frameCount - 1) / 2;  // 代表フレーム(カットの中間コマ)
 
         for (size_t f = 0; f < frameCount; ++f) {
-            const core::Bitmap bitmap = core::renderCutFrame(cut, f, kCanvasWidth, kCanvasHeight, opts);
+            const core::Bitmap bitmap = core::renderCutFrame(cut, f, outW, outH, opts);
             const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
 
             ++globalFrame;

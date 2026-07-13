@@ -410,6 +410,48 @@ TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]"
     std::filesystem::remove_all(folder);
 }
 
+TEST_CASE("Canvas size round trips through ppproj", "[core][io][canvassize]") {
+    const auto folder = tempFolder("ppam_canvassize_test.ppproj");
+    std::filesystem::remove_all(folder);
+
+    core::Project project("CanvasSize");
+    project.setCanvasSize(2048, 858);  // シネスコ(2.39:1)
+    project.addScene("S").addCut("C").addCel("A").addLayer("L").addFrame();
+
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+    const auto loaded = core::ProjectIO::load(folder, &error);
+    REQUIRE(loaded != nullptr);
+    REQUIRE(loaded->canvasWidth() == 2048);
+    REQUIRE(loaded->canvasHeight() == 858);
+
+    std::filesystem::remove_all(folder);
+}
+
+TEST_CASE("Canvas size defaults to Full HD when absent from an old project file", "[core][io][canvassize]") {
+    const auto folder = tempFolder("ppam_canvassize_default_test.ppproj");
+    std::filesystem::remove_all(folder);
+
+    core::Project project("Default");
+    project.addScene("S").addCut("C").addCel("A").addLayer("L").addFrame();
+
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, folder, &error));
+    const auto loaded = core::ProjectIO::load(folder, &error);
+    REQUIRE(loaded != nullptr);
+    REQUIRE(loaded->canvasWidth() == 1920);
+    REQUIRE(loaded->canvasHeight() == 1080);
+
+    std::filesystem::remove_all(folder);
+}
+
+TEST_CASE("Canvas size setter clamps out-of-range values", "[core][canvassize]") {
+    core::Project project("Clamp");
+    project.setCanvasSize(4, 999999);
+    REQUIRE(project.canvasWidth() == 16);
+    REQUIRE(project.canvasHeight() == 8192);
+}
+
 TEST_CASE("Cut status round trips through ppproj", "[core][io][edit]") {
     core::Project project("P");
     core::Scene& scene = project.addScene("S");

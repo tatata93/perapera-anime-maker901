@@ -665,6 +665,8 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& folder
         root["schemaVersion"] = kSchemaVersion;
         root["name"] = project.name();
         root["nextCutId"] = project.nextCutId();
+        root["canvasWidth"] = project.canvasWidth();
+        root["canvasHeight"] = project.canvasHeight();
         root["scenes"] = std::move(jScenes);
         if (!project.palette().empty()) {
             // パレット色は[r,g,b,a]の配列として保存する(空なら省略)
@@ -769,6 +771,8 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
         const json& jProject = projectContainer.root;
         auto project = std::make_unique<Project>(jProject.at("name").get<std::string>());
         project->setNextCutId(jProject.value("nextCutId", static_cast<uint64_t>(1)));
+        // キャンバス解像度(欠落時=旧ファイルはフルHDの既定のまま)
+        project->setCanvasSize(jProject.value("canvasWidth", 1920), jProject.value("canvasHeight", 1080));
 
         for (const json& jScene : jProject.at("scenes")) {
             Scene& scene = project->addScene(jScene.at("name").get<std::string>());

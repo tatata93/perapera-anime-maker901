@@ -3,6 +3,8 @@
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QPainter>
+#include <QPixmap>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
@@ -493,13 +495,45 @@ int main(int argc, char* argv[]) {
     }
 
     // 動作確認用: --export-test <出力フォルダ> でタイムシートデモ(尺6・2コマ打ち)を組んでから
-    // 全コマを連番PNGで書き出す。debugExportSequence()の戻り値(0=成功)でそのままexitする
+    // 全コマを連番PNGで書き出す。debugExportSequence()の戻り値(0=成功)でそのままexitする。
+    // 続けてキャンバスサイズを4:3(1440x1080)に変更した状態でも書き出しが通ることを確認する
+    // (<出力フォルダ>_4x3へ書き出す。こちらも失敗すれば非0で終了する)
     const int exportIndex = args.indexOf("--export-test");
     if (exportIndex >= 0 && exportIndex + 1 < args.size()) {
         const QString outputDir = args.at(exportIndex + 1);
         QTimer::singleShot(500, &window, [&window, outputDir] {
-            const int result = window.debugExportSequence(outputDir);
+            int result = window.debugExportSequence(outputDir);
+            if (result == 0) {
+                window.debugSetCanvasSize(1440, 1080);  // 4:3 SD
+                result = window.debugExportSequence(outputDir + QStringLiteral("_4x3"));
+            }
             QApplication::exit(result);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+        });
+    }
+
+    // 動作確認用: --canvassize-test <出力PNG> でプロジェクトのキャンバスサイズをシネスコ(2048x858、
+    // 2.39:1の横長)に変更し、ストロークを1本描いてから「プロジェクト設定」ダイアログを非モーダルで
+    // 開いた状態を撮る。ダイアログは別ウィンドウ(top-level)なので、メインウィンドウの
+    // grab()にダイアログのgrab()をその画面上の相対位置で重ね描きし、1枚の画像として保存する
+    const int canvasSizeIndex = args.indexOf("--canvassize-test");
+    if (canvasSizeIndex >= 0 && canvasSizeIndex + 1 < args.size()) {
+        const QString outputPath = args.at(canvasSizeIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetCanvasSize(2048, 858);  // シネスコ(2.39:1)
+            window.canvas()->debugSimulateStroke();
+            window.canvas()->grabFramebuffer();  // paintGLを強制実行させ、キャンバスサイズ変更を反映させる
+            QTimer::singleShot(200, &window, [&window, outputPath] {
+                QDialog* dialog = window.debugOpenCanvasSizeDialog();
+                QTimer::singleShot(300, &window, [&window, outputPath, dialog] {
+                    QPixmap composed = window.grab();
+                    QPainter painter(&composed);
+                    const QPoint offset = dialog->frameGeometry().topLeft() - window.frameGeometry().topLeft();
+                    painter.drawPixmap(offset, dialog->grab());
+                    painter.end();
+                    composed.save(outputPath);
+                    QApplication::exit(0);
+                });
+            });
         });
     }
 

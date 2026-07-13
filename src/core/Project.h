@@ -53,12 +53,21 @@ public:
     uint64_t nextCutId() const { return m_nextCutId; }
     void setNextCutId(uint64_t id) { m_nextCutId = id; }
 
+    // キャンバス解像度(既定1920x1080=フルHD)。新規セル・合成・書き出しのサイズに使う。
+    // 変更しても既存の作画セル(引きセルのpaperサイズ)は変わらない
+    int canvasWidth() const { return m_canvasWidth; }
+    int canvasHeight() const { return m_canvasHeight; }
+    // 幅/高さをそれぞれ[kMinCanvasSize, kMaxCanvasSize]にクランプして設定する
+    void setCanvasSize(int width, int height);
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Scene>> m_scenes;
     std::vector<Bitmap::Pixel> m_palette;
     std::vector<SettingBoard> m_settingBoards;
     uint64_t m_nextCutId = 1;
+    int m_canvasWidth = 1920;
+    int m_canvasHeight = 1080;
 };
 
 }  // namespace core

@@ -4,6 +4,7 @@
 #include <QMouseEvent>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLShaderProgram>
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -75,12 +76,15 @@ void PrevizViewport::setSelectedModel(int index) {
     update();
 }
 
-QImage PrevizViewport::renderCameraViewImage() {
+QImage PrevizViewport::renderCameraViewImage(float aspectWOverH) {
     // 表示モードに関係なく、下敷きには本番カメラの絵を使う。
-    // ウィンドウサイズに依存しない16:9のオフスクリーンFBOで描くことで、
-    // 作品(1920x1080)との比率ずれによる「つぶれ」を防ぐ
+    // ウィンドウサイズに依存しないオフスクリーンFBOで、呼び出し側が指定したアスペクト比
+    // (既定16:9、通常はMainWindowのキャンバスサイズの比率を渡す)で描くことで、
+    // 作品との比率ずれによる「つぶれ」を防ぐ。プロジェクション行列のアスペクトもkWidth/kHeight
+    // からそのまま算出されるため、3D投影自体もキャンバスのアスペクトへ追従する
     constexpr int kWidth = 960;
-    constexpr int kHeight = 540;
+    const float safeAspect = aspectWOverH > 0.0f ? aspectWOverH : 16.0f / 9.0f;
+    const int kHeight = std::max(1, static_cast<int>(std::lround(kWidth / safeAspect)));
 
     makeCurrent();
     QOpenGLFramebufferObjectFormat format;

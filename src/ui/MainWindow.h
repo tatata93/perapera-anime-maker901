@@ -27,6 +27,7 @@ class TapPanel;
 class XsheetPanel;
 class QCloseEvent;
 class QComboBox;
+class QDialog;
 class QLabel;
 class QSlider;
 class QSpinBox;
@@ -46,6 +47,17 @@ public:
     ~MainWindow() override;
 
     GLCanvas* canvas() const { return m_canvas; }
+
+    // キャンバス(作画用紙)の解像度。プロジェクト設定に従う(既定1920x1080)。
+    // m_projectがまだ生成されていない一瞬(コンストラクタ冒頭)のみフォールバックする
+    int canvasWidth() const { return m_project ? m_project->canvasWidth() : 1920; }
+    int canvasHeight() const { return m_project ? m_project->canvasHeight() : 1080; }
+
+    // 解像度設定確認用: プロジェクトのキャンバスサイズを直接変更する(ダイアログを出さない)
+    void debugSetCanvasSize(int width, int height);
+    // 解像度設定確認用: 「プロジェクト設定...」ダイアログを非モーダルで開き、そのポインタを返す
+    // (ダイアログが乗った状態のウィンドウ全体をスクリーンショットするテスト用)
+    QDialog* debugOpenCanvasSizeDialog();
 
     // オニオンスキン確認用: 3フレームに縦線を描き、中央フレームを表示する
     void debugSetupOnionDemo();
@@ -274,6 +286,8 @@ private:
     void setActiveCel(int celIndex);
     // 引きセル: アクティブセルの用紙サイズ変更ダイアログを開く(CelPanelの「セルサイズ...」ボタンから)
     void openCelSizeDialog();
+    // プロジェクトのキャンバス解像度・アスペクト比を変更するダイアログを開く(ファイルメニューから)
+    void openCanvasSizeDialog();
 
     // 下敷き(参照画像/連番シーケンス)。セッション限定でプロジェクトには保存しない
     void openUnderlay();
