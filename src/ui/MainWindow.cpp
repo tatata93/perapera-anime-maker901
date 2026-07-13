@@ -43,6 +43,7 @@
 #include "ui/CelPanel.h"
 #include "ui/CelSizeDialog.h"
 #include "ui/EditWindow.h"
+#include "ui/ProjectManagerWindow.h"
 #include "ui/ExportDialog.h"
 #include "ui/FramePanel.h"
 #include "ui/LayerPanel.h"
@@ -1433,6 +1434,12 @@ void MainWindow::setupMenus() {
     editWindowAction->setShortcut(QKeySequence(Qt::Key_F9));
     connect(editWindowAction, &QAction::triggered, this, &MainWindow::openEditWindow);
 
+    // プロジェクト管理メニュー(別ウィンドウ。進行管理表+完成率などの集計+カット構成の管理)
+    QMenu* projectMenu = menuBar()->addMenu(tr("プロジェクト(&J)"));
+    QAction* projectManagerAction = projectMenu->addAction(tr("プロジェクト管理ウィンドウ(&W)"));
+    projectManagerAction->setShortcut(QKeySequence(Qt::Key_F8));
+    connect(projectManagerAction, &QAction::triggered, this, &MainWindow::openProjectManagerWindow);
+
     // 撮影メニュー(別ウィンドウ。エフェクトスタック+撮影シート(行=エフェクト、列=コマ))
     QMenu* shootingMenu = menuBar()->addMenu(tr("撮影(&T)"));
     QAction* shootingAction = shootingMenu->addAction(tr("撮影ウィンドウ(&W)"));
@@ -1575,6 +1582,11 @@ void MainWindow::newDocument() {
         m_editWindow->setProject(m_project.get());  // プロジェクト差し替え
         m_editWindow->refresh();
     }
+    if (m_projectManagerWindow) {
+        m_projectManagerWindow->setProject(m_project.get());  // プロジェクト差し替え
+        m_projectManagerWindow->setFps(m_fpsSpin ? m_fpsSpin->value() : 24);
+        m_projectManagerWindow->refresh();
+    }
     if (m_shootingWindow) {
         m_shootingWindow->setProject(m_project.get());  // プロジェクト差し替え
         m_shootingWindow->refresh();
@@ -1642,6 +1654,11 @@ bool MainWindow::loadFromFile(const QString& path) {
     if (m_editWindow) {
         m_editWindow->setProject(m_project.get());  // プロジェクト差し替え
         m_editWindow->refresh();
+    }
+    if (m_projectManagerWindow) {
+        m_projectManagerWindow->setProject(m_project.get());  // プロジェクト差し替え
+        m_projectManagerWindow->setFps(m_fpsSpin ? m_fpsSpin->value() : 24);
+        m_projectManagerWindow->refresh();
     }
     if (m_shootingWindow) {
         m_shootingWindow->setProject(m_project.get());  // プロジェクト差し替え
@@ -1851,6 +1868,10 @@ void MainWindow::setupToolBar() {
     m_fpsSpin->setFocusPolicy(Qt::ClickFocus);
     connect(m_fpsSpin, &QSpinBox::valueChanged, this, [this](int fps) {
         if (m_playing) m_playTimer->start(1000 / std::max(1, fps));
+        if (m_projectManagerWindow) {  // 秒換算・総尺の集計をfps変更に追従させる
+            m_projectManagerWindow->setFps(fps);
+            m_projectManagerWindow->refresh();
+        }
     });
     toolBar->addWidget(m_fpsSpin);
 
@@ -3026,7 +3047,50 @@ void MainWindow::openEditWindow() {
 
 void MainWindow::refreshEditWindowIfOpen() {
     if (m_editWindow) m_editWindow->refresh();
+    if (m_projectManagerWindow) m_projectManagerWindow->refresh();  // 構成変更は進行管理表にも反映する
     refreshShootingWindowIfOpen();  // カット構成の変更は撮影ウィンドウ(カット選択/シート)にも影響する
+}
+
+void MainWindow::openProjectManagerWindow() {
+    if (!m_projectManagerWindow) {
+        m_projectManagerWindow = new ProjectManagerWindow(this);  // QMainWindowなので独立ウィンドウになる
+        connect(m_projectManagerWindow, &ProjectManagerWindow::edited, this, [this] {
+            // 名前/尺/進捗/内容/セリフ/並べ替えのどれが変わったか信号からは分からないため安全側で
+            // project+全カットをdirty扱いにする(絵コンテ/設定ボードは対象外)
+            markProjectDirty();
+            m_dirtyScope.allCuts = true;
+            updateWindowTitle();
+            updateCutBar();  // カット名/構成が変わりうるためカットバーも追従させる
+        });
+        connect(m_projectManagerWindow, &ProjectManagerWindow::cutActivated, this, [this](int index) {
+            setActiveCut(index);
+            raise();
+            activateWindow();
+        });
+        // カット追加: セル/レイヤー初期化が要るので既存のaddCut()に委譲し、進行管理表を作り直す
+        connect(m_projectManagerWindow, &ProjectManagerWindow::addCutRequested, this, [this] {
+            addCut();
+            if (m_projectManagerWindow) m_projectManagerWindow->refresh();
+        });
+        // カット削除: アクティブカットのクランプ等はメインウィンドウ側で行う
+        connect(m_projectManagerWindow, &ProjectManagerWindow::removeCutRequested, this, [this](int index) {
+            core::Scene& scene = m_project->scene(0);
+            if (scene.cutCount() <= 1) return;  // 最後の1カットは消さない
+            if (index < 0 || static_cast<size_t>(index) >= scene.cutCount()) return;
+            scene.removeCut(static_cast<size_t>(index));
+            markProjectDirty();
+            m_dirtyScope.allCuts = true;
+            updateWindowTitle();
+            setActiveCut(static_cast<int>(std::min(m_activeCut, scene.cutCount() - 1)));
+            refreshEditWindowIfOpen();  // 進行管理表・編集・撮影ウィンドウをまとめて最新化する
+        });
+    }
+    m_projectManagerWindow->setProject(m_project.get());
+    m_projectManagerWindow->setFps(m_fpsSpin ? m_fpsSpin->value() : 24);
+    m_projectManagerWindow->refresh();
+    m_projectManagerWindow->show();
+    m_projectManagerWindow->raise();
+    m_projectManagerWindow->activateWindow();
 }
 
 void MainWindow::openShootingWindow() {

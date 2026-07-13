@@ -19,6 +19,7 @@ class GLCanvas;
 class LayerPanel;
 class PalettePanel;
 class PrevizWindow;
+class ProjectManagerWindow;
 class ReferencePanel;
 class SettingBoardWindow;
 class ShootingWindow;
@@ -142,6 +143,8 @@ public:
     // 編集(カッティング)ウィンドウ確認用
     void debugOpenEditWindow() { openEditWindow(); }
     EditWindow* editWindow() const { return m_editWindow; }
+    void debugOpenProjectManagerWindow() { openProjectManagerWindow(); }
+    ProjectManagerWindow* projectManagerWindow() const { return m_projectManagerWindow; }
     // 編集デモ確認用: カット3つ(尺12/24/12、進捗: 原画/レイアウト/未着手)を組み、
     // カット1に赤ストローク・カット2に別ストロークを描いてから編集ウィンドウを開き、
     // グローバルコマ18(カット2内)へシークする
@@ -322,6 +325,9 @@ private:
     // 開いていれば一覧・プレビューを最新化する
     void refreshEditWindowIfOpen();
 
+    // プロジェクト管理ウィンドウ(進行管理表+カット構成)
+    void openProjectManagerWindow();
+
     // 書き出し
     void openExportDialog();
     bool exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts);
@@ -358,6 +364,7 @@ private:
     StoryboardWindow* m_storyboardWindow = nullptr;  // 絵コンテウィンドウ(別ウィンドウ、遅延生成)
     SettingBoardWindow* m_settingBoardWindow = nullptr;  // 設定ボードウィンドウ(別ウィンドウ、遅延生成)
     EditWindow* m_editWindow = nullptr;  // 編集(カッティング)ウィンドウ(別ウィンドウ、遅延生成)
+    ProjectManagerWindow* m_projectManagerWindow = nullptr;  // プロジェクト管理ウィンドウ(別ウィンドウ、遅延生成)
     ShootingWindow* m_shootingWindow = nullptr;  // 撮影ウィンドウ(別ウィンドウ、遅延生成)
     ReferencePanel* m_referencePanel = nullptr;  // 設定ボード参照ドック
     int m_referenceBoardIndex = -1;  // 参照ドックで選択中の設定ボードインデックス(未選択-1)

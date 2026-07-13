@@ -19,6 +19,7 @@
 #include "render/GLCanvas.h"
 #include "ui/EditWindow.h"
 #include "ui/MainWindow.h"
+#include "ui/ProjectManagerWindow.h"
 #include "ui/SettingBoardWindow.h"
 #include "ui/ShootingWindow.h"
 #include "ui/StoryboardWindow.h"
@@ -894,6 +895,21 @@ int main(int argc, char* argv[]) {
             window.debugSetupEditDemo();
             QTimer::singleShot(400, &window, [&window, outputPath] {
                 window.editWindow()->grab().save(outputPath);
+                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
+    // 動作確認用: --projectmgr-test <出力PNG> でプロジェクト管理ウィンドウ(進行管理表+集計)を
+    // 編集デモ(カット3つ、尺12/24/12、進捗: 原画/レイアウト/未着手)で開いた状態を保存して終了する
+    const int projectMgrIndex = args.indexOf("--projectmgr-test");
+    if (projectMgrIndex >= 0 && projectMgrIndex + 1 < args.size()) {
+        const QString outputPath = args.at(projectMgrIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupEditDemo();
+            window.debugOpenProjectManagerWindow();
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                window.projectManagerWindow()->grab().save(outputPath);
                 QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
         });
