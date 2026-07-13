@@ -571,6 +571,79 @@ TEST_CASE("applyFilm grain leaves black/white unchanged and varies midtones, ind
     REQUIRE(frameDifferent);
 }
 
+TEST_CASE("applyFilm response curve step is a no-op when resp params are identity or absent",
+          "[core][effect][film]") {
+    // 「respを恒等にしたeffect」と「respパラメータをparamsから除いたeffect(param()のfallbackで恒等)」が
+    // 同一の結果になること。これにより応答カーブ導入前のフィルムとバイト同一のバイパス判定を保証する
+    core::Bitmap bmpExplicitIdentity(4, 4);
+    bmpExplicitIdentity.fill({40, 120, 200, 255});
+    core::Bitmap bmpNoResp = bmpExplicitIdentity;
+
+    const std::map<std::string, double> baseParams = {{"exposure", 0.3}, {"contrast", 0.5}, {"fade", 0.1},
+                                                        {"warmth", 0.2},  {"crosstalk", 0.15}, {"grain", 0.0},
+                                                        {"grainSize", 1.0}};
+
+    core::Effect filmExplicitIdentity;
+    filmExplicitIdentity.type = core::EffectType::Film;
+    filmExplicitIdentity.params = baseParams;
+    filmExplicitIdentity.params.insert(
+        {{"respR0", 0.0}, {"respR1", 0.25}, {"respR2", 0.5}, {"respR3", 0.75}, {"respR4", 1.0},
+         {"respG0", 0.0}, {"respG1", 0.25}, {"respG2", 0.5}, {"respG3", 0.75}, {"respG4", 1.0},
+         {"respB0", 0.0}, {"respB1", 0.25}, {"respB2", 0.5}, {"respB3", 0.75}, {"respB4", 1.0}});
+    core::applyEffect(bmpExplicitIdentity, filmExplicitIdentity, 0);
+
+    core::Effect filmNoResp;
+    filmNoResp.type = core::EffectType::Film;
+    filmNoResp.params = baseParams;  // respキーが一切無い→param()のfallbackで恒等になるはず
+    core::applyEffect(bmpNoResp, filmNoResp, 0);
+
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            REQUIRE(bmpExplicitIdentity.pixel(x, y).r == bmpNoResp.pixel(x, y).r);
+            REQUIRE(bmpExplicitIdentity.pixel(x, y).g == bmpNoResp.pixel(x, y).g);
+            REQUIRE(bmpExplicitIdentity.pixel(x, y).b == bmpNoResp.pixel(x, y).b);
+        }
+    }
+}
+
+TEST_CASE("applyFilm response curve reshapes only the targeted channel and respects endpoints",
+          "[core][effect][film]") {
+    // G/Bは恒等のまま、Rの中間点(respR2)だけを持ち上げた場合、中間調グレー入力でRだけが増える
+    core::Bitmap mid(2, 2);
+    mid.fill({128, 128, 128, 255});
+    core::Effect filmLiftR;
+    filmLiftR.type = core::EffectType::Film;
+    filmLiftR.params = {{"exposure", 0.0}, {"contrast", 0.0}, {"fade", 0.0}, {"warmth", 0.0}, {"crosstalk", 0.0},
+                         {"grain", 0.0},   {"grainSize", 1.0},
+                         {"respR0", 0.0},  {"respR1", 0.25}, {"respR2", 0.8}, {"respR3", 0.75}, {"respR4", 1.0},
+                         {"respG0", 0.0},  {"respG1", 0.25}, {"respG2", 0.5}, {"respG3", 0.75}, {"respG4", 1.0},
+                         {"respB0", 0.0},  {"respB1", 0.25}, {"respB2", 0.5}, {"respB3", 0.75}, {"respB4", 1.0}};
+    core::applyEffect(mid, filmLiftR, 0);
+    const auto liftedPixel = mid.pixel(0, 0);
+    REQUIRE(liftedPixel.r > 128);  // respR2=0.8まで持ち上がる
+    REQUIRE(liftedPixel.g == 128);  // Gは恒等のまま不変
+    REQUIRE(liftedPixel.b == 128);  // Bは恒等のまま不変
+
+    // 端点クランプ: 黒(入力0)はrespR0が、白(入力255)はrespR4がそのまま出力される
+    auto runREndpoint = [](uint8_t level, double r0, double r4) {
+        core::Bitmap bmp(2, 2);
+        bmp.fill({level, level, level, 255});
+        core::Effect film;
+        film.type = core::EffectType::Film;
+        film.params = {{"exposure", 0.0}, {"contrast", 0.0}, {"fade", 0.0}, {"warmth", 0.0}, {"crosstalk", 0.0},
+                        {"grain", 0.0},   {"grainSize", 1.0},
+                        {"respR0", r0},   {"respR1", 0.25}, {"respR2", 0.5}, {"respR3", 0.75}, {"respR4", r4},
+                        {"respG0", 0.0},  {"respG1", 0.25}, {"respG2", 0.5}, {"respG3", 0.75}, {"respG4", 1.0},
+                        {"respB0", 0.0},  {"respB1", 0.25}, {"respB2", 0.5}, {"respB3", 0.75}, {"respB4", 1.0}};
+        core::applyEffect(bmp, film, 0);
+        return bmp.pixel(0, 0).r;
+    };
+    // 黒(level=0)にrespR0=0.6を設定 → 出力R≈0.6*255=153
+    REQUIRE(std::abs(static_cast<int>(runREndpoint(0, 0.6, 1.0)) - 153) <= 1);
+    // 白(level=255)にrespR4=0.4を設定 → 出力R≈0.4*255=102
+    REQUIRE(std::abs(static_cast<int>(runREndpoint(255, 0.0, 0.4)) - 102) <= 1);
+}
+
 // --- ChromAb(色収差) ---
 
 TEST_CASE("applyChromAb leaves the exact center pixel unchanged", "[core][effect][chromab]") {

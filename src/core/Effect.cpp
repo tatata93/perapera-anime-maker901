@@ -84,8 +84,13 @@ std::map<std::string, double> effectDefaultParams(EffectType type) {
         case EffectType::ChromAb:
             return {{"amount", 2.0}};
         case EffectType::Film:
-            return {{"exposure", 0.0},  {"contrast", 0.35}, {"fade", 0.04},    {"warmth", 0.1},
-                     {"crosstalk", 0.08}, {"grain", 0.25},     {"grainSize", 1.6}};
+            // respR/G/B0..4: 各層(R/G/B)の分光応答カーブ(5点、横軸は入力光の強さ0,0.25,0.5,0.75,1固定)。
+            // 既定は恒等(=入力そのまま記録する)なのでフィルムの発色には影響しない
+            return {{"exposure", 0.0},   {"contrast", 0.35}, {"fade", 0.04},      {"warmth", 0.1},
+                    {"crosstalk", 0.08}, {"grain", 0.25},    {"grainSize", 1.6},
+                    {"respR0", 0.0},     {"respR1", 0.25},   {"respR2", 0.5},     {"respR3", 0.75}, {"respR4", 1.0},
+                    {"respG0", 0.0},     {"respG1", 0.25},   {"respG2", 0.5},     {"respG3", 0.75}, {"respG4", 1.0},
+                    {"respB0", 0.0},     {"respB1", 0.25},   {"respB2", 0.5},     {"respB3", 0.75}, {"respB4", 1.0}};
     }
     return {};
 }

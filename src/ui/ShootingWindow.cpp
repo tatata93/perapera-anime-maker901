@@ -39,6 +39,7 @@
 #include "core/Effect.h"
 #include "core/Project.h"
 #include "render/GLCanvas.h"
+#include "FilmCurveWidget.h"
 
 namespace {
 
@@ -62,6 +63,13 @@ QString paramLabel(const std::string& key) {
     };
     const auto it = kLabels.find(key);
     if (it != kLabels.end()) return it->second;
+
+    // resp{R|G|B}{0..4}: 層別応答カーブの制御点。スピン行としては出さずFilmCurveWidgetの
+    // グラフで編集するため通常はここに来ないが、念のためのフォールバック表示("R応答0"等)
+    if (key.rfind("resp", 0) == 0 && key.size() == 6) {
+        return QStringLiteral("%1応答%2").arg(QChar::fromLatin1(key[4])).arg(QChar::fromLatin1(key[5]));
+    }
+
     return QString::fromStdString(key);  // 未知のキーはそのまま表示(将来のパラメータ追加に備えた保険)
 }
 
@@ -92,6 +100,8 @@ std::pair<double, double> paramRange(core::EffectType type, const std::string& k
     if (key == "crosstalk") return {0.0, 0.5};
     if (key == "grain") return {0.0, 1.0};
     if (key == "grainSize") return {1.0, 4.0};
+    // resp{R|G|B}{0..4}: 層別応答カーブの制御点(0〜1)。グラフでしか編集しないが安全のため定義しておく
+    if (key.rfind("resp", 0) == 0) return {0.0, 1.0};
     if (key == "amount") {
         switch (type) {
             case core::EffectType::RadialBlur:
@@ -688,8 +698,11 @@ QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringLis
     vlayout->addLayout(rangeRow);
 
     // パラメータ行: [ストップウォッチ] [パラメータ名] [スピン] [◆キー有無/移動]
+    // フィルムの層別応答カーブ(respR/G/B0..4、計15個)はスピン行としては出さず、後述の
+    // FilmCurveWidget(グラフ)で編集する
     const std::map<std::string, double> shown = effect.paramsAt(static_cast<size_t>(m_koma));
     for (const auto& [key, value] : shown) {
+        if (key.rfind("resp", 0) == 0) continue;
         auto* row = new QHBoxLayout();
         const std::string keyCopy = key;
         const bool hasCurve = effect.hasCurve(key);
@@ -735,6 +748,52 @@ QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringLis
         rw.spin = spin;
         rw.diamond = diamond;
         m_paramRows.push_back(rw);
+    }
+
+    // フィルム: プリセット(銘柄の特徴をまとめて適用)+層別応答カーブ(グラフ編集)
+    if (effect.type == core::EffectType::Film) {
+        auto* presetRow = new QHBoxLayout();
+        presetRow->addWidget(new QLabel(tr("プリセット:"), box));
+        auto* presetCombo = new QComboBox(box);
+        presetCombo->addItem(tr("(選択して適用)"));
+        presetCombo->addItem(tr("標準(恒等)"));
+        presetCombo->addItem(tr("暖色ネガ"));
+        presetCombo->addItem(tr("リバーサル"));
+        presetCombo->addItem(tr("褪色"));
+        presetCombo->setCurrentIndex(0);
+        connect(presetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this, effectIndex](int presetIndex) { onFilmPresetSelected(effectIndex, presetIndex); });
+        presetRow->addWidget(presetCombo, 1);
+        vlayout->addLayout(presetRow);
+
+        auto* curveWidget = new FilmCurveWidget(box);
+        const std::map<std::string, double> respValues = effect.paramsAt(static_cast<size_t>(m_koma));
+        auto readLayer = [&](const char* prefix, double* out) {
+            for (int i = 0; i < 5; ++i) {
+                const std::string respKey = std::string(prefix) + std::to_string(i);
+                const auto it = respValues.find(respKey);
+                out[i] = it != respValues.end() ? it->second : (i / 4.0);  // 見つからなければ恒等
+            }
+        };
+        double rPts[5], gPts[5], bPts[5];
+        readLayer("respR", rPts);
+        readLayer("respG", gPts);
+        readLayer("respB", bPts);
+        curveWidget->setPoints(0, rPts);
+        curveWidget->setPoints(1, gPts);
+        curveWidget->setPoints(2, bPts);
+        connect(curveWidget, &FilmCurveWidget::curveChanged, this,
+                [this, effectIndex](int layer, int pointIndex, double value) {
+                    onFilmCurveChanged(effectIndex, layer, pointIndex, value);
+                });
+        connect(curveWidget, &FilmCurveWidget::curveResetRequested, this,
+                [this, effectIndex](int layer) { onFilmCurveResetRequested(effectIndex, layer); });
+        vlayout->addWidget(curveWidget);
+
+        FilmCurveRowWidgets fw;
+        fw.effectIndex = effectIndex;
+        fw.widget = curveWidget;
+        m_filmCurveRows.push_back(fw);
     }
 
     return box;
@@ -904,6 +963,7 @@ void ShootingWindow::rebuildEffectControls() {
 
     m_updating = true;
     m_paramRows.clear();
+    m_filmCurveRows.clear();
 
     // 既存のエフェクトGroupBoxを全て破棄する(「エフェクトを追加」ボタン以降は維持する)
     while (m_effectContainerLayout->count() > 0) {
@@ -1324,6 +1384,7 @@ void ShootingWindow::setKoma(int koma, bool lightweight) {
     // パネルを毎コマ更新するのは無駄な負荷なので、停止時に一度フル同期すれば十分)
     if (!lightweight) {
         refreshParamRowValues();
+        refreshFilmCurveWidgets();       // 開いているフィルムの応答カーブも現在コマの値へ
         refreshMultiplaneKeyedFields();  // キー持ちの強度/焦点距離/フォーカスも現在コマの補間値へ
     }
     refreshTimelineHighlight();
@@ -1482,6 +1543,125 @@ void ShootingWindow::onKeyDiamondClicked(int effectIndex, const std::string& key
     }
     scheduleRebuild();
     markEdited();
+}
+
+void ShootingWindow::onFilmCurveChanged(int effectIndex, int layer, int pointIndex, double value) {
+    if (m_updating) return;
+    core::Cut* cut = currentCut();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    if (layer < 0 || layer > 2 || pointIndex < 0 || pointIndex > 4) return;
+    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
+
+    const char* prefix = layer == 0 ? "respR" : (layer == 1 ? "respG" : "respB");
+    const std::string key = std::string(prefix) + std::to_string(pointIndex);
+
+    // onParamSpinChangedと同じ規則: キー持ちパラメータは現在コマへ自動でキーを打つ、
+    // 無ければ基本値(params)を直接更新する
+    if (effect.hasCurve(key)) {
+        effect.setKey(key, static_cast<size_t>(m_koma), value);
+    } else {
+        effect.params[key] = value;
+    }
+
+    // ドラッグは高頻度に発火するため、ここでは軽いmarkEdited(→requestPreviewはデバウンス済み)
+    // だけに留め、パネル/タイムラインの再構築は行わない(既存の「シグナルから直接rebuildを
+    // 呼ばない」規約通り、必要ならscheduleRebuild経由にする)
+    markEdited();
+}
+
+void ShootingWindow::onFilmCurveResetRequested(int effectIndex, int layer) {
+    if (m_updating) return;
+    core::Cut* cut = currentCut();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
+
+    constexpr double kIdentity[5] = {0.0, 0.25, 0.5, 0.75, 1.0};
+    const int layerFrom = layer < 0 ? 0 : layer;
+    const int layerTo = layer < 0 ? 2 : layer;
+    for (int l = layerFrom; l <= layerTo; ++l) {
+        const char* prefix = l == 0 ? "respR" : (l == 1 ? "respG" : "respB");
+        for (int i = 0; i < 5; ++i) {
+            const std::string key = std::string(prefix) + std::to_string(i);
+            if (effect.hasCurve(key)) {
+                effect.setKey(key, static_cast<size_t>(m_koma), kIdentity[i]);
+            } else {
+                effect.params[key] = kIdentity[i];
+            }
+        }
+    }
+    scheduleRebuild();  // グラフの表示を恒等へ戻すため作り直す(次イベントループへ遅延)
+    markEdited();
+}
+
+void ShootingWindow::onFilmPresetSelected(int effectIndex, int presetIndex) {
+    if (m_updating || presetIndex <= 0) return;  // index0=「(選択して適用)」は何もしない
+    core::Cut* cut = currentCut();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
+    if (effect.type != core::EffectType::Film) return;
+
+    // フィルム銘柄の特徴プリセット: 層別応答カーブ(resp15)+基本パラメータをまとめて適用する。
+    // 各層はrespX0..respX4(入力光の強さ0,0.25,0.5,0.75,1.0における記録量)
+    struct FilmPreset {
+        double contrast, fade, warmth, crosstalk;
+        double respR[5], respG[5], respB[5];
+    };
+    static const FilmPreset kPresets[] = {
+        // 1: 標準(恒等) — 既定のフィルムパラメータそのもの
+        {0.35, 0.04, 0.1, 0.08,
+         {0.0, 0.25, 0.5, 0.75, 1.0}, {0.0, 0.25, 0.5, 0.75, 1.0}, {0.0, 0.25, 0.5, 0.75, 1.0}},
+        // 2: 暖色ネガ — シャドウが青浮きし、ハイライトが暖色(R)寄りに持ち上がる
+        {0.3, 0.05, 0.25, 0.1,
+         {0.0, 0.27, 0.55, 0.85, 1.0}, {0.0, 0.25, 0.5, 0.75, 0.97}, {0.08, 0.28, 0.5, 0.72, 0.95}},
+        // 3: リバーサル — 高コントラスト・彩度高め(各層とも中間を締めたS字+クロストーク低め)
+        {0.65, 0.0, 0.0, 0.03,
+         {0.0, 0.16, 0.5, 0.84, 1.0}, {0.0, 0.16, 0.5, 0.84, 1.0}, {0.0, 0.16, 0.5, 0.84, 1.0}},
+        // 4: 褪色 — ローコントラスト・緑被り(G持ち上げ、R/Bはやや抑える、黒浮き大きめ)
+        {0.1, 0.18, -0.05, 0.2,
+         {0.0, 0.22, 0.45, 0.68, 0.9}, {0.1, 0.32, 0.55, 0.75, 0.92}, {0.0, 0.2, 0.42, 0.65, 0.88}},
+    };
+    const int idx = presetIndex - 1;
+    if (idx < 0 || idx >= static_cast<int>(sizeof(kPresets) / sizeof(kPresets[0]))) return;
+    const FilmPreset& preset = kPresets[idx];
+
+    // プリセットは基本値(params)を直接上書きする(既存のキーフレームには触れない仕様)
+    effect.params["contrast"] = preset.contrast;
+    effect.params["fade"] = preset.fade;
+    effect.params["warmth"] = preset.warmth;
+    effect.params["crosstalk"] = preset.crosstalk;
+    for (int i = 0; i < 5; ++i) {
+        effect.params["respR" + std::to_string(i)] = preset.respR[i];
+        effect.params["respG" + std::to_string(i)] = preset.respG[i];
+        effect.params["respB" + std::to_string(i)] = preset.respB[i];
+    }
+
+    scheduleRebuild();  // スピン値・グラフをプリセット後の値へ揃えるため作り直す
+    markEdited();
+}
+
+void ShootingWindow::refreshFilmCurveWidgets() {
+    core::Cut* cut = currentCut();
+    if (!cut) return;
+    for (const FilmCurveRowWidgets& fw : m_filmCurveRows) {
+        if (!fw.widget) continue;
+        if (fw.effectIndex < 0 || fw.effectIndex >= static_cast<int>(cut->effects().size())) continue;
+        const core::Effect& effect = cut->effects()[static_cast<size_t>(fw.effectIndex)];
+        const std::map<std::string, double> values = effect.paramsAt(static_cast<size_t>(m_koma));
+        auto readLayer = [&](const char* prefix, double* out) {
+            for (int i = 0; i < 5; ++i) {
+                const std::string key = std::string(prefix) + std::to_string(i);
+                const auto it = values.find(key);
+                out[i] = it != values.end() ? it->second : (i / 4.0);  // 見つからなければ恒等
+            }
+        };
+        double rPts[5], gPts[5], bPts[5];
+        readLayer("respR", rPts);
+        readLayer("respG", gPts);
+        readLayer("respB", bPts);
+        fw.widget->setPoints(0, rPts);
+        fw.widget->setPoints(1, gPts);
+        fw.widget->setPoints(2, bPts);
+    }
 }
 
 void ShootingWindow::onTimelineCellClicked(int row, int column) {

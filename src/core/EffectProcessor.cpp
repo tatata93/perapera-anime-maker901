@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "BoxBlur.h"   // 分離型箱ぼかし(行/列並列)。Multiplaneの透過光ハレーションと共用
@@ -17,6 +18,31 @@ namespace {
 double param(const Effect& effect, const std::string& key, double fallback) {
     const auto it = effect.params.find(key);
     return it != effect.params.end() ? it->second : fallback;
+}
+
+// 層別応答カーブの制御点数(横軸は0,0.25,0.5,0.75,1.0の固定等間隔)
+constexpr int kResponseCurvePoints = 5;
+constexpr double kIdentityResponseCurve[kResponseCurvePoints] = {0.0, 0.25, 0.5, 0.75, 1.0};
+
+// 5点(区間ごとに等間隔0.25刻み)を区分線形補間して、入力光の強さxにおけるその層の記録量を返す。
+// x・戻り値とも両端(0,1)でクランプする
+double evalResponseCurve(const double pts[kResponseCurvePoints], double x) {
+    x = std::clamp(x, 0.0, 1.0);
+    if (x <= 0.0) return pts[0];
+    if (x >= 1.0) return pts[kResponseCurvePoints - 1];
+    constexpr double kStep = 1.0 / (kResponseCurvePoints - 1);
+    const int i = std::min(kResponseCurvePoints - 2, static_cast<int>(x / kStep));
+    const double t = (x - i * kStep) / kStep;
+    return pts[i] + (pts[i + 1] - pts[i]) * t;
+}
+
+// 5点が既定の恒等カーブ(0,0.25,0.5,0.75,1.0)に十分近いか。近ければ処理を丸ごとバイパスして
+// 従来のフィルム(応答カーブ導入前)とバイト同一の結果になるようにする
+bool isIdentityResponseCurve(const double pts[kResponseCurvePoints]) {
+    for (int i = 0; i < kResponseCurvePoints; ++i) {
+        if (std::abs(pts[i] - kIdentityResponseCurve[i]) > 1e-9) return false;
+    }
+    return true;
 }
 
 // (a, b, c, d)から無相関な擬似乱数[0,1)を作る決定論的ハッシュ(splitmix64系のアバランシェ)。
@@ -528,6 +554,22 @@ void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
 
     const double exposureMul = std::pow(2.0, exposureEV);
 
+    // 層別(R/G/B)分光応答カーブ: 各層が入力光の強さに対してどれだけ記録するかを5点で持つ。
+    // パラメータが無ければ既定=恒等(kIdentityResponseCurve)にフォールバックする
+    double respCurves[3][kResponseCurvePoints];
+    for (int i = 0; i < kResponseCurvePoints; ++i) {
+        respCurves[0][i] = std::clamp(
+            param(effect, "respR" + std::to_string(i), kIdentityResponseCurve[i]), 0.0, 1.0);
+        respCurves[1][i] = std::clamp(
+            param(effect, "respG" + std::to_string(i), kIdentityResponseCurve[i]), 0.0, 1.0);
+        respCurves[2][i] = std::clamp(
+            param(effect, "respB" + std::to_string(i), kIdentityResponseCurve[i]), 0.0, 1.0);
+    }
+    // 3層とも恒等ならこのステップを丸ごとスキップする(応答カーブ導入前とバイト同一の結果を保証)
+    const bool anyResponseCurveActive = !isIdentityResponseCurve(respCurves[0]) ||
+                                         !isIdentityResponseCurve(respCurves[1]) ||
+                                         !isIdentityResponseCurve(respCurves[2]);
+
     parallelForRows(0, h, [&](int y0, int y1) {
         for (int y = y0; y < y1; ++y) {
             const int by = static_cast<int>(y / grainSize);
@@ -563,6 +605,12 @@ void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
                     const double xClamped = std::clamp(channels[c], 0.0, 1.0);
                     const double s = xClamped * xClamped * (3.0 - 2.0 * xClamped);
                     double y = xClamped + (s - xClamped) * contrast;
+
+                    // 4.5 層別応答カーブ: 特性曲線(フィルム全体のトーン)適用後の値を、その層(チャンネル)
+                    // ごとの応答カーブで再マップする。フィルム銘柄ごとの色の出方(層の強弱)を表現する
+                    if (anyResponseCurveActive) {
+                        y = evalResponseCurve(respCurves[c], std::clamp(y, 0.0, 1.0));
+                    }
 
                     // 5. 黒浮き(フィルムの最小濃度Dmin)
                     y = fade + (1.0 - fade) * y;

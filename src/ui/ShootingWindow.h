@@ -27,6 +27,7 @@ class QToolButton;
 class QVBoxLayout;
 class QWidget;
 class GLCanvas;
+class FilmCurveWidget;
 
 namespace core {
 class Cut;
@@ -75,6 +76,13 @@ private:
         QToolButton* stopwatch = nullptr;
         QDoubleSpinBox* spin = nullptr;
         QToolButton* diamond = nullptr;
+    };
+
+    // フィルムエフェクトの層別応答カーブウィジェット参照(コマ移動時の軽量更新用)。
+    // buildEffectGroupBox内でeffect.type==Filmの時だけ1個作られる
+    struct FilmCurveRowWidgets {
+        int effectIndex = -1;
+        FilmCurveWidget* widget = nullptr;
     };
 
     // タイムライン1行分の意味づけ。エフェクトごとに「見出し行」1つ+その直下に
@@ -145,6 +153,17 @@ private:
     void onParamSpinChanged(int effectIndex, const std::string& key, double value);
     // 効果コントロール上の◆ボタン: 現在コマのキーをトグルする(タイムラインのダブルクリックと同じ)
     void onKeyDiamondClicked(int effectIndex, const std::string& key);
+
+    // --- フィルムエフェクトの層別応答カーブ(FilmCurveWidget) ---
+    // ドラッグ中/確定のたびに発火。onParamSpinChangedと同じ規則(hasCurveなら現在コマへキー、
+    // 無ければparams直接)でrespR{idx}/respG{idx}/respB{idx}を更新する
+    void onFilmCurveChanged(int effectIndex, int layer, int pointIndex, double value);
+    // リセットボタン: 該当層(layer=-1なら全層)のresp5点を恒等へ戻す
+    void onFilmCurveResetRequested(int effectIndex, int layer);
+    // 「プリセット」コンボ: フィルム銘柄の特徴(resp15+基本値)をまとめて適用する
+    void onFilmPresetSelected(int effectIndex, int presetIndex);
+    // 開いているFilmCurveWidgetがあれば現在コマのresp値へ更新する(refreshParamRowValues相当の軽量経路)
+    void refreshFilmCurveWidgets();
 
     void onTimelineCellClicked(int row, int column);
     void onTimelineCellDoubleClicked(int row, int column);
@@ -296,6 +315,8 @@ private:
 
     // エフェクトコントロールパネルの現在のパラメータ行(コマ移動時の軽量更新に使う)
     std::vector<ParamRowWidgets> m_paramRows;
+    // 開いているフィルムエフェクトの応答カーブウィジェット(コマ移動時の軽量更新に使う)
+    std::vector<FilmCurveRowWidgets> m_filmCurveRows;
 
     int m_canvasWidth = 1920;
     int m_canvasHeight = 1080;
