@@ -130,6 +130,7 @@ TEST_CASE("Multiplane setup round trips through ppproj", "[core][io][multiplane]
     mp.camera.apertureFStop = 2.8;
     mp.camera.focusDistanceMm = 600.0;
     mp.samplesPerPixel = 16;
+    mp.exportSamplesPerPixel = 128;
     mp.planes.push_back({0, 500.0, 400.0});
     mp.planes.push_back({1, 300.0, 300.0});
     mp.framingLock = false;  // フレーミング固定(既定true)も往復させる
@@ -173,6 +174,7 @@ TEST_CASE("Multiplane setup round trips through ppproj", "[core][io][multiplane]
     REQUIRE(loadedMp.camera.apertureFStop == 2.8);
     REQUIRE(loadedMp.camera.focusDistanceMm == 600.0);
     REQUIRE(loadedMp.samplesPerPixel == 16);
+    REQUIRE(loadedMp.exportSamplesPerPixel == 128);
     REQUIRE(loadedMp.planes.size() == 2);
     REQUIRE(loadedMp.planes[0].celIndex == 0);
     REQUIRE(loadedMp.planes[0].distanceMm == 500.0);

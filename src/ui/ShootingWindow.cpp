@@ -311,10 +311,19 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     mpForm->addRow(tr("フォーカス距離"), focusRow);
 
     m_mpSamplesSpin = new QSpinBox(m_multiplaneGroup);
-    m_mpSamplesSpin->setRange(1, 64);
+    m_mpSamplesSpin->setRange(1, 128);
     m_mpSamplesSpin->setFocusPolicy(Qt::ClickFocus);
     m_mpSamplesSpin->setKeyboardTracking(false);
-    mpForm->addRow(tr("サンプル数"), m_mpSamplesSpin);
+    m_mpSamplesSpin->setToolTip(tr("作業表示・編集ウィンドウ用のサンプル数。撮影ウィンドウのプレビューは常に軽く絞られます"));
+    mpForm->addRow(tr("サンプル数(作業)"), m_mpSamplesSpin);
+
+    // 書き出し用サンプル数(高いほどレイトレースのノイズが減ってなめらか)。作業用と分離する
+    m_mpExportSamplesSpin = new QSpinBox(m_multiplaneGroup);
+    m_mpExportSamplesSpin->setRange(1, 512);
+    m_mpExportSamplesSpin->setFocusPolicy(Qt::ClickFocus);
+    m_mpExportSamplesSpin->setKeyboardTracking(false);
+    m_mpExportSamplesSpin->setToolTip(tr("連番PNG/mp4の書き出し時に使うサンプル数。大きいほどなめらかだが書き出しは遅くなります"));
+    mpForm->addRow(tr("サンプル数(書き出し)"), m_mpExportSamplesSpin);
     mpLayout->addLayout(mpForm);
 
     m_mpTable = new QTableWidget(m_multiplaneGroup);
@@ -520,6 +529,8 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_mpFStopSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onMultiplaneCameraChanged(); });
     connect(m_mpFocusSpin, &QDoubleSpinBox::valueChanged, this, [this](double) { onMultiplaneCameraChanged(); });
     connect(m_mpSamplesSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int) { onMultiplaneCameraChanged(); });
+    connect(m_mpExportSamplesSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
             [this](int) { onMultiplaneCameraChanged(); });
     connect(m_mpAddButton, &QPushButton::clicked, this, &ShootingWindow::addMultiplanePlaneRow);
     connect(m_mpRemoveButton, &QPushButton::clicked, this, &ShootingWindow::removeMultiplanePlaneRow);
@@ -1811,6 +1822,7 @@ void ShootingWindow::rebuildMultiplanePanel() {
     m_mpFStopSpin->setValue(setup.camera.apertureFStop);
     m_mpFocusSpin->setValue(setup.camera.focusDistanceMm);
     m_mpSamplesSpin->setValue(setup.samplesPerPixel);
+    m_mpExportSamplesSpin->setValue(setup.exportSamplesPerPixel);
     m_mpFramingLockCheck->setChecked(setup.framingLock);
     m_mpFramingWidthSpin->setValue(setup.framingWidthMm);
     m_mpFramingRefDistanceSpin->setValue(setup.framingRefDistanceMm);
@@ -1897,6 +1909,7 @@ void ShootingWindow::onMultiplaneCameraChanged() {
     setup.camera.apertureFStop = m_mpFStopSpin->value();
     setup.camera.focusDistanceMm = m_mpFocusSpin->value();
     setup.samplesPerPixel = m_mpSamplesSpin->value();
+    setup.exportSamplesPerPixel = m_mpExportSamplesSpin->value();
     markEdited();
 }
 

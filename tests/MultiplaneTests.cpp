@@ -934,3 +934,49 @@ TEST_CASE("renderCutFrame classic multiplane fstopKeys switch pan-focus to shall
     REQUIRE(ratio0 > 0.9);  // fstop=0(ピンホール)はシャープ
     REQUIRE(ratio4 < 0.6);  // fstop=2.0(開放)はボケる
 }
+
+// --- 書き出しサンプル数(なめらか化) ---
+
+TEST_CASE("renderCutFrame useExportSamples uses exportSamplesPerPixel", "[core][compositor][multiplane][export]") {
+    // 被写界深度でボケる状況を作り、書き出し(高サンプル)は作業(低サンプル)よりノイズが少ない
+    // (=画素値の局所的なばらつきが小さい)ことを確認する
+    core::Cut cut("C");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L");
+    core::Bitmap art(60, 60);
+    art.fill({0, 0, 0, 0});
+    // 中央に不透明な白ブロック(ボケると縁にモンテカルロノイズが出る)
+    for (int y = 20; y < 40; ++y)
+        for (int x = 20; x < 40; ++x) art.setPixel(x, y, {255, 255, 255, 255});
+    layer.addFrame().bitmap() = std::move(art);
+    cel.setExposure(0, 0);
+    cut.setFrameCount(1);
+
+    core::MultiplaneSetup& mp = cut.multiplane();
+    mp.enabled = true;
+    mp.samplesPerPixel = 2;         // 作業=低サンプル(荒い)
+    mp.exportSamplesPerPixel = 64;  // 書き出し=高サンプル(なめらか)
+    mp.camera.apertureFStop = 1.4;  // 大きなボケ
+    mp.camera.focusDistanceMm = 300.0;
+    mp.planes.push_back({0, 700.0, 400.0});  // フォーカス面から外れてボケる
+
+    core::RenderOptions work;  // useExportSamples=false → samplesPerPixel(2)
+    core::RenderOptions exp;
+    exp.useExportSamples = true;  // → exportSamplesPerPixel(64)
+
+    const core::Bitmap workImg = core::renderCutFrame(cut, 0, 120, 120, work);
+    const core::Bitmap expImg = core::renderCutFrame(cut, 0, 120, 120, exp);
+
+    // 隣接ピクセル差の総和(ノイズが多いほど大きい)を、ボケの縁付近の帯で比較する
+    const auto localVariation = [](const core::Bitmap& img) {
+        long v = 0;
+        for (int y = 40; y < 80; ++y) {
+            for (int x = 1; x < img.width(); ++x) {
+                v += std::abs(img.pixel(x, y).r - img.pixel(x - 1, y).r);
+            }
+        }
+        return v;
+    };
+    // 高サンプルの方がざらつき(隣接差)が小さい
+    REQUIRE(localVariation(expImg) < localVariation(workImg));
+}

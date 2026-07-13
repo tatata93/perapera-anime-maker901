@@ -33,7 +33,8 @@ struct MultiplaneSetup {
     bool enabled = false;
     MultiplaneCamera camera;
     std::vector<MultiplaneCelPlane> planes;    // 割付の無いセルは撮影されない
-    int samplesPerPixel = 8;                   // プレビュー/書き出しのサンプル数
+    int samplesPerPixel = 8;                   // 作業/プレビュー基準のサンプル数(プレビューはさらに上限4に絞られる)
+    int exportSamplesPerPixel = 64;            // 書き出し時のサンプル数(高いほどレイトレースのノイズが減ってなめらか)
     std::vector<MultiplaneBacklight> backlights;  // 透過光(T光)。灯ごとに色/強度/マスク/点滅を持つ複数灯
 
     // フレーミング固定: trueなら「基準距離framingRefDistanceMmの平面上で写る幅framingWidthMm」から

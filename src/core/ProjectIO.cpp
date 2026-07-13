@@ -382,6 +382,7 @@ bool buildCutJson(const Cut& cut, json* jCutOut, std::vector<unsigned char>* blo
                               {"fstop", mp.camera.apertureFStop},
                               {"focus", mp.camera.focusDistanceMm}}},
                             {"samples", mp.samplesPerPixel},
+                            {"exportSamples", mp.exportSamplesPerPixel},
                             {"planes", std::move(jPlanes)},
                             {"framingLock", mp.framingLock},
                             {"framingWidth", mp.framingWidthMm},
@@ -547,6 +548,7 @@ bool parseCutJson(const json& jCut, Cut& cut, const unsigned char* blobBase, uin
             mp.camera.focusDistanceMm = jCam.value("focus", 500.0);
         }
         mp.samplesPerPixel = jMp.value("samples", 8);
+        mp.exportSamplesPerPixel = jMp.value("exportSamples", 64);
         mp.framingLock = jMp.value("framingLock", true);
         mp.framingWidthMm = jMp.value("framingWidth", 360.0);
         mp.framingRefDistanceMm = jMp.value("framingRefDistance", 500.0);

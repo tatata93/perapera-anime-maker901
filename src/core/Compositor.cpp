@@ -437,7 +437,10 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
         }
     }
 
-    int samples = setup.samplesPerPixel;
+    // 書き出しは高品質(exportSamplesPerPixel)、作業/プレビューは基準(samplesPerPixel)。
+    // さらにプレビューは multiplaneSampleCap で上限を絞って軽くする
+    int samples = options.useExportSamples ? setup.exportSamplesPerPixel : setup.samplesPerPixel;
+    samples = std::max(1, samples);
     if (options.multiplaneSampleCap > 0) samples = std::min(samples, options.multiplaneSampleCap);
 
     // キーフレーム(滑らかなカメラ変化=focalKeys/focusKeys/fstopKeys)をこのコマの値へ解決する。

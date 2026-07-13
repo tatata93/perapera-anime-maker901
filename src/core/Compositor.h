@@ -18,6 +18,10 @@ struct RenderOptions {
     // (見た目はフル解像度の縮小版に近くなる)。1.0(既定)はフル解像度=従来とバイト同一。
     // 書き出しは常に1.0を使うこと
     double proxyScale = 1.0;
+    // 書き出し品質: trueならクラシック撮影のサンプル数に setup.exportSamplesPerPixel を使う
+    // (レイトレースのノイズを減らしてなめらかにする)。falseは作業用の setup.samplesPerPixel。
+    // 書き出し(連番PNG/mp4)でのみtrueにする
+    bool useExportSamples = false;
 };
 
 // カットのコマframeを最終画として合成する(紙=白の不透明画像)。

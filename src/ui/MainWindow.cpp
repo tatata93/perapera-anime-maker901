@@ -3101,6 +3101,7 @@ void MainWindow::openExportDialog() {
     opts.includeColorTrace = dialog.includeColorTrace();
     opts.includeCorrection = dialog.includeCorrection();
     opts.onlyCel = dialog.onlyCel();
+    opts.useExportSamples = true;  // 書き出しはクラシック撮影を高サンプルでなめらかに
 
     // ダイアログのコマ番号は1始まり、renderCutFrame等の内部は0始まりなので変換する
     const int from = dialog.fromFrame() - 1;
@@ -3210,7 +3211,8 @@ bool MainWindow::exportAllCutsMovie(const QString& mp4Path, int fps) {
         }
     }
 
-    const core::RenderOptions opts;  // 既定=最終画(色トレス線/作監修正は含めない)
+    core::RenderOptions opts;  // 既定=最終画(色トレス線/作監修正は含めない)
+    opts.useExportSamples = true;  // 書き出しはクラシック撮影を高サンプルでなめらかに
 
     // mp4書き出し(libx264+yuv420p)は奇数解像度だと失敗するため、書き出しサイズは常に2の倍数へ切り下げる
     const int outW = canvasWidth() & ~1;

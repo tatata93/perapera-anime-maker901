@@ -247,6 +247,7 @@ private:
     QDoubleSpinBox* m_mpFStopSpin = nullptr;
     QDoubleSpinBox* m_mpFocusSpin = nullptr;
     QSpinBox* m_mpSamplesSpin = nullptr;
+    QSpinBox* m_mpExportSamplesSpin = nullptr;
     QTableWidget* m_mpTable = nullptr;
     QPushButton* m_mpAddButton = nullptr;
     QPushButton* m_mpRemoveButton = nullptr;
