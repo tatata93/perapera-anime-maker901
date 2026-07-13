@@ -10,11 +10,14 @@
 #include <utility>
 #include <vector>
 
+class QCheckBox;
 class QComboBox;
 class QDialog;
 class QDoubleSpinBox;
 class QGroupBox;
 class QLabel;
+class QListWidget;
+class QListWidgetItem;
 class QPushButton;
 class QScrollArea;
 class QSpinBox;
@@ -75,12 +78,14 @@ private:
     };
 
     // タイムライン1行分の意味づけ。エフェクトごとに「見出し行」1つ+その直下に
-    // キー持ちパラメータの「プロパティ行」が並ぶ(After Effectsのレイヤータイムライン風)
+    // キー持ちパラメータの「プロパティ行」が並ぶ(After Effectsのレイヤータイムライン風)。
+    // multiplane有効時はエフェクト行群の後に「撮影台」セクション(Stand*)が常時表示で続く
     struct TimelineRow {
-        enum class Kind { Header, Param };
+        enum class Kind { Header, Param, StandHeader, StandFocal, StandFocus, StandFStop, StandBacklight };
         Kind kind = Kind::Param;
         int effectIndex = -1;
-        std::string key;  // Param行のみ使用
+        std::string key;      // Param行のみ使用
+        int backlightIndex = -1;  // StandBacklight行のみ使用(灯のindex)
     };
 
     core::Cut* currentCut() const;
@@ -149,28 +154,44 @@ private:
     void onPlaybackTick();
 
     // --- クラシック撮影(マルチプレーン)パネル ---
-    void rebuildMultiplanePanel();    // カメラ値+段テーブルを選択中カットの内容で作り直す
+    void rebuildMultiplanePanel();    // カメラ値+段テーブル+フレーミング+灯一覧を選択中カットの内容で作り直す
     void onMultiplaneToggled(bool checked);
     void onMultiplaneCameraChanged();  // カメラ/サンプル数スピンのいずれかが変わった
     void addMultiplanePlaneRow();
     void removeMultiplanePlaneRow();
 
-    // --- 透過光(T光)パネル(クラシック撮影グループ内) ---
-    void onBacklightChanged();  // 有効/強度/色/塗料透過率/にじみのいずれかが変わった
+    // --- フレーミング固定(「写る幅で固定」) ---
+    void onFramingLockToggled(bool checked);  // ONでセンサー幅スピンを無効化(値は写る幅/基準距離から導出)
+    void onFramingChanged();                  // 写る幅/基準距離スピンのいずれかが変わった
+
+    // --- 透過光(T光)パネル(クラシック撮影グループ内、複数灯) ---
+    // 選択中の灯(m_backlightIndex)を返す(カット無し/範囲外ならnullptr)
+    core::MultiplaneBacklight* selectedBacklight() const;
+    // 灯一覧(QListWidget)をカットの内容で作り直す(構造変更、灯追加/削除/名前変更ボタンから直接呼ぶ)。
+    // 選択インデックスをクランプして維持し、末尾でrebuildBacklightParamsPanel()も呼ぶ
+    void rebuildBacklightList();
+    // 選択中の灯のパラメータ群(強度/色/透過率/にじみ/マスク)をスピン等へ反映する(構造は変えない軽量更新)
+    void rebuildBacklightParamsPanel();
+    void onBacklightSelectionChanged(int row);  // 灯リストの選択行が変わった(データ変更ではないのでmarkEditedしない)
+    void onBacklightItemChanged(QListWidgetItem* item);  // 灯リストのチェック(enabled)がトグルされた
+    void onBacklightAddClicked();
+    void onBacklightRemoveClicked();
+    void onBacklightRenameClicked();
+    void onBacklightChanged();  // 選択中の灯の強度/色/塗料透過率/にじみのいずれかが変わった
     // 光源色スウォッチ(見本)ボタンがクリックされた: QColorDialogで選び、スピン(0〜1)へ反映する
     void onBacklightColorSwatchClicked();
     // 光源色スピン(R/G/B)いずれかの表示直後にスウォッチの背景色を合わせる(値の反映はonBacklightChanged側)
     void updateBacklightColorSwatch();
 
-    // 光源マスク(ペンで塗った範囲/セル・レイヤー指定)
+    // 光源マスク(ペンで塗った範囲/セル・レイヤー指定、選択中の灯にバインド)
     void ensureBacklightMaskAllocated(core::MultiplaneBacklight& backlight) const;
     void openBacklightMaskEditDialog();       // マスクをペンで塗るモードレスダイアログを開く
-    void closeBacklightMaskDialogIfOpen();    // カット切替等でBitmap*束縛が無効化する前に閉じる
+    void closeBacklightMaskDialogIfOpen();    // カット切替・灯の構成変更等でBitmap*束縛が無効化する前に閉じる
     void onBacklightMaskCelChanged(int comboIndex);    // 「マスクセル」コンボの変更
     void onBacklightMaskLayerChanged(int comboIndex);  // 「マスクレイヤー」コンボの変更
     void refreshBacklightMaskLayerCombo();  // マスクセルの選択に応じて「マスクレイヤー」コンボの項目を作り直す
 
-    // --- クラシック撮影のコマキー(点滅=透過光強度、滑らかな変化=焦点距離/フォーカス距離) ---
+    // --- クラシック撮影のコマキー(点滅=透過光強度、滑らかな変化=焦点距離/フォーカス距離/絞り) ---
     // 現在コマ(m_koma)へのキー追加/削除。追加時はスピンの現在表示値をそのまま登録する
     void onIntensityKeyAddClicked();
     void onIntensityKeyRemoveClicked();
@@ -178,8 +199,11 @@ private:
     void onFocalKeyRemoveClicked();
     void onFocusKeyAddClicked();
     void onFocusKeyRemoveClicked();
-    // コマ移動時、キー持ちの透過光強度/焦点距離/フォーカス距離スピンを現在コマの補間値へ同期し、
-    // キー追加/削除ボタンの有効状態を更新する(構造は変えない軽量更新、rebuildMultiplanePanel内でも使う)
+    void onFStopKeyAddClicked();
+    void onFStopKeyRemoveClicked();
+    // コマ移動時、キー持ちの透過光強度(選択中の灯)/焦点距離/フォーカス距離/絞りスピンを
+    // 現在コマの補間値へ同期し、キー追加/削除ボタンの有効状態を更新する(構造は変えない軽量更新、
+    // rebuildMultiplanePanel/rebuildBacklightParamsPanel内でも使う)
     void refreshMultiplaneKeyedFields();
 
     void markEdited();  // 現在コマのプレビュー更新+シグナル送出(データ変更の共通後処理)
@@ -207,16 +231,31 @@ private:
     QTableWidget* m_mpTable = nullptr;
     QPushButton* m_mpAddButton = nullptr;
     QPushButton* m_mpRemoveButton = nullptr;
-    // 焦点距離/フォーカス距離のコマキー追加・削除(滑らかなカメラ変化用)
+    // 焦点距離/フォーカス距離/絞り(F値)のコマキー追加・削除(滑らかなカメラ変化用)
     QToolButton* m_mpFocalKeyAddButton = nullptr;
     QToolButton* m_mpFocalKeyRemoveButton = nullptr;
     QToolButton* m_mpFocusKeyAddButton = nullptr;
     QToolButton* m_mpFocusKeyRemoveButton = nullptr;
+    QToolButton* m_mpFStopKeyAddButton = nullptr;
+    QToolButton* m_mpFStopKeyRemoveButton = nullptr;
 
-    // 透過光(T光)パネル(クラシック撮影グループ内)
+    // フレーミング固定(「写る幅で固定」): 焦点距離を変えても基準距離での構図が変わらないようにする
+    QCheckBox* m_mpFramingLockCheck = nullptr;
+    QDoubleSpinBox* m_mpFramingWidthSpin = nullptr;
+    QDoubleSpinBox* m_mpFramingRefDistanceSpin = nullptr;
+
+    // 透過光(T光)パネル(クラシック撮影グループ内、複数灯)
     QGroupBox* m_backlightGroup = nullptr;
+    // 灯一覧(チェック=enabled+灯名)+追加/削除/名前変更ボタン
+    QListWidget* m_blList = nullptr;
+    QPushButton* m_blAddButton = nullptr;
+    QPushButton* m_blRemoveButton = nullptr;
+    QPushButton* m_blRenameButton = nullptr;
+    int m_backlightIndex = -1;  // 選択中の灯(cut->multiplane().backlightsのindex、-1=未選択)
+
+    // 選択中の灯のパラメータ群
     QDoubleSpinBox* m_blIntensitySpin = nullptr;
-    // 強度のコマキー追加・削除(蛍光灯/液晶の点滅用)
+    // 強度のコマキー追加・削除(蛍光灯/液晶の点滅用、選択中の灯へ)
     QToolButton* m_blIntensityKeyAddButton = nullptr;
     QToolButton* m_blIntensityKeyRemoveButton = nullptr;
     QDoubleSpinBox* m_blColorRSpin = nullptr;
@@ -227,7 +266,7 @@ private:
     QDoubleSpinBox* m_blBloomRadiusSpin = nullptr;
     QDoubleSpinBox* m_blBloomStrengthSpin = nullptr;
 
-    // 光源マスク(ペンで塗った範囲/セル・レイヤー指定)
+    // 光源マスク(ペンで塗った範囲/セル・レイヤー指定、選択中の灯へ)
     QToolButton* m_blMaskEditButton = nullptr;
     QPushButton* m_blMaskClearButton = nullptr;
     QComboBox* m_blMaskCelCombo = nullptr;

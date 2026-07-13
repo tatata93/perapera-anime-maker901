@@ -2054,7 +2054,9 @@ void MainWindow::debugSetupBacklightDemo() {
     // 透過光(T光)確認用: アクティブセルを黒で全面塗りし、中央付近に丸い穴(消しゴムで
     // アルファを0に戻す=未塗り)をいくつか開ける。その平面をクラシック撮影に距離500mm/幅400mmで
     // 割り付け、f/2.0・フォーカス250mm(=500mmの穴平面はピント外れ=玉ボケになる)にし、
-    // 透過光ON(強度4、にじみ半径24/強さ0.8)にして撮影ウィンドウを開く
+    // 透過光を2灯構成で有効化して撮影ウィンドウを開く(複数灯UIの確認用):
+    // 灯1「メイン」=点滅キー(偶数コマ消灯/奇数コマ点灯4、白色)、
+    // 灯2「色付き」=常時2.0のシアン、ペンマスクで画面左半分だけ光らせる
     core::Cut& cut = activeCut();
     core::Bitmap& bitmap = activeLayer().frame(m_currentFrame).bitmap();
     bitmap.fill({0, 0, 0, 255});  // 黒で全面塗り(未塗り部だけが透過光を通す)
@@ -2089,19 +2091,45 @@ void MainWindow::debugSetupBacklightDemo() {
     plane.widthMm = 400.0;
     mp.planes.push_back(plane);
 
-    // 透過光(T光)を有効化(先頭の灯を編集する。本格的な複数灯UIは別タスク)
-    core::MultiplaneBacklight& backlight = core::firstBacklight(cut);
-    backlight.enabled = true;
-    backlight.intensity = 4.0;
-    backlight.bloomRadiusPx = 24.0;
-    backlight.bloomStrength = 0.8;
+    // 透過光(T光)を2灯構成で有効化(複数灯UIの確認用)
+    // 灯1「メイン」: 白色、蛍光灯/液晶の点滅(押井守風)を強度のコマキーで消灯↔点灯させる
+    core::MultiplaneBacklight mainLight;
+    mainLight.name = "メイン";
+    mainLight.enabled = true;
+    mainLight.intensity = 4.0;
+    mainLight.colorR = 1.0;
+    mainLight.colorG = 1.0;
+    mainLight.colorB = 1.0;
+    mainLight.bloomRadiusPx = 24.0;
+    mainLight.bloomStrength = 0.8;
+    for (size_t t = 0; t < 8; ++t) mainLight.intensityKeys[t] = (t % 2 == 0) ? 0.0 : 4.0;  // 偶数コマ=消灯
 
-    // 蛍光灯/液晶の点滅(押井守風): 強度のコマキーで消灯↔点灯を繰り返す(尺8の止め)
+    // 灯2「色付き」: シアン、常時2.0で点灯したまま。ペンマスクで画面左半分だけ光らせる
+    core::MultiplaneBacklight coloredLight;
+    coloredLight.name = "色付き";
+    coloredLight.enabled = true;
+    coloredLight.intensity = 2.0;
+    coloredLight.colorR = 0.2;
+    coloredLight.colorG = 0.8;
+    coloredLight.colorB = 1.0;
+    {
+        core::Bitmap mask(kCanvasWidth, kCanvasHeight);
+        mask.fill({0, 0, 0, 0});  // 全面透明(未塗り部=遮光)
+        for (int y = 0; y < kCanvasHeight; ++y) {
+            for (int x = 0; x < kCanvasWidth / 2; ++x) {
+                mask.setPixel(x, y, {255, 0, 0, 255});  // 左半分だけ塗って光を通す
+            }
+        }
+        coloredLight.mask = std::move(mask);
+    }
+
+    mp.backlights.clear();
+    mp.backlights.push_back(std::move(mainLight));
+    mp.backlights.push_back(std::move(coloredLight));
+
     cut.setFrameCount(8);
     core::Cel& cel = activeCel();
     for (size_t t = 0; t < 8; ++t) cel.setExposure(t, 0);  // 止め
-    backlight.intensityKeys.clear();
-    for (size_t t = 0; t < 8; ++t) backlight.intensityKeys[t] = (t % 2 == 0) ? 0.0 : 4.0;  // 偶数コマ=消灯
     // 滑らかなカメラ変化: 焦点距離50→70mm、フォーカス250→500mmへキー補間
     mp.focalKeys.clear();
     mp.focalKeys[0] = 50.0;
