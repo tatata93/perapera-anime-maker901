@@ -39,6 +39,9 @@ signals:
     void cutActivated(int index);   // 「選択カットを開く」= そのカットをメインウィンドウでアクティブにする
     void addCutRequested();         // カット追加(セル/レイヤー初期化が要るのでメインウィンドウに委譲)
     void removeCutRequested(int index);  // カット削除(アクティブカットのクランプ等をメインウィンドウが行う)
+    void newProjectRequested();     // 新規プロジェクト(作成ダイアログはメインウィンドウが出す)
+    void openProjectRequested();    // プロジェクトを開く
+    void saveProjectRequested();    // プロジェクトを保存
 
 private:
     void rebuildTable();

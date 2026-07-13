@@ -26,6 +26,10 @@ add_executable(perapera-anime-maker901
     ui/EditWindow.h
     ui/ProjectManagerWindow.cpp
     ui/ProjectManagerWindow.h
+    ui/NewProjectDialog.cpp
+    ui/NewProjectDialog.h
+    ui/NewCutDialog.cpp
+    ui/NewCutDialog.h
     ui/ReferencePanel.cpp
     ui/ReferencePanel.h
     ui/PalettePanel.cpp

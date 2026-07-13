@@ -200,6 +200,10 @@ private:
     void setupPanels();
 
     void newDocument();
+    // 作成オプション(名前・解像度・FPS)をダイアログで決めて新規プロジェクトを作る
+    void onNewProject();
+    // 新規/読込でプロジェクトを差し替えた後の共通後処理(各ウィンドウ・パネルの追従)
+    void finishProjectReplacement();
     // options=nullptr(既定)なら全ファイル書き出し(名前を付けて保存/新規保存先はこちら)
     bool saveToFile(const QString& path, const core::SaveOptions* options = nullptr);
     bool loadFromFile(const QString& path);

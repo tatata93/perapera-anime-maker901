@@ -19,6 +19,8 @@
 #include "render/GLCanvas.h"
 #include "ui/EditWindow.h"
 #include "ui/MainWindow.h"
+#include "ui/NewCutDialog.h"
+#include "ui/NewProjectDialog.h"
 #include "ui/ProjectManagerWindow.h"
 #include "ui/SettingBoardWindow.h"
 #include "ui/ShootingWindow.h"
@@ -911,6 +913,32 @@ int main(int argc, char* argv[]) {
             QTimer::singleShot(400, &window, [&window, outputPath] {
                 window.projectManagerWindow()->grab().save(outputPath);
                 QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
+    // 動作確認用: --newproject-dialog-test <PNG> / --newcut-dialog-test <PNG> で作成ダイアログを表示保存する
+    const int newProjIdx = args.indexOf("--newproject-dialog-test");
+    if (newProjIdx >= 0 && newProjIdx + 1 < args.size()) {
+        const QString outputPath = args.at(newProjIdx + 1);
+        QTimer::singleShot(300, &window, [outputPath] {
+            auto* d = new NewProjectDialog(24);
+            d->show();
+            QTimer::singleShot(200, d, [d, outputPath] {
+                d->grab().save(outputPath);
+                QApplication::exit(0);
+            });
+        });
+    }
+    const int newCutIdx = args.indexOf("--newcut-dialog-test");
+    if (newCutIdx >= 0 && newCutIdx + 1 < args.size()) {
+        const QString outputPath = args.at(newCutIdx + 1);
+        QTimer::singleShot(300, &window, [outputPath] {
+            auto* d = new NewCutDialog(QStringLiteral("カット 4"), 24);
+            d->show();
+            QTimer::singleShot(200, d, [d, outputPath] {
+                d->grab().save(outputPath);
+                QApplication::exit(0);
             });
         });
     }

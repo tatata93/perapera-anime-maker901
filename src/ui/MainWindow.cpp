@@ -43,6 +43,8 @@
 #include "ui/CelPanel.h"
 #include "ui/CelSizeDialog.h"
 #include "ui/EditWindow.h"
+#include "ui/NewCutDialog.h"
+#include "ui/NewProjectDialog.h"
 #include "ui/ProjectManagerWindow.h"
 #include "ui/ExportDialog.h"
 #include "ui/FramePanel.h"
@@ -655,8 +657,29 @@ void MainWindow::setActiveCut(int index) {
 void MainWindow::addCut() {
     if (m_playing) return;
     core::Scene& scene = m_project->scene(0);
-    core::Cut& cut = scene.addCut(tr("カット %1").arg(scene.cutCount() + 1).toStdString());
-    initializeCut(cut, canvasWidth(), canvasHeight());
+
+    // 作成にあたって必要な項目(名前・尺・進捗・内容/セリフ・初期セル枚数)をダイアログで決める
+    NewCutDialog dlg(tr("カット %1").arg(scene.cutCount() + 1), m_fpsSpin ? m_fpsSpin->value() : kDefaultFps, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    core::Cut& cut = scene.addCut(dlg.cutName().toStdString());
+    initializeCut(cut, canvasWidth(), canvasHeight());  // セルA(レイヤー1・1コマ)
+    cut.setFrameCount(static_cast<size_t>(std::max(1, dlg.frameCount())));
+
+    // 追加セル(B, C, …)。それぞれレイヤー1枚+透明1コマで初期化する
+    for (int c = 1; c < dlg.celCount(); ++c) {
+        core::Cel& extra = cut.addCel(QString(QChar::fromLatin1(static_cast<char>('A' + c))).toStdString());
+        core::Layer& layer = extra.addLayer(tr("レイヤー 1").toStdString());
+        layer.addFrame().bitmap() = makeTransparentCel(canvasWidth(), canvasHeight());
+    }
+    // 全セルを止め(動画0)で全コマに割り付けておく(尺を伸ばしても絵が消えない初期状態)
+    for (size_t ci = 0; ci < cut.celCount(); ++ci)
+        for (size_t t = 0; t < cut.frameCount(); ++t) cut.cel(ci).setExposure(t, 0);
+
+    cut.setStatus(static_cast<core::CutStatus>(dlg.status()));
+    cut.setAction(dlg.action().toStdString());
+    cut.setDialogue(dlg.dialogue().toStdString());
+
     markProjectDirty();  // シーンのカット構成(cutIds)が変わる
     markCutDirty(cut);
     updateWindowTitle();
@@ -1368,9 +1391,9 @@ void MainWindow::setActiveCel(int celIndex) {
 void MainWindow::setupMenus() {
     QMenu* fileMenu = menuBar()->addMenu(tr("ファイル(&F)"));
 
-    QAction* newAction = fileMenu->addAction(tr("新規(&N)"));
+    QAction* newAction = fileMenu->addAction(tr("新規(&N)..."));
     newAction->setShortcut(QKeySequence::New);
-    connect(newAction, &QAction::triggered, this, &MainWindow::newDocument);
+    connect(newAction, &QAction::triggered, this, &MainWindow::onNewProject);
 
     QAction* openAction = fileMenu->addAction(tr("開く(&O)..."));
     openAction->setShortcut(QKeySequence::Open);
@@ -1568,6 +1591,36 @@ void MainWindow::newDocument() {
     if (m_playing) togglePlayback();
     m_commands.clear();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
     createNewDocument();
+    finishProjectReplacement();
+}
+
+void MainWindow::onNewProject() {
+    // 作成にあたって必要な項目(名前・解像度・FPS)をダイアログでまとめて決める
+    NewProjectDialog dlg(m_fpsSpin ? m_fpsSpin->value() : kDefaultFps, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    if (m_playing) togglePlayback();
+    m_commands.clear();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
+
+    m_project = std::make_unique<core::Project>(dlg.projectName().toStdString());
+    m_project->setCanvasSize(dlg.canvasWidth(), dlg.canvasHeight());
+    core::Scene& scene = m_project->addScene("Scene 1");
+    core::Cut& cut = scene.addCut("カット 1");
+    initializeCut(cut, canvasWidth(), canvasHeight());
+    m_currentFrame = 0;
+    m_activeCut = 0;
+    m_activeCel = 0;
+    m_activeLayer = 0;
+    if (m_fpsSpin) m_fpsSpin->setValue(dlg.fps());
+    m_canvas->setCanvasSize(canvasWidth(), canvasHeight());
+    updateCanvasLayers();
+    updateOnionSkin();
+    finishProjectReplacement();
+}
+
+// プロジェクトを新規/読込で丸ごと差し替えた後の共通処理(各ウィンドウ・パネルの追従、
+// テクスチャキャッシュ破棄、未保存フラグのリセット)。newDocument/onNewProjectから呼ぶ
+void MainWindow::finishProjectReplacement() {
     m_canvas->clearTextureCache();  // 旧プロジェクトのBitmapポインタ再利用に備えて破棄
     if (m_previzWindow) m_previzWindow->setScene(&activeCut().previz());  // 旧シーンへのポインタを差し替え
     if (m_storyboardWindow) {
@@ -3072,6 +3125,10 @@ void MainWindow::openProjectManagerWindow() {
             addCut();
             if (m_projectManagerWindow) m_projectManagerWindow->refresh();
         });
+        // プロジェクト操作: 新規(作成ダイアログ)/開く/保存はメインウィンドウの既存フローに委譲する
+        connect(m_projectManagerWindow, &ProjectManagerWindow::newProjectRequested, this, &MainWindow::onNewProject);
+        connect(m_projectManagerWindow, &ProjectManagerWindow::openProjectRequested, this, &MainWindow::open);
+        connect(m_projectManagerWindow, &ProjectManagerWindow::saveProjectRequested, this, &MainWindow::save);
         // カット削除: アクティブカットのクランプ等はメインウィンドウ側で行う
         connect(m_projectManagerWindow, &ProjectManagerWindow::removeCutRequested, this, [this](int index) {
             core::Scene& scene = m_project->scene(0);

@@ -40,6 +40,20 @@ ProjectManagerWindow::ProjectManagerWindow(QWidget* parent) : QMainWindow(parent
     auto* central = new QWidget(this);
     auto* root = new QVBoxLayout(central);
 
+    // --- プロジェクト操作(新規/開く/保存) ---
+    auto* projectRow = new QHBoxLayout();
+    auto* newProjectButton = new QPushButton(tr("新規プロジェクト…"), central);
+    connect(newProjectButton, &QPushButton::clicked, this, [this] { emit newProjectRequested(); });
+    projectRow->addWidget(newProjectButton);
+    auto* openProjectButton = new QPushButton(tr("プロジェクトを開く…"), central);
+    connect(openProjectButton, &QPushButton::clicked, this, [this] { emit openProjectRequested(); });
+    projectRow->addWidget(openProjectButton);
+    auto* saveProjectButton = new QPushButton(tr("保存"), central);
+    connect(saveProjectButton, &QPushButton::clicked, this, [this] { emit saveProjectRequested(); });
+    projectRow->addWidget(saveProjectButton);
+    projectRow->addStretch(1);
+    root->addLayout(projectRow);
+
     // --- ヘッダー: プロジェクト名 ---
     auto* headerRow = new QHBoxLayout();
     headerRow->addWidget(new QLabel(tr("プロジェクト名:"), central));
