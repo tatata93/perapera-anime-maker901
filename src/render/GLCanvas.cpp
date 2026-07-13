@@ -685,12 +685,14 @@ void GLCanvas::tabletEvent(QTabletEvent* event) {
     const bool eraserPointer = event->pointerType() == QPointingDevice::PointerType::Eraser;
     applySettingsFor(eraserPointer ? Tool::Eraser : m_tool);
 
+    // 筆圧検知off時はペン圧を無視して最大筆圧(1.0)で描く
+    const float pressure = m_pressureEnabled ? static_cast<float>(event->pressure()) : 1.0f;
     switch (event->type()) {
         case QEvent::TabletPress:
-            pointerBegin(event->position(), static_cast<float>(event->pressure()));
+            pointerBegin(event->position(), pressure);
             break;
         case QEvent::TabletMove:
-            pointerMove(event->position(), static_cast<float>(event->pressure()));
+            pointerMove(event->position(), pressure);
             break;
         case QEvent::TabletRelease:
             pointerEnd();

@@ -161,13 +161,17 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
         refresh();
     });
 
-    // プレビュー画質: 撮影ウィンドウのプレビューは応答性優先で既定1/2縮小(core::RenderOptions::
-    // proxyScale)。書き出しは常にフル品質のまま(renderPreviewNowだけがこの値を使う)
+    // プレビュー画質: 撮影ウィンドウのプレビューは応答性優先(core::RenderOptions::proxyScale)。
+    // 書き出しは常にフル品質のまま(renderPreviewNowだけがこの値を使う)。
+    // itemDataは「キャンバスの長辺に対する比率」ではなく「プレビュー長辺の絶対px上限」にしてある
+    // (computeProxyScale()参照)。比率のままだと4K等の大きいキャンバスではプレビューでも
+    // 長辺1920px前後の縮小になり、依然として非常に重かった(ユーザー報告「開くだけで止まる」の
+    // 主因)。絶対px上限にすることでキャンバスサイズに関わらずプレビューの重さがほぼ一定になる
     toolBar->addWidget(new QLabel(tr(" プレビュー画質: "), toolBar));
     m_previewQualityCombo = new QComboBox(toolBar);
-    m_previewQualityCombo->addItem(tr("フル"), 1.0);
-    m_previewQualityCombo->addItem(tr("1/2"), 0.5);
-    m_previewQualityCombo->addItem(tr("1/4"), 0.25);
+    m_previewQualityCombo->addItem(tr("フル"), 900.0);
+    m_previewQualityCombo->addItem(tr("1/2"), 600.0);
+    m_previewQualityCombo->addItem(tr("1/4"), 360.0);
     m_previewQualityCombo->setCurrentIndex(1);  // 既定=1/2
     toolBar->addWidget(m_previewQualityCombo);
     connect(m_previewQualityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
@@ -1212,6 +1216,15 @@ void ShootingWindow::refreshTimelineHighlight() {
     }
 }
 
+double ShootingWindow::computeProxyScale() const {
+    const double longest = static_cast<double>(std::max(m_canvasWidth, m_canvasHeight));
+    if (longest <= 0.0) return 1.0;
+    // m_previewQualityはプレビュー長辺の絶対px上限。キャンバスの長辺がそれ以下ならフル解像度
+    // (拡大はしない=1.0が上限)。4K等の大きいキャンバスでは自動的に強く縮小され、プレビューの
+    // 重さがキャンバスサイズに関わらずほぼ一定になる
+    return std::min(1.0, m_previewQuality / longest);
+}
+
 void ShootingWindow::requestPreview() {
     // 再生中は各コマを間引かず即時に描く(デバウンスすると再生が飛ぶため)。
     // それ以外(編集・スクラブ)はデバウンス: 連続変更が落ち着いてから1回だけ重い合成を走らせる
@@ -1324,9 +1337,10 @@ QString ShootingWindow::frameFingerprint(const core::Cut& cut, int koma) const {
     }
 
     // プレビュー画質(出力解像度が変わる)。画質変更時はclearFrameCache()するので通常は不要だが、
-    // 念のため指紋にも含めておく(二重の安全策)
+    // 念のため指紋にも含めておく(二重の安全策)。実際にproxyScaleへ渡す計算後の値を含める
+    // (m_previewQualityが同じでもキャンバスサイズが変われば実解像度が変わるため)
     fp += QLatin1Char('|');
-    fp += QString::number(m_previewQuality, 'f', 4);
+    fp += QString::number(computeProxyScale(), 'f', 4);
 
     return fp;
 }
@@ -1350,12 +1364,14 @@ void ShootingWindow::renderPreviewNow() {
     QElapsedTimer timer;
     timer.start();
 
-    // 撮影ウィンドウのプレビューは応答性優先: クラシック撮影のサンプル数を上限4に抑え、
-    // プレビュー画質(m_previewQuality)で縮小レンダリングする(proxyScale)。
+    // 撮影ウィンドウのプレビューは応答性優先: クラシック撮影のサンプル数を上限2に抑え、
+    // プレビュー長辺の絶対px上限(computeProxyScale、キャンバスサイズに関わらず重さがほぼ一定)
+    // で縮小レンダリングする(proxyScale)。プレビューのノイズが増える分は許容する。
     // 書き出し・編集ウィンドウの通しプレビューはこれらを渡さないのでフル品質のまま
     core::RenderOptions options;
-    options.multiplaneSampleCap = 4;
-    options.proxyScale = m_previewQuality;
+    options.multiplaneFastPreview = true;  // 被写界深度を省いたピンホール高速合成(固まらない・ノイズ無し)
+    options.multiplaneSampleCap = 1;       // ピンホールなので1サンプルで十分(念のため上限も1に)
+    options.proxyScale = computeProxyScale();
     const core::Bitmap bitmap =
         core::renderCutFrame(*cut, static_cast<size_t>(m_koma), m_canvasWidth, m_canvasHeight, options);
     const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);

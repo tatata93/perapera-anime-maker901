@@ -126,6 +126,10 @@ private:
     // スピン連打やスクラブでも重い合成が積み上がらない
     void requestPreview();
     void renderPreviewNow();       // 現在コマをrenderCutFrameしてプレビューへ即時表示する(実処理)
+    // m_previewQuality(プレビュー長辺の絶対px上限)とキャンバスサイズから実際にcore::RenderOptions::
+    // proxyScaleへ渡す値を計算する。比率ではなく絶対px上限にすることで、キャンバスが4K等でも
+    // プレビューの実解像度(=重さ)がほぼ一定になる(1.0を超えない=拡大はしない)
+    double computeProxyScale() const;
     // 現在コマの見た目を決める全状態を文字列化する(コマ指紋)。同じ指紋なら同じ絵になるため、
     // renderPreviewNow()はこれをキーにm_frameCacheを引き、ヒットすれば合成を丸ごと省略する
     QString frameFingerprint(const core::Cut& cut, int koma) const;
@@ -325,8 +329,10 @@ private:
     bool m_rebuildScheduled = false;  // scheduleRebuild()の多重予約防止
     bool m_timelineRebuildScheduled = false;  // scheduleTimelineRebuild()の多重予約防止
 
-    // プレビュー画質(1.0=フル, 0.5=1/2, 0.25=1/4)。core::RenderOptions::proxyScaleへ渡す
-    double m_previewQuality = 0.5;
+    // プレビュー画質(プレビュー長辺の絶対px上限。フル=900, 1/2=600, 1/4=360)。
+    // computeProxyScale()がキャンバスサイズと合わせてcore::RenderOptions::proxyScaleへの
+    // 実際の値を算出する
+    double m_previewQuality = 600.0;
     // コマ指紋→描画済みプレビューのキャッシュ。同じ絵になるコマの再合成を省略する
     QHash<QString, QPixmap> m_frameCache;
     static constexpr int kFrameCacheLimit = 200;  // これを超えたら単純にclear()する

@@ -134,6 +134,11 @@ public:
     // 手ブレ補正の強さ(0=なし〜100=最大)。ペン/消しゴムのストロークを平滑化する
     void setStabilizer(int strength) { m_stabilizer = std::clamp(strength, 0, 100); }
 
+    // 筆圧検知のon/off。offのときはタブレットのペン圧を無視して常に最大筆圧(1.0)で描く
+    // (筆圧非対応ペンや、線幅を一定にしたいときに使う)。マウス描画は元々1.0固定なので影響しない
+    void setPressureEnabled(bool enabled) { m_pressureEnabled = enabled; }
+    bool pressureEnabled() const { return m_pressureEnabled; }
+
     // 端から端まで筆圧を変えながら1ストローク描く(動作確認用フック)
     void debugSimulateStroke();
     // 指定ウィジェット座標を塗りつぶす(動作確認用フック)
@@ -229,6 +234,7 @@ private:
     QPointF m_lastPanPos;
 
     bool m_frameGuidesEnabled = false;  // レイアウト用フレーム枠ガイドの表示状態
+    bool m_pressureEnabled = true;      // 筆圧検知(false=常に最大筆圧1.0で描く)
     QRectF m_cameraFrameOverlay;  // カメラフレーム枠オーバーレイ(キャンバス座標px、空=非表示)
     QRectF m_workArea;  // 作業領域(引きセル編集時にビュー/紙/入力を広げる、キャンバス座標px、空=カメラフレーム)
 

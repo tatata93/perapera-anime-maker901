@@ -32,6 +32,9 @@ public:
 
     // 動作確認用: プリミティブを追加する(kind=":box"/":cylinder"/":sphere")。追加後に選択状態にする
     void debugAddPrimitive(const QString& kind) { addPrimitive(kind, true); }
+    // 動作確認用: ダイアログを出さずにファイルパスからモデルを追加する(addModel()と同じ経路)。
+    // 追加後に選択状態にし、ビューポートを更新する
+    void debugAddModelFile(const QString& path);
     // 動作確認用: 現在選択中モデルのスケールXYZをUI経由で設定する(非一様スケールの変形確認用)
     void debugSetSelectedScale(double sx, double sy, double sz);
     // 動作確認用: 現在選択中モデルの位置XYZをUI経由で設定する(デモで形状同士を離して見せる用)

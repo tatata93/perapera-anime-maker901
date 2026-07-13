@@ -442,6 +442,9 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
     int samples = options.useExportSamples ? setup.exportSamplesPerPixel : setup.samplesPerPixel;
     samples = std::max(1, samples);
     if (options.multiplaneSampleCap > 0) samples = std::min(samples, options.multiplaneSampleCap);
+    // 高速プレビュー: 被写界深度(レンズ絞り)のモンテカルロを丸ごと省き、ピンホール1レイ/pxで
+    // 合成する。samplesを1に落としてもノイズが出ず(ピンホールは決定的)、撮影ウィンドウが固まらない
+    if (options.multiplaneFastPreview) samples = 1;
 
     // キーフレーム(滑らかなカメラ変化=focalKeys/focusKeys/fstopKeys)をこのコマの値へ解決する。
     // フレーミング固定: framingLockならsensorWidthMmを「基準距離framingRefDistanceMmの平面上で
@@ -454,6 +457,9 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
     if (setup.framingLock && setup.framingRefDistanceMm > 0.0) {
         camera.sensorWidthMm = setup.framingWidthMm * camera.focalLengthMm / setup.framingRefDistanceMm;
     }
+    // 高速プレビュー: 絞りを0にしてピンホール化する(renderMultiplane内でapertureFStop<=0がピンホール判定)。
+    // これで被写界深度のレンズサンプリングが完全に省かれ、決定的でノイズの無い軽い合成になる
+    if (options.multiplaneFastPreview) camera.apertureFStop = 0.0;
 
     // 灯ごとに: intensity(灯のintensityKeysで解決)・実効マスク(ペン×セル)・プロキシ時の
     // ブルーム半径スケールを解決する。ペンマスク=スクリーン1:1(従来どおり)、セルマスクは

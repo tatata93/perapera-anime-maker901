@@ -494,6 +494,23 @@ void PrevizWindow::addModel() {
     m_scene->models.push_back(std::move(model));
 
     refreshModelList();
+    m_modelList->setCurrentRow(static_cast<int>(m_scene->models.size()) - 1);  // 追加直後は選択状態にする
+    m_viewport->update();
+    rebuildSheet();
+    emit sceneEdited();
+}
+
+void PrevizWindow::debugAddModelFile(const QString& path) {
+    // 動作確認用: QFileDialogを使わずaddModel()と同じ手順(モデル追加→選択→リフレッシュ)を踏む
+    if (!m_scene || path.isEmpty()) return;
+
+    core::PrevizModel model;
+    model.name = QFileInfo(path).completeBaseName().toStdString();
+    model.filePath = path.toStdString();
+    m_scene->models.push_back(std::move(model));
+
+    refreshModelList();
+    m_modelList->setCurrentRow(static_cast<int>(m_scene->models.size()) - 1);
     m_viewport->update();
     rebuildSheet();
     emit sceneEdited();

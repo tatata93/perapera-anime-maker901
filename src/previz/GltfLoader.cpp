@@ -10,6 +10,8 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 
 namespace previz {
 
@@ -192,10 +194,35 @@ bool loadGltfMesh(const std::string& path, MeshData& out, std::string* errorOut)
     std::string error;
     std::string warning;
     bool ok = false;
+
+    // tinygltfのLoadASCIIFromFile/LoadBinaryFromFileはstd::stringのパスをそのまま
+    // std::ifstreamへ渡すため、呼び出し元(PrevizWindow::addModel)がQString::toStdString()で
+    // 渡してくるUTF-8パスに日本語などの非ASCII文字が含まれると、Windowsの実行時ANSIコードページ
+    // (日本語環境では通常CP932)で誤って解釈されファイルを開けない(StlLoaderと同根の不具合)。
+    // ここではファイル自体をこちらでUTF-8対応の方法で読み込み、tinygltfへはメモリ経由で渡すことで
+    // ファイルオープン時点のエンコーディング不整合を回避する。
+    // (ASCII .gltfが外部参照する.bin/テクスチャのURI解決はtinygltf内部のまま行われるため、
+    // それらの置き場所に非ASCII文字がある場合はなお失敗しうる=既知の残課題)
+    std::ifstream file(std::filesystem::path(std::u8string(path.begin(), path.end())), std::ios::binary);
+    if (!file) {
+        if (errorOut) *errorOut = "glTFファイルを開けません: " + path;
+        return false;
+    }
+    const std::vector<unsigned char> raw((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    file.close();
+    if (raw.empty()) {
+        if (errorOut) *errorOut = "glTFファイルが空です";
+        return false;
+    }
+    const size_t slash = path.find_last_of("/\\");
+    const std::string baseDir = slash == std::string::npos ? std::string() : path.substr(0, slash);
+
     if (path.size() >= 4 && path.compare(path.size() - 4, 4, ".glb") == 0) {
-        ok = loader.LoadBinaryFromFile(&model, &error, &warning, path);
+        ok = loader.LoadBinaryFromMemory(&model, &error, &warning, raw.data(), static_cast<unsigned int>(raw.size()),
+                                         baseDir);
     } else {
-        ok = loader.LoadASCIIFromFile(&model, &error, &warning, path);
+        ok = loader.LoadASCIIFromString(&model, &error, &warning, reinterpret_cast<const char*>(raw.data()),
+                                        static_cast<unsigned int>(raw.size()), baseDir);
     }
     if (!ok) {
         if (errorOut) *errorOut = error.empty() ? "glTFの読み込みに失敗しました" : error;

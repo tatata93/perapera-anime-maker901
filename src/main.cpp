@@ -8,6 +8,10 @@
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 
 #include "core/Multiplane.h"
 #include "previz/PrevizViewport.h"
@@ -77,6 +81,55 @@ core::Bitmap makeMultiplaneCelBArt() {
         }
     }
     return bmp;
+}
+
+// --previz-stl-test用: 既知の小さなバイナリSTL(1辺10のCAD由来立方体、12三角形、面ごとに
+// 正しい法線)を一時ファイルへ書き出す。STL特有の「頂点共有せず面ごと独立・インデックス連番」を
+// 素直に再現するための最小サンプル
+void writeLeFloatTo(std::ofstream& out, float v) { out.write(reinterpret_cast<const char*>(&v), sizeof(float)); }
+void writeLeU16To(std::ofstream& out, uint16_t v) { out.write(reinterpret_cast<const char*>(&v), sizeof(uint16_t)); }
+void writeLeU32To(std::ofstream& out, uint32_t v) { out.write(reinterpret_cast<const char*>(&v), sizeof(uint32_t)); }
+
+QString writeDebugCubeStl(const QString& path) {
+    // path.toStdString()(UTF-8)をそのままstd::ofstreamへ渡すと、Windowsでは実行時のANSIコードページ
+    // (日本語環境では通常CP932)で解釈され、非ASCII文字を含むパスで書き込みに失敗する。
+    // toStdWString()でstd::filesystem::pathを作る(既存のProjectIO呼び出しと同じ方式)ことで回避する
+    std::ofstream out(std::filesystem::path(path.toStdWString()), std::ios::binary);
+    char header[80] = {};
+    std::memcpy(header, "perapera debug cube", 20);
+    out.write(header, sizeof(header));
+    writeLeU32To(out, 12);  // 三角形数(立方体=6面×2三角形)
+
+    const float s = 10.0f;  // CAD由来を模した一辺10の立方体(0..10)
+    const float v[8][3] = {{0, 0, 0}, {s, 0, 0}, {s, s, 0}, {0, s, 0},
+                           {0, 0, s}, {s, 0, s}, {s, s, s}, {0, s, s}};
+    // 各面2三角形(頂点インデックス)+外向き法線
+    const int faces[6][6] = {
+        {0, 1, 2, 0, 2, 3},  // -Z
+        {4, 6, 5, 4, 7, 6},  // +Z
+        {0, 4, 5, 0, 5, 1},  // -Y
+        {3, 2, 6, 3, 6, 7},  // +Y
+        {0, 3, 7, 0, 7, 4},  // -X
+        {1, 5, 6, 1, 6, 2},  // +X
+    };
+    const float normals[6][3] = {{0, 0, -1}, {0, 0, 1}, {0, -1, 0}, {0, 1, 0}, {-1, 0, 0}, {1, 0, 0}};
+
+    for (int f = 0; f < 6; ++f) {
+        for (int t = 0; t < 2; ++t) {
+            writeLeFloatTo(out, normals[f][0]);
+            writeLeFloatTo(out, normals[f][1]);
+            writeLeFloatTo(out, normals[f][2]);
+            for (int c = 0; c < 3; ++c) {
+                const int idx = faces[f][t * 3 + c];
+                writeLeFloatTo(out, v[idx][0]);
+                writeLeFloatTo(out, v[idx][1]);
+                writeLeFloatTo(out, v[idx][2]);
+            }
+            writeLeU16To(out, 0);
+        }
+    }
+    out.close();
+    return path;
 }
 
 }  // namespace
@@ -664,6 +717,55 @@ int main(int argc, char* argv[]) {
                 window.previzWindow()->debugSetSelectedScale(2.0, 1.0, 1.0);  // 球→楕円体に変形
                 QTimer::singleShot(300, &window, [&window, outputPath] {
                     window.previzWindow()->viewport()->grabFramebuffer().save(outputPath);
+                    QApplication::exit(0);
+                });
+            });
+        });
+    }
+
+    // 動作確認用: --previz-stl-test <出力PNG> でプリビズウィンドウを開き、
+    // コード内で生成したバイナリSTL立方体(12三角形、CAD由来の一辺10)を一時ファイルへ書き出して
+    // debugAddModelFile()で読み込み(QFileDialogは使わない)、3Dビューポートを保存して終了する。
+    // 「STLを読み込んでも表示されない」報告の再現・検証用。
+    // 空シーンには既定で組み込みの箱(":box")が原点に自動配置される(見た目・色ともSTL読込直後の
+    // 自動フィット結果と酷似する)ため、判定を曖昧にしないよう既定の箱は先に原点から遠ざけておく
+    const int previzStlIndex = args.indexOf("--previz-stl-test");
+    if (previzStlIndex >= 0 && previzStlIndex + 1 < args.size()) {
+        const QString outputPath = args.at(previzStlIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugOpenPreviz();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                // 既定の箱(行0、setScene直後にcurrentRow=0で選択済み)を原点から遠ざけ、
+                // STLモデルだけが原点付近に見える状態にする
+                window.previzWindow()->debugSetSelectedPosition(50.0, 0.0, 50.0);
+                const QString stlPath = writeDebugCubeStl(QDir::tempPath() + "/previz_stl_test_cube.stl");
+                window.previzWindow()->debugAddModelFile(stlPath);
+                QTimer::singleShot(400, &window, [&window, outputPath, stlPath] {
+                    window.previzWindow()->viewport()->grabFramebuffer().save(outputPath);
+                    QFile::remove(stlPath);
+                    QApplication::exit(0);
+                });
+            });
+        });
+    }
+
+    // 調査用(一時): --previz-stl-jp-test <出力PNG> で日本語を含むパス(一時フォルダ配下)に
+    // STLを書き出し、debugAddModelFileで読み込んだ結果を保存する。日本語Windows(CP932)環境で
+    // パスのエンコーディング不整合が読込失敗の原因になっていないかを検証する
+    const int previzStlJpIndex = args.indexOf("--previz-stl-jp-test");
+    if (previzStlJpIndex >= 0 && previzStlJpIndex + 1 < args.size()) {
+        const QString outputPath = args.at(previzStlJpIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugOpenPreviz();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                window.previzWindow()->debugSetSelectedPosition(50.0, 0.0, 50.0);
+                const QString jpDir = QDir::tempPath() + QStringLiteral("/プレビズ検証フォルダ");
+                QDir().mkpath(jpDir);
+                const QString stlPath = writeDebugCubeStl(jpDir + QStringLiteral("/立方体モデル.stl"));
+                window.previzWindow()->debugAddModelFile(stlPath);
+                QTimer::singleShot(400, &window, [&window, outputPath, jpDir] {
+                    window.previzWindow()->viewport()->grabFramebuffer().save(outputPath);
+                    QDir(jpDir).removeRecursively();
                     QApplication::exit(0);
                 });
             });

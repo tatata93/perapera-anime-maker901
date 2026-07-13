@@ -17,6 +17,7 @@
 #include <QProcess>
 #include <QProgressDialog>
 #include <QRectF>
+#include <QCheckBox>
 #include <QSlider>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -1768,6 +1769,15 @@ void MainWindow::setupToolBar() {
     stabilizerSpin->setToolTip(tr("手ブレ補正の強さ"));
     connect(stabilizerSpin, &QSpinBox::valueChanged, this, [this](int v) { m_canvas->setStabilizer(v); });
     toolBar->addWidget(stabilizerSpin);
+
+    // 筆圧検知のon/off。offにするとペン圧を無視して常に最大筆圧(線幅一定)で描く。
+    // 筆圧非対応ペンや、意図せず筆圧で細くなるのを避けたいときに使う
+    auto* pressureCheck = new QCheckBox(tr("筆圧"), this);
+    pressureCheck->setChecked(m_canvas->pressureEnabled());
+    pressureCheck->setFocusPolicy(Qt::ClickFocus);
+    pressureCheck->setToolTip(tr("筆圧検知(offで線幅一定)"));
+    connect(pressureCheck, &QCheckBox::toggled, this, [this](bool checked) { m_canvas->setPressureEnabled(checked); });
+    toolBar->addWidget(pressureCheck);
 
     toolBar->addSeparator();
 

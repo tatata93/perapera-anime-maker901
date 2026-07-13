@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <sstream>
@@ -12,6 +13,17 @@
 namespace previz {
 
 namespace {
+
+// 呼び出し側(PrevizWindow::addModel)はQString::toStdString()でUTF-8のstd::stringを渡してくる。
+// これをそのままstd::ifstream(const std::string&)へ渡すと、Windowsでは実行時のANSIコードページ
+// (日本語環境では通常CP932)でパスが解釈されるため、UTF-8バイト列に非ASCII文字(日本語の
+// フォルダ名・ファイル名など)が含まれる場合に文字化けしてファイルを開けなくなる。
+// これが「STLを読み込んでもモデル一覧には追加されるが3Dビューには何も表示されない」
+// (loadStlMeshが静かに失敗し、PrevizViewport側は失敗フラグを立てて描画をスキップするだけ)
+// の実際の原因だったため、char8_t経由で明示的にUTF-8として解釈させて回避する
+std::filesystem::path toFsPath(const std::string& utf8Path) {
+    return std::filesystem::path(std::u8string(utf8Path.begin(), utf8Path.end()));
+}
 
 struct Triangle {
     float normal[3] = {0, 0, 0};
@@ -119,7 +131,7 @@ bool parseAsciiStl(const std::string& text, std::vector<Triangle>& triangles, st
 }  // namespace
 
 bool loadStlMesh(const std::string& path, MeshData& out, std::string* errorOut) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(toFsPath(path), std::ios::binary);
     if (!file) {
         if (errorOut) *errorOut = "STLファイルを開けません: " + path;
         return false;

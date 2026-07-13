@@ -22,6 +22,11 @@ struct RenderOptions {
     // (レイトレースのノイズを減らしてなめらかにする)。falseは作業用の setup.samplesPerPixel。
     // 書き出し(連番PNG/mp4)でのみtrueにする
     bool useExportSamples = false;
+    // クラシック撮影のプレビュー高速化: trueならレンズ絞り(被写界深度)を無効化して
+    // ピンホール(1レイ/px)で合成する。DoFのモンテカルロ・サンプリングを丸ごと省くため
+    // 圧倒的に速く、かつノイズが出ない(ボケは無くなる=シャープになる)。撮影ウィンドウの
+    // プレビュー専用。書き出し・通しプレビューはfalseのままフルDoF・高サンプルを維持する
+    bool multiplaneFastPreview = false;
 };
 
 // カットのコマframeを最終画として合成する(紙=白の不透明画像)。
