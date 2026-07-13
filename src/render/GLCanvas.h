@@ -121,6 +121,16 @@ public:
         update();
     }
 
+    // 作業領域(ワークエリア)。引きセル(キャンバス=カメラフレームより大きい紙)を編集するとき、
+    // ビューの表示範囲・白い紙・入力可能範囲をこの矩形(キャンバス座標px)まで広げる。
+    // これによりカメラフレームの外側まで背景を描ける。有効時はカメラフレーム(0,0,canvas)の
+    // 外周を目安線として重ね表示する。空のQRectFで通常(カメラフレーム=紙)に戻る。ppam非保存
+    void setWorkArea(const QRectF& rectPx) {
+        if (m_workArea == rectPx) return;
+        m_workArea = rectPx;
+        update();
+    }
+
     // 手ブレ補正の強さ(0=なし〜100=最大)。ペン/消しゴムのストロークを平滑化する
     void setStabilizer(int strength) { m_stabilizer = std::clamp(strength, 0, 100); }
 
@@ -220,6 +230,7 @@ private:
 
     bool m_frameGuidesEnabled = false;  // レイアウト用フレーム枠ガイドの表示状態
     QRectF m_cameraFrameOverlay;  // カメラフレーム枠オーバーレイ(キャンバス座標px、空=非表示)
+    QRectF m_workArea;  // 作業領域(引きセル編集時にビュー/紙/入力を広げる、キャンバス座標px、空=カメラフレーム)
 
     // 手ブレ補正
     int m_stabilizer = 20;        // 強さ(0-100)

@@ -300,20 +300,25 @@ void GLCanvas::flushPendingUpload() {
 QTransform GLCanvas::viewTransform() const {
     if (m_canvasWidth <= 0 || m_canvasHeight <= 0) return {};
 
+    // フィット対象の矩形: 通常はカメラフレーム(0,0,canvas)、引きセル編集中は作業領域まで広げる。
+    // これによりフレーム外まで見渡して描ける
+    const QRectF fitRect =
+        m_workArea.isEmpty() ? QRectF(0, 0, m_canvasWidth, m_canvasHeight) : m_workArea;
+
     const qreal ww = width();
     const qreal wh = height();
-    const qreal iw = m_canvasWidth;
-    const qreal ih = m_canvasHeight;
+    const qreal iw = fitRect.width();
+    const qreal ih = fitRect.height();
     const qreal fitScale = qMin(ww / iw, wh / ih);
     const qreal scale = fitScale * m_zoom;
 
-    // widget = 中心+パン → 反転 → 回転 → 拡縮 → 画像中心を原点へ、の順で画像座標に適用される
+    // widget = 中心+パン → 反転 → 回転 → 拡縮 → フィット矩形の中心を原点へ、の順で画像座標に適用される
     QTransform t;
     t.translate(ww * 0.5 + m_panOffset.x(), wh * 0.5 + m_panOffset.y());
     if (m_mirrorView) t.scale(-1.0, 1.0);  // 左右反転表示(ミラーチェック)
     t.rotate(m_rotationDeg);
     t.scale(scale, scale);
-    t.translate(-iw * 0.5, -ih * 0.5);
+    t.translate(-fitRect.center().x(), -fitRect.center().y());
     return t;
 }
 
@@ -427,17 +432,19 @@ void GLCanvas::paintGL() {
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     };
     const QRectF canvasRect(0, 0, m_canvasWidth, m_canvasHeight);
+    // 紙(白)を塗る範囲: 通常はカメラフレーム、引きセル編集中は作業領域まで広げる
+    const QRectF paperRect = m_workArea.isEmpty() ? canvasRect : m_workArea;
     // ビットマップ自身のサイズ+セルオフセットの矩形(引きセル=キャンバスより大きい紙にも対応)
     const auto bitmapRect = [](const core::Bitmap* bitmap, QPointF offset) {
         return QRectF(offset.x(), offset.y(), bitmap->width(), bitmap->height());
     };
 
-    // 1. 紙(白): キャンバス矩形を白で塗る
+    // 1. 紙(白): 紙の矩形を白で塗る
     m_program->setUniformValue("uSolidWhite", 1.0f);
     m_program->setUniformValue("uOnionStrength", 0.0f);
     m_program->setUniformValue("uUnderlayMix", 0.0f);
     m_program->setUniformValue("uUseSolidColor", 0.0f);  // 前フレームの状態が残っていても確実に無効化する
-    drawQuad(canvasRect);
+    drawQuad(paperRect);
     m_program->setUniformValue("uSolidWhite", 0.0f);
 
     // 2. レイヤースタックを下→上の順にアルファ合成(タップ/ペグ移動のオフセット付き)
@@ -534,6 +541,24 @@ void GLCanvas::paintGL() {
         drawGuideFrame(1.0, kFrameGuideColor);       // 作画フレーム(100%)
         drawGuideFrame(0.9, kTvSafeGuideColor);       // TVセーフ/アクションセーフ(約90%)
         drawGuideFrame(0.8, kTitleSafeGuideColor);    // タイトルセーフ(約80%)
+
+        m_program->setUniformValue("uUseSolidColor", 0.0f);
+        glDisable(GL_BLEND);
+    }
+
+    // 作業領域(引きセル編集)モードでは、カメラフレーム(0,0,canvas)の外周を橙色の目安線で示す。
+    // 背景を広い紙に描くとき「今どこがフレーム内か」が分かるようにするため
+    if (!m_workArea.isEmpty()) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        m_program->setUniformValue("uUseSolidColor", 1.0f);
+        m_program->setUniformValue("uSolidColor", QVector4D(1.0f, 0.6f, 0.15f, 0.9f));  // 橙
+
+        constexpr qreal kFrameThickness = 3.0;  // キャンバス座標での線の太さ(px相当)
+        drawQuad(QRectF(0, 0, m_canvasWidth, kFrameThickness));                                 // 上辺
+        drawQuad(QRectF(0, m_canvasHeight - kFrameThickness, m_canvasWidth, kFrameThickness));   // 下辺
+        drawQuad(QRectF(0, 0, kFrameThickness, m_canvasHeight));                                 // 左辺
+        drawQuad(QRectF(m_canvasWidth - kFrameThickness, 0, kFrameThickness, m_canvasHeight));    // 右辺
 
         m_program->setUniformValue("uUseSolidColor", 0.0f);
         glDisable(GL_BLEND);

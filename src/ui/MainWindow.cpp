@@ -304,6 +304,20 @@ void MainWindow::updateCanvasLayers() {
     const core::Vec2 activePos = activeCel().positionAt(m_currentFrame);
     m_canvas->setFillBoundaryLayers(std::move(fillBoundary));
     m_canvas->setLayerStack(std::move(stack), editTarget, QPointF(activePos.x, activePos.y));
+
+    // 引きセル(カメラフレームより大きい紙)を編集するときは、作業領域をその紙の範囲まで広げて
+    // フレーム外まで見渡して描けるようにする。通常サイズのセル(タップ移動で一部が枠外にはみ出す
+    // だけの場合を含む)では作業領域を無効(=カメラフレーム=紙)に戻す
+    QRectF workArea;
+    if (editTarget &&
+        (editTarget->width() > canvasWidth() || editTarget->height() > canvasHeight())) {
+        const QRectF frame(0, 0, canvasWidth(), canvasHeight());
+        const QRectF celRect(activePos.x, activePos.y, editTarget->width(), editTarget->height());
+        workArea = frame.united(celRect);
+        const qreal margin = 0.02 * std::max(workArea.width(), workArea.height());  // 端を少し余白に
+        workArea.adjust(-margin, -margin, margin, margin);
+    }
+    m_canvas->setWorkArea(workArea);
 }
 
 void MainWindow::createNewDocument() {
