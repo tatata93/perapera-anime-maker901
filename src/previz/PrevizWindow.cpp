@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QStatusBar>
@@ -102,15 +103,27 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     layout->addWidget(m_modelList);
     auto* addButton = new QPushButton(tr("モデル追加..."), container);
     layout->addWidget(addButton);
-    auto* addBoxButton = new QPushButton(tr("箱を追加"), container);
-    layout->addWidget(addBoxButton);
+
+    // プリミティブ追加(箱/円柱/球)。任意の形へ変形できる下地として複数形状を用意する
+    auto* addPrimitiveButton = new QToolButton(container);
+    addPrimitiveButton->setText(tr("プリミティブ追加"));
+    addPrimitiveButton->setPopupMode(QToolButton::InstantPopup);
+    auto* primitiveMenu = new QMenu(addPrimitiveButton);
+    QAction* addBoxAction = primitiveMenu->addAction(tr("箱"));
+    QAction* addCylinderAction = primitiveMenu->addAction(tr("円柱"));
+    QAction* addSphereAction = primitiveMenu->addAction(tr("球"));
+    addPrimitiveButton->setMenu(primitiveMenu);
+    layout->addWidget(addPrimitiveButton);
+    connect(addBoxAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":box"), true); });
+    connect(addCylinderAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":cylinder"), true); });
+    connect(addSphereAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":sphere"), true); });
+
     auto* removeButton = new QPushButton(tr("モデル削除"), container);
     layout->addWidget(removeButton);
     dock->setWidget(container);
     addDockWidget(Qt::RightDockWidgetArea, dock);
 
     connect(addButton, &QPushButton::clicked, this, &PrevizWindow::addModel);
-    connect(addBoxButton, &QPushButton::clicked, this, [this] { addBoxModel(true); });
     connect(removeButton, &QPushButton::clicked, this, &PrevizWindow::removeSelectedModel);
     connect(m_modelList, &QListWidget::currentRowChanged, this, [this](int row) {
         m_viewport->setSelectedModel(row);  // 作業視点の左ドラッグ移動対象
@@ -132,8 +145,13 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     m_posX = makeSpin(-1000, 1000, 0.1);
     m_posY = makeSpin(-1000, 1000, 0.1);
     m_posZ = makeSpin(-1000, 1000, 0.1);
-    m_rotY = makeSpin(-3600, 3600, 5.0);
-    m_scale = makeSpin(0.01, 100, 0.1);
+    m_rotX = makeSpin(-180, 180, 5.0);
+    m_rotY = makeSpin(-180, 180, 5.0);
+    m_rotZ = makeSpin(-180, 180, 5.0);
+    // 非一様スケール(X/Y/Z個別)で箱→板/柱、球→楕円体、円柱→円盤/筒に変形できる
+    m_scaleX = makeSpin(0.01, 100, 0.1);
+    m_scaleY = makeSpin(0.01, 100, 0.1);
+    m_scaleZ = makeSpin(0.01, 100, 0.1);
     const auto addRow = [container, layout](const QString& label, QWidget* w) {
         auto* row = new QWidget(container);
         auto* h = new QHBoxLayout(row);
@@ -145,9 +163,13 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     addRow(tr("X"), m_posX);
     addRow(tr("Y"), m_posY);
     addRow(tr("Z"), m_posZ);
+    addRow(tr("回転X°"), m_rotX);
     addRow(tr("回転Y°"), m_rotY);
-    addRow(tr("倍率"), m_scale);
-    for (QDoubleSpinBox* spin : {m_posX, m_posY, m_posZ, m_rotY, m_scale}) {
+    addRow(tr("回転Z°"), m_rotZ);
+    addRow(tr("倍率X"), m_scaleX);
+    addRow(tr("倍率Y"), m_scaleY);
+    addRow(tr("倍率Z"), m_scaleZ);
+    for (QDoubleSpinBox* spin : {m_posX, m_posY, m_posZ, m_rotX, m_rotY, m_rotZ, m_scaleX, m_scaleY, m_scaleZ}) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyTransformFromUi(); });
     }
 
@@ -365,8 +387,12 @@ void PrevizWindow::refreshTransformUi() {
     m_posX->setValue(tf.position.x);
     m_posY->setValue(tf.position.y);
     m_posZ->setValue(tf.position.z);
+    m_rotX->setValue(tf.rotationDeg.x);
     m_rotY->setValue(tf.rotationDeg.y);
-    m_scale->setValue(tf.scale.x);
+    m_rotZ->setValue(tf.rotationDeg.z);
+    m_scaleX->setValue(tf.scale.x);
+    m_scaleY->setValue(tf.scale.y);
+    m_scaleZ->setValue(tf.scale.z);
     m_updating = false;
 }
 
@@ -378,9 +404,11 @@ void PrevizWindow::applyTransformFromUi() {
     core::PrevizTransform tf = model->transformAt(m_viewport->frame());
     tf.position = {static_cast<float>(m_posX->value()), static_cast<float>(m_posY->value()),
                    static_cast<float>(m_posZ->value())};
-    tf.rotationDeg.y = static_cast<float>(m_rotY->value());
-    const float s = static_cast<float>(m_scale->value());
-    tf.scale = {s, s, s};
+    tf.rotationDeg = {static_cast<float>(m_rotX->value()), static_cast<float>(m_rotY->value()),
+                      static_cast<float>(m_rotZ->value())};
+    // 非一様スケール(X/Y/Z個別)。これにより箱/円柱/球を任意の形へ変形できる
+    tf.scale = {static_cast<float>(m_scaleX->value()), static_cast<float>(m_scaleY->value()),
+               static_cast<float>(m_scaleZ->value())};
 
     // キーが無ければ基本配置、キーがあれば現在コマのキーを編集(カメラと同じ規則)
     if (model->transformKeys.empty()) {
@@ -392,16 +420,37 @@ void PrevizWindow::applyTransformFromUi() {
     emit sceneEdited();
 }
 
-void PrevizWindow::addBoxModel(bool select) {
+void PrevizWindow::debugSetSelectedScale(double sx, double sy, double sz) {
+    if (!selectedModel()) return;
+    // UIのスピンボックス経由で設定する(valueChangedシグナルでapplyTransformFromUiが走り、
+    // 実際のユーザー操作と同じ経路で非一様スケールが反映される)
+    m_scaleX->setValue(sx);
+    m_scaleY->setValue(sy);
+    m_scaleZ->setValue(sz);
+}
+
+void PrevizWindow::debugSetSelectedPosition(double x, double y, double z) {
+    if (!selectedModel()) return;
+    m_posX->setValue(x);
+    m_posY->setValue(y);
+    m_posZ->setValue(z);
+}
+
+void PrevizWindow::addPrimitive(const QString& kind, bool select) {
     if (!m_scene) return;
-    core::PrevizModel box;
+    // kind(":box"/":cylinder"/":sphere")に応じた表示名を決める
+    QString label = tr("箱");
+    if (kind == QStringLiteral(":cylinder")) label = tr("円柱");
+    else if (kind == QStringLiteral(":sphere")) label = tr("球");
+
+    core::PrevizModel primitive;
     int number = 1;
     for (const auto& model : m_scene->models) {
-        if (model.filePath == ":box") ++number;
+        if (model.filePath == kind.toStdString()) ++number;
     }
-    box.name = tr("箱 %1").arg(number).toStdString();
-    box.filePath = ":box";  // 組み込みプリミティブ
-    m_scene->models.push_back(std::move(box));
+    primitive.name = tr("%1 %2").arg(label).arg(number).toStdString();
+    primitive.filePath = kind.toStdString();  // 組み込みプリミティブ
+    m_scene->models.push_back(std::move(primitive));
     refreshModelList();
     if (select) m_modelList->setCurrentRow(static_cast<int>(m_scene->models.size()) - 1);
     rebuildSheet();
@@ -414,7 +463,7 @@ void PrevizWindow::setScene(core::PrevizScene* scene) {
     m_viewport->setScene(scene);
     // 空のシーンには最初から操作できる箱を1つ置く(目安キューブの実体化)
     if (m_scene && m_scene->models.empty()) {
-        addBoxModel(false);
+        addPrimitive(QStringLiteral(":box"), false);
     }
     refreshModelList();
     refreshCameraUi();
@@ -436,7 +485,7 @@ void PrevizWindow::setTimeline(size_t currentFrame, size_t frameCount) {
 void PrevizWindow::addModel() {
     if (!m_scene) return;
     const QString path =
-        QFileDialog::getOpenFileName(this, tr("3Dモデルを開く"), QString(), tr("glTFモデル (*.glb *.gltf)"));
+        QFileDialog::getOpenFileName(this, tr("3Dモデルを開く"), QString(), tr("3Dモデル (*.glb *.gltf *.stl)"));
     if (path.isEmpty()) return;
 
     core::PrevizModel model;

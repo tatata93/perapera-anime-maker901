@@ -645,6 +645,31 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --previz-prim-test <出力PNG> でプリビズウィンドウを開き、円柱・球の
+    // プリミティブを追加する(既定の箱・円柱・球が重ならないようX方向に離して配置)。
+    // 球は選択したまま非一様スケール(X=2倍)を掛けて楕円体に変形し、
+    // 箱・円柱・球(うち1つ変形)が並んだ3Dビューポートを保存して終了する
+    const int previzPrimIndex = args.indexOf("--previz-prim-test");
+    if (previzPrimIndex >= 0 && previzPrimIndex + 1 < args.size()) {
+        const QString outputPath = args.at(previzPrimIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugOpenPreviz();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                // 空シーンには既定で箱が1つ置かれる(setScene)。それはX=-1.5へ寄せておく
+                window.previzWindow()->debugSetSelectedPosition(-1.5, 0.0, 0.0);
+                window.previzWindow()->debugAddPrimitive(":cylinder");
+                window.previzWindow()->debugSetSelectedPosition(0.0, 0.0, 0.0);
+                window.previzWindow()->debugAddPrimitive(":sphere");  // 追加後、球が選択状態になる
+                window.previzWindow()->debugSetSelectedPosition(1.5, 0.0, 0.0);
+                window.previzWindow()->debugSetSelectedScale(2.0, 1.0, 1.0);  // 球→楕円体に変形
+                QTimer::singleShot(300, &window, [&window, outputPath] {
+                    window.previzWindow()->viewport()->grabFramebuffer().save(outputPath);
+                    QApplication::exit(0);
+                });
+            });
+        });
+    }
+
     // 動作確認用: --previz-underlay-test <出力PNG> でプリビズの絵(グリッド+キューブ)を
     // 作画キャンバスの下敷きとして透かした状態を保存する(なぞり作画の検証)
     const int pvuIndex = args.indexOf("--previz-underlay-test");

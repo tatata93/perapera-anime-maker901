@@ -30,13 +30,21 @@ public:
     void setTimeline(size_t currentFrame, size_t frameCount);
     PrevizViewport* viewport() const { return m_viewport; }
 
+    // 動作確認用: プリミティブを追加する(kind=":box"/":cylinder"/":sphere")。追加後に選択状態にする
+    void debugAddPrimitive(const QString& kind) { addPrimitive(kind, true); }
+    // 動作確認用: 現在選択中モデルのスケールXYZをUI経由で設定する(非一様スケールの変形確認用)
+    void debugSetSelectedScale(double sx, double sy, double sz);
+    // 動作確認用: 現在選択中モデルの位置XYZをUI経由で設定する(デモで形状同士を離して見せる用)
+    void debugSetSelectedPosition(double x, double y, double z);
+
 signals:
     void sceneEdited();          // シーンが変更された(MainWindowが未保存フラグを立てる)
     void frameChangeRequested(int frame);  // シートのセルクリックで本体のコマ移動を要求する
 
 private:
     void addModel();
-    void addBoxModel(bool select);  // 組み込みの箱(:box)を追加。目安キューブの実体化
+    // 組み込みプリミティブ(kind=":box"/":cylinder"/":sphere")を追加する
+    void addPrimitive(const QString& kind, bool select);
     void removeSelectedModel();
     void refreshModelList();
     void refreshCameraUi();
@@ -63,12 +71,16 @@ private:
     QListWidget* m_modelList = nullptr;
     QDoubleSpinBox* m_focalSpin = nullptr;
     QLabel* m_fovLabel = nullptr;
-    // 選択モデルのトランスフォーム編集(位置XYZ/ヨー回転/等倍スケール)
+    // 選択モデルのトランスフォーム編集(位置XYZ/回転XYZ/スケールXYZ=任意変形対応)
     QDoubleSpinBox* m_posX = nullptr;
     QDoubleSpinBox* m_posY = nullptr;
     QDoubleSpinBox* m_posZ = nullptr;
+    QDoubleSpinBox* m_rotX = nullptr;
     QDoubleSpinBox* m_rotY = nullptr;
-    QDoubleSpinBox* m_scale = nullptr;
+    QDoubleSpinBox* m_rotZ = nullptr;
+    QDoubleSpinBox* m_scaleX = nullptr;
+    QDoubleSpinBox* m_scaleY = nullptr;
+    QDoubleSpinBox* m_scaleZ = nullptr;
     // 十字リモコン(ナッジ操作)
     QComboBox* m_nudgeTargetCombo = nullptr;  // 0=カメラ、1=選択モデル
     QDoubleSpinBox* m_moveStepSpin = nullptr;

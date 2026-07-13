@@ -40,6 +40,8 @@ add_executable(perapera-anime-maker901
     render/GLCanvas.h
     previz/GltfLoader.cpp
     previz/GltfLoader.h
+    previz/StlLoader.cpp
+    previz/StlLoader.h
     previz/PrevizSheetPanel.cpp
     previz/PrevizSheetPanel.h
     previz/PrevizViewport.cpp

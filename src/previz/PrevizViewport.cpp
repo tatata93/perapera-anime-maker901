@@ -5,9 +5,21 @@
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLShaderProgram>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
+#include "previz/StlLoader.h"
+
 namespace {
+
+// パスの拡張子(小文字化)を返す。ドットは含まない
+std::string lowerExtension(const std::string& path) {
+    const size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos) return {};
+    std::string ext = path.substr(dot + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+    return ext;
+}
 
 const char* kVertexShader = R"(
 attribute vec3 aPos;
@@ -222,6 +234,14 @@ PrevizViewport::GpuMesh* PrevizViewport::getOrLoadMesh(const std::string& filePa
     if (filePath == ":box") {
         // 組み込みプリミティブ: 1m角の箱(レイアウトのブロッキング用)
         data = previz::makeBoxMeshData();
+    } else if (filePath == ":cylinder") {
+        // 組み込みプリミティブ: 円柱(半径0.5・高さ1)
+        data = previz::makeCylinderMeshData();
+    } else if (filePath == ":sphere") {
+        // 組み込みプリミティブ: 球(半径0.5)
+        data = previz::makeSphereMeshData();
+    } else if (lowerExtension(filePath) == "stl") {
+        if (!previz::loadStlMesh(filePath, data, &error)) mesh.loadFailed = true;
     } else if (!previz::loadGltfMesh(filePath, data, &error)) {
         mesh.loadFailed = true;  // 失敗を記録して毎フレーム再試行しない
     }

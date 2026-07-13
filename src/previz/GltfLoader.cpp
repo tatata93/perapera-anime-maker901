@@ -248,4 +248,119 @@ MeshData makeBoxMeshData() {
     return data;
 }
 
+MeshData makeCylinderMeshData(int segments) {
+    // 半径0.5・高さ1の円柱(床の上y∈[0,1]、原点中心)
+    segments = std::max(3, segments);
+    const float radius = 0.5f;
+    const float twoPi = 6.28318530718f;
+
+    MeshPrimitive prim;
+
+    // 側面: セグメントごとに4頂点(下左/下右/上右/上左)。法線はセグメント中央の外向き放射方向で
+    // 面ごとにフラットシェーディングする(箱と同じ流儀)
+    for (int i = 0; i < segments; ++i) {
+        const float a0 = twoPi * static_cast<float>(i) / static_cast<float>(segments);
+        const float a1 = twoPi * static_cast<float>(i + 1) / static_cast<float>(segments);
+        const float x0 = radius * std::cos(a0), z0 = radius * std::sin(a0);
+        const float x1 = radius * std::cos(a1), z1 = radius * std::sin(a1);
+        const float amid = (a0 + a1) * 0.5f;
+        const float nx = std::cos(amid), nz = std::sin(amid);
+
+        const uint32_t base = static_cast<uint32_t>(prim.vertices.size() / 6);
+        prim.vertices.insert(prim.vertices.end(), {x0, 0.0f, z0, nx, 0.0f, nz});
+        prim.vertices.insert(prim.vertices.end(), {x1, 0.0f, z1, nx, 0.0f, nz});
+        prim.vertices.insert(prim.vertices.end(), {x1, 1.0f, z1, nx, 0.0f, nz});
+        prim.vertices.insert(prim.vertices.end(), {x0, 1.0f, z0, nx, 0.0f, nz});
+        prim.indices.insert(prim.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+    }
+
+    // 上面(y=1、法線+Y): 中心+リングの扇状
+    {
+        const uint32_t centerIdx = static_cast<uint32_t>(prim.vertices.size() / 6);
+        prim.vertices.insert(prim.vertices.end(), {0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f});
+        const uint32_t ringStart = static_cast<uint32_t>(prim.vertices.size() / 6);
+        for (int i = 0; i <= segments; ++i) {
+            const float a = twoPi * static_cast<float>(i) / static_cast<float>(segments);
+            prim.vertices.insert(prim.vertices.end(),
+                                 {radius * std::cos(a), 1.0f, radius * std::sin(a), 0.0f, 1.0f, 0.0f});
+        }
+        for (int i = 0; i < segments; ++i) {
+            prim.indices.insert(prim.indices.end(),
+                                {centerIdx, ringStart + static_cast<uint32_t>(i), ringStart + static_cast<uint32_t>(i + 1)});
+        }
+    }
+
+    // 下面(y=0、法線-Y): 中心+リングの扇状(巻き順を反転)
+    {
+        const uint32_t centerIdx = static_cast<uint32_t>(prim.vertices.size() / 6);
+        prim.vertices.insert(prim.vertices.end(), {0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f});
+        const uint32_t ringStart = static_cast<uint32_t>(prim.vertices.size() / 6);
+        for (int i = 0; i <= segments; ++i) {
+            const float a = twoPi * static_cast<float>(i) / static_cast<float>(segments);
+            prim.vertices.insert(prim.vertices.end(),
+                                 {radius * std::cos(a), 0.0f, radius * std::sin(a), 0.0f, -1.0f, 0.0f});
+        }
+        for (int i = 0; i < segments; ++i) {
+            prim.indices.insert(prim.indices.end(),
+                                {centerIdx, ringStart + static_cast<uint32_t>(i + 1), ringStart + static_cast<uint32_t>(i)});
+        }
+    }
+
+    prim.color[0] = 0.55f;
+    prim.color[1] = 0.65f;
+    prim.color[2] = 0.85f;
+    prim.color[3] = 1.0f;
+
+    MeshData data;
+    data.primitives.push_back(std::move(prim));
+    return data;
+}
+
+MeshData makeSphereMeshData(int stacks, int slices) {
+    // 半径0.5のUV球(床の上に接する、中心y=0.5)。緯度stacks×経度slicesのグリッド
+    stacks = std::max(2, stacks);
+    slices = std::max(3, slices);
+    const float radius = 0.5f;
+    const float centerY = 0.5f;
+    const float pi = 3.14159265358979f;
+    const float twoPi = 6.28318530718f;
+
+    MeshPrimitive prim;
+    // 頂点: (stacks+1)×(slices+1)。縫い目のためslices+1本目(u=1)を複製する
+    for (int i = 0; i <= stacks; ++i) {
+        const float v = static_cast<float>(i) / static_cast<float>(stacks);  // 0(北極)〜1(南極)
+        const float phi = v * pi;
+        const float y = std::cos(phi);
+        const float r = std::sin(phi);
+        for (int j = 0; j <= slices; ++j) {
+            const float u = static_cast<float>(j) / static_cast<float>(slices);
+            const float theta = u * twoPi;
+            const float x = r * std::cos(theta);
+            const float z = r * std::sin(theta);
+            // 法線=中心からの方向(単位球上の点そのもの)
+            prim.vertices.insert(prim.vertices.end(), {x * radius, y * radius + centerY, z * radius, x, y, z});
+        }
+    }
+
+    const int ringVerts = slices + 1;
+    for (int i = 0; i < stacks; ++i) {
+        for (int j = 0; j < slices; ++j) {
+            const uint32_t a = static_cast<uint32_t>(i * ringVerts + j);
+            const uint32_t b = static_cast<uint32_t>(i * ringVerts + j + 1);
+            const uint32_t c = static_cast<uint32_t>((i + 1) * ringVerts + j + 1);
+            const uint32_t d = static_cast<uint32_t>((i + 1) * ringVerts + j);
+            prim.indices.insert(prim.indices.end(), {a, b, c, a, c, d});
+        }
+    }
+
+    prim.color[0] = 0.55f;
+    prim.color[1] = 0.65f;
+    prim.color[2] = 0.85f;
+    prim.color[3] = 1.0f;
+
+    MeshData data;
+    data.primitives.push_back(std::move(prim));
+    return data;
+}
+
 }  // namespace previz

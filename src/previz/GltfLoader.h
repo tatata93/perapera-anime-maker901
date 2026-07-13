@@ -23,4 +23,10 @@ bool loadGltfMesh(const std::string& path, MeshData& out, std::string* errorOut 
 // 組み込みプリミティブ: 1m角の箱(床の上、原点)。レイアウトのブロッキング用
 MeshData makeBoxMeshData();
 
+// 組み込みプリミティブ: 半径0.5・高さ1の円柱(床の上y∈[0,1]、原点中心)
+MeshData makeCylinderMeshData(int segments = 32);
+
+// 組み込みプリミティブ: 半径0.5の球(床の上に接する、中心y=0.5)
+MeshData makeSphereMeshData(int stacks = 24, int slices = 32);
+
 }  // namespace previz
