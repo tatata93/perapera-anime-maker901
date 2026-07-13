@@ -271,7 +271,7 @@ bool readBitmapBlob(const json& jSrc, const unsigned char* blobBase, uint64_t bl
 // --- cuts/cut_<id>.ppam 1個分のJSON変換 ---
 // 現在jCutに入っている全項目(name/frameCount/action/dialogue/status/cels(exposure/positionKeys/
 // paperW/H/layers/frames)/previz/cameraKeys/effects(params/paramCurves/mask)/
-// multiplane(camera/planes/backlight))を漏れなく往復させる
+// multiplane(camera/planes/backlights))を漏れなく往復させる
 
 bool buildCutJson(const Cut& cut, json* jCutOut, std::vector<unsigned char>* blobsOut, std::string* errorOut) {
     json jCels = json::array();
@@ -382,38 +382,52 @@ bool buildCutJson(const Cut& cut, json* jCutOut, std::vector<unsigned char>* blo
                               {"fstop", mp.camera.apertureFStop},
                               {"focus", mp.camera.focusDistanceMm}}},
                             {"samples", mp.samplesPerPixel},
-                            {"planes", std::move(jPlanes)}};
-        // 透過光(T光)。無効なら省略する
-        if (mp.backlight.enabled) {
-            json jBacklight = {{"enabled", mp.backlight.enabled},
-                               {"intensity", mp.backlight.intensity},
-                               {"r", mp.backlight.colorR},
-                               {"g", mp.backlight.colorG},
-                               {"b", mp.backlight.colorB},
-                               {"tau", mp.backlight.paintTransmittance},
-                               {"bloomRadius", mp.backlight.bloomRadiusPx},
-                               {"bloomStrength", mp.backlight.bloomStrength}};
-            // 光源マスク(ペンで塗った範囲)。空なら省略する
-            if (!mp.backlight.mask.isEmpty()) {
-                json jMask;
-                if (!writeBitmapBlob(mp.backlight.mask, jMask, *blobsOut, errorOut)) return false;
-                jBacklight["mask"] = std::move(jMask);
-            }
-            // セル/レイヤーを光源マスクとして使う指定(既定-1=なしなら省略)
-            if (mp.backlight.maskCelIndex >= 0) jBacklight["maskCel"] = mp.backlight.maskCelIndex;
-            if (mp.backlight.maskLayerIndex >= 0) jBacklight["maskLayer"] = mp.backlight.maskLayerIndex;
-            jMultiplane["backlight"] = std::move(jBacklight);
-        }
+                            {"planes", std::move(jPlanes)},
+                            {"framingLock", mp.framingLock},
+                            {"framingWidth", mp.framingWidthMm},
+                            {"framingRefDistance", mp.framingRefDistanceMm}};
 
-        // コマ→値のキーフレーム曲線(点滅=intensity、滑らかなカメラ変化=focal/focus)。空なら省略する
+        // コマ→値のキーフレーム曲線。空なら省略する
         const auto writeKeyCurve = [](const std::map<size_t, double>& keys) {
             json arr = json::array();
             for (const auto& [keyFrame, value] : keys) arr.push_back({{"frame", keyFrame}, {"value", value}});
             return arr;
         };
-        if (!mp.intensityKeys.empty()) jMultiplane["intensityKeys"] = writeKeyCurve(mp.intensityKeys);
+
+        // 透過光(T光)。複数灯対応: 灯ごとに名前/色/強度/塗料透過率/にじみ/マスク/点滅キーを持つ。
+        // 空なら省略する
+        if (!mp.backlights.empty()) {
+            json jBacklights = json::array();
+            for (const MultiplaneBacklight& bl : mp.backlights) {
+                json jBl = {{"name", bl.name},
+                           {"enabled", bl.enabled},
+                           {"intensity", bl.intensity},
+                           {"r", bl.colorR},
+                           {"g", bl.colorG},
+                           {"b", bl.colorB},
+                           {"tau", bl.paintTransmittance},
+                           {"bloomRadius", bl.bloomRadiusPx},
+                           {"bloomStrength", bl.bloomStrength}};
+                // 光源マスク(ペンで塗った範囲)。空なら省略する
+                if (!bl.mask.isEmpty()) {
+                    json jMask;
+                    if (!writeBitmapBlob(bl.mask, jMask, *blobsOut, errorOut)) return false;
+                    jBl["mask"] = std::move(jMask);
+                }
+                // セル/レイヤーを光源マスクとして使う指定(既定-1=なしなら省略)
+                if (bl.maskCelIndex >= 0) jBl["maskCel"] = bl.maskCelIndex;
+                if (bl.maskLayerIndex >= 0) jBl["maskLayer"] = bl.maskLayerIndex;
+                // この灯だけの点滅キー(空なら省略)
+                if (!bl.intensityKeys.empty()) jBl["intensityKeys"] = writeKeyCurve(bl.intensityKeys);
+                jBacklights.push_back(std::move(jBl));
+            }
+            jMultiplane["backlights"] = std::move(jBacklights);
+        }
+
+        // カメラのコマキー(滑らかな変化=focal/focus/fstop)。空なら省略する
         if (!mp.focalKeys.empty()) jMultiplane["focalKeys"] = writeKeyCurve(mp.focalKeys);
         if (!mp.focusKeys.empty()) jMultiplane["focusKeys"] = writeKeyCurve(mp.focusKeys);
+        if (!mp.fstopKeys.empty()) jMultiplane["fstopKeys"] = writeKeyCurve(mp.fstopKeys);
 
         jCut["multiplane"] = std::move(jMultiplane);
     }
@@ -533,24 +547,10 @@ bool parseCutJson(const json& jCut, Cut& cut, const unsigned char* blobBase, uin
             mp.camera.focusDistanceMm = jCam.value("focus", 500.0);
         }
         mp.samplesPerPixel = jMp.value("samples", 8);
-        // 透過光(T光)(任意、欠落時は既定=無効のまま)
-        if (jMp.contains("backlight")) {
-            const json& jBl = jMp.at("backlight");
-            mp.backlight.enabled = jBl.value("enabled", false);
-            mp.backlight.intensity = jBl.value("intensity", 4.0);
-            mp.backlight.colorR = jBl.value("r", 1.0);
-            mp.backlight.colorG = jBl.value("g", 0.92);
-            mp.backlight.colorB = jBl.value("b", 0.78);
-            mp.backlight.paintTransmittance = jBl.value("tau", 0.1);
-            mp.backlight.bloomRadiusPx = jBl.value("bloomRadius", 24.0);
-            mp.backlight.bloomStrength = jBl.value("bloomStrength", 0.5);
-            // 光源マスク(ペンで塗った範囲)。欠落時は空のまま
-            if (jBl.contains("mask")) {
-                if (!readBitmapBlob(jBl.at("mask"), blobBase, blobTotal, &mp.backlight.mask, errorOut)) return false;
-            }
-            mp.backlight.maskCelIndex = jBl.value("maskCel", -1);
-            mp.backlight.maskLayerIndex = jBl.value("maskLayer", -1);
-        }
+        mp.framingLock = jMp.value("framingLock", true);
+        mp.framingWidthMm = jMp.value("framingWidth", 360.0);
+        mp.framingRefDistanceMm = jMp.value("framingRefDistance", 500.0);
+
         // コマ→値のキーフレーム曲線(任意、欠落時は空のまま)
         const auto readKeyCurve = [&jMp](const char* name, std::map<size_t, double>* out) {
             if (!jMp.contains(name)) return;
@@ -558,9 +558,39 @@ bool parseCutJson(const json& jCut, Cut& cut, const unsigned char* blobBase, uin
                 (*out)[jKey.at("frame").get<size_t>()] = jKey.at("value").get<double>();
             }
         };
-        readKeyCurve("intensityKeys", &mp.intensityKeys);
+
+        // 透過光(T光)。複数灯対応(任意、欠落時は空のまま=灯なし)
+        if (jMp.contains("backlights")) {
+            for (const json& jBl : jMp.at("backlights")) {
+                MultiplaneBacklight bl;
+                bl.name = jBl.value("name", std::string());
+                bl.enabled = jBl.value("enabled", false);
+                bl.intensity = jBl.value("intensity", 4.0);
+                bl.colorR = jBl.value("r", 1.0);
+                bl.colorG = jBl.value("g", 0.92);
+                bl.colorB = jBl.value("b", 0.78);
+                bl.paintTransmittance = jBl.value("tau", 0.1);
+                bl.bloomRadiusPx = jBl.value("bloomRadius", 24.0);
+                bl.bloomStrength = jBl.value("bloomStrength", 0.5);
+                // 光源マスク(ペンで塗った範囲)。欠落時は空のまま
+                if (jBl.contains("mask")) {
+                    if (!readBitmapBlob(jBl.at("mask"), blobBase, blobTotal, &bl.mask, errorOut)) return false;
+                }
+                bl.maskCelIndex = jBl.value("maskCel", -1);
+                bl.maskLayerIndex = jBl.value("maskLayer", -1);
+                // この灯だけの点滅キー(任意、欠落時は空のまま)
+                if (jBl.contains("intensityKeys")) {
+                    for (const json& jKey : jBl.at("intensityKeys")) {
+                        bl.intensityKeys[jKey.at("frame").get<size_t>()] = jKey.at("value").get<double>();
+                    }
+                }
+                mp.backlights.push_back(std::move(bl));
+            }
+        }
+
         readKeyCurve("focalKeys", &mp.focalKeys);
         readKeyCurve("focusKeys", &mp.focusKeys);
+        readKeyCurve("fstopKeys", &mp.fstopKeys);
         if (jMp.contains("planes")) {
             for (const json& jPlane : jMp.at("planes")) {
                 MultiplaneCelPlane plane;

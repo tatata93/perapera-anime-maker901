@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
+#include <string>
 #include <vector>
 
 #include "Bitmap.h"
@@ -33,6 +35,7 @@ struct MultiplaneCamera {
 // 透過光は反射光と同じレンズサンプル光線で計算されるため、ピント外れの穴は物理的に正しい
 // 玉ボケになる。bloomはフィルムのハレーション(強い光のにじみ)の近似
 struct MultiplaneBacklight {
+    std::string name;                  // UI表示用の灯の名前(既定は空、複数灯を見分けるため)
     bool enabled = false;
     double intensity = 4.0;            // 紙白(=1.0)に対する光源の相対強度
     double colorR = 1.0;               // 光源色(0〜1)
@@ -52,13 +55,18 @@ struct MultiplaneBacklight {
     // 上のmaskへ合成する)。maskLayerIndex=-1はセル全体(可視レイヤー合成)、>=0はそのレイヤーのみ
     int maskCelIndex = -1;
     int maskLayerIndex = -1;
+
+    // コマ→強度のキーフレーム曲線(この灯だけの点滅用。空なら基本値intensityを使う)。
+    // 灯ごとに独立して点滅できる(蛍光灯と液晶が別タイミングで明滅する等)
+    std::map<size_t, double> intensityKeys;
 };
 
 // レイトレースで合成する。背景(全平面の奥)は白。samplesPerPixel>1でDoF/ジッタのモンテカルロ平均。
-// seedで決定論的(同じ入力なら同じ出力)。backlightがnullptrまたはenabled=falseなら透過光なし
-// (従来とバイト単位で同一)
+// seedで決定論的(同じ入力なら同じ出力)。backlightsがnullptr/空/全enabled=falseなら透過光なし
+// (従来とバイト単位で同一)。呼び出し側(Compositor)が灯ごとにintensity/mask/bloomRadiusPxを
+// 解決済みの状態で渡す
 Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const MultiplaneCamera& camera, int width,
                          int height, int samplesPerPixel = 1, uint32_t seed = 1,
-                         const MultiplaneBacklight* backlight = nullptr);
+                         const std::vector<MultiplaneBacklight>* backlights = nullptr);
 
 }  // namespace core

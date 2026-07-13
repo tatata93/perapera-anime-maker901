@@ -2089,18 +2089,19 @@ void MainWindow::debugSetupBacklightDemo() {
     plane.widthMm = 400.0;
     mp.planes.push_back(plane);
 
-    // 透過光(T光)を有効化
-    mp.backlight.enabled = true;
-    mp.backlight.intensity = 4.0;
-    mp.backlight.bloomRadiusPx = 24.0;
-    mp.backlight.bloomStrength = 0.8;
+    // 透過光(T光)を有効化(先頭の灯を編集する。本格的な複数灯UIは別タスク)
+    core::MultiplaneBacklight& backlight = core::firstBacklight(cut);
+    backlight.enabled = true;
+    backlight.intensity = 4.0;
+    backlight.bloomRadiusPx = 24.0;
+    backlight.bloomStrength = 0.8;
 
     // 蛍光灯/液晶の点滅(押井守風): 強度のコマキーで消灯↔点灯を繰り返す(尺8の止め)
     cut.setFrameCount(8);
     core::Cel& cel = activeCel();
     for (size_t t = 0; t < 8; ++t) cel.setExposure(t, 0);  // 止め
-    mp.intensityKeys.clear();
-    for (size_t t = 0; t < 8; ++t) mp.intensityKeys[t] = (t % 2 == 0) ? 0.0 : 4.0;  // 偶数コマ=消灯
+    backlight.intensityKeys.clear();
+    for (size_t t = 0; t < 8; ++t) backlight.intensityKeys[t] = (t % 2 == 0) ? 0.0 : 4.0;  // 偶数コマ=消灯
     // 滑らかなカメラ変化: 焦点距離50→70mm、フォーカス250→500mmへキー補間
     mp.focalKeys.clear();
     mp.focalKeys[0] = 50.0;

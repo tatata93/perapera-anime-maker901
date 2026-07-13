@@ -32,15 +32,24 @@ struct MultiplaneCelPlane {
 struct MultiplaneSetup {
     bool enabled = false;
     MultiplaneCamera camera;
-    std::vector<MultiplaneCelPlane> planes;  // 割付の無いセルは撮影されない
-    int samplesPerPixel = 8;                 // プレビュー/書き出しのサンプル数
-    MultiplaneBacklight backlight;           // 透過光(T光)。既定は無効
+    std::vector<MultiplaneCelPlane> planes;    // 割付の無いセルは撮影されない
+    int samplesPerPixel = 8;                   // プレビュー/書き出しのサンプル数
+    std::vector<MultiplaneBacklight> backlights;  // 透過光(T光)。灯ごとに色/強度/マスク/点滅を持つ複数灯
+
+    // フレーミング固定: trueなら「基準距離framingRefDistanceMmの平面上で写る幅framingWidthMm」から
+    // センサー幅を導出する(sensorW = framingWidthMm * focal / framingRefDistanceMm)。
+    // 焦点距離を変えても基準距離での構図が変わらない(望遠=パース圧縮・大ボケでも構図維持)。
+    // falseなら従来どおりcamera.sensorWidthMmを直接使う
+    bool framingLock = true;
+    double framingWidthMm = 360.0;       // 既定は従来のフレーミング(focal50/sensor36/500mm)と一致
+    double framingRefDistanceMm = 500.0;
 
     // コマ→値のキーフレーム曲線(キー間は線形補間、範囲外クランプ。空なら基本値を使う)。
-    // 蛍光灯や液晶の点滅(押井守作品風)は隣接コマに0↔強度のキーを打つことで再現する
-    std::map<size_t, double> intensityKeys;  // 透過光強度(backlight.intensityの代わりに使う)
-    std::map<size_t, double> focalKeys;      // カメラ焦点距離mm(camera.focalLengthMmの代わり)
-    std::map<size_t, double> focusKeys;      // カメラフォーカス距離mm(camera.focusDistanceMmの代わり)
+    // 蛍光灯や液晶の点滅(押井守作品風)は隣接コマに0↔強度のキーを打つことで再現する(灯ごとの点滅は
+    // MultiplaneBacklight::intensityKeysを使う)
+    std::map<size_t, double> focalKeys;   // カメラ焦点距離mm(camera.focalLengthMmの代わり)
+    std::map<size_t, double> focusKeys;   // カメラフォーカス距離mm(camera.focusDistanceMmの代わり)
+    std::map<size_t, double> fstopKeys;   // 絞りF値(camera.apertureFStopの代わり)
 
     // キーフレーム曲線からコマframeの値を解決する(キーが無ければbaseをそのまま返す)。
     // 規則はEffect::valueAtと同じ(キー間線形補間、範囲外は端のキーでクランプ)
@@ -127,5 +136,9 @@ private:
     std::vector<Effect> m_effects;               // 撮影エフェクトのスタック(カット単位)
     MultiplaneSetup m_multiplane;                 // クラシック撮影(マルチプレーン撮影台)設定
 };
+
+// setup.backlightsの先頭の灯を返す(空なら1灯追加してから返す)。既存の単灯前提UIを
+// 「先頭の灯を編集する」形に繋ぐためのヘルパー(本格的な複数灯UIは別タスク)
+MultiplaneBacklight& firstBacklight(Cut& cut);
 
 }  // namespace core

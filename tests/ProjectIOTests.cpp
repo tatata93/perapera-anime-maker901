@@ -132,14 +132,31 @@ TEST_CASE("Multiplane setup round trips through ppproj", "[core][io][multiplane]
     mp.samplesPerPixel = 16;
     mp.planes.push_back({0, 500.0, 400.0});
     mp.planes.push_back({1, 300.0, 300.0});
-    mp.backlight.enabled = true;  // 透過光(T光)も往復させる
-    mp.backlight.intensity = 6.0;
-    mp.backlight.colorR = 1.0;
-    mp.backlight.colorG = 0.5;
-    mp.backlight.colorB = 0.25;
-    mp.backlight.paintTransmittance = 0.3;
-    mp.backlight.bloomRadiusPx = 32.0;
-    mp.backlight.bloomStrength = 0.7;
+    mp.framingLock = false;  // フレーミング固定(既定true)も往復させる
+    mp.framingWidthMm = 480.0;
+    mp.framingRefDistanceMm = 700.0;
+
+    // 透過光(T光)複数灯も往復させる
+    core::MultiplaneBacklight light1;
+    light1.name = "灯1";
+    light1.enabled = true;
+    light1.intensity = 6.0;
+    light1.colorR = 1.0;
+    light1.colorG = 0.5;
+    light1.colorB = 0.25;
+    light1.paintTransmittance = 0.3;
+    light1.bloomRadiusPx = 32.0;
+    light1.bloomStrength = 0.7;
+    mp.backlights.push_back(light1);
+
+    core::MultiplaneBacklight light2;
+    light2.name = "灯2";
+    light2.enabled = false;  // 無効な灯も設定ごと往復させる
+    light2.intensity = 3.0;
+    light2.colorR = 0.2;
+    light2.colorG = 0.8;
+    light2.colorB = 0.9;
+    mp.backlights.push_back(light2);
 
     // 比較用: マルチプレーンを持たないカット(既定値のまま)も一緒に往復させ、省略時の既定を確認する
     scene.addCut("Cut B");
@@ -163,20 +180,35 @@ TEST_CASE("Multiplane setup round trips through ppproj", "[core][io][multiplane]
     REQUIRE(loadedMp.planes[1].celIndex == 1);
     REQUIRE(loadedMp.planes[1].distanceMm == 300.0);
     REQUIRE(loadedMp.planes[1].widthMm == 300.0);
-    REQUIRE(loadedMp.backlight.enabled == true);
-    REQUIRE(loadedMp.backlight.intensity == 6.0);
-    REQUIRE(loadedMp.backlight.colorR == 1.0);
-    REQUIRE(loadedMp.backlight.colorG == 0.5);
-    REQUIRE(loadedMp.backlight.colorB == 0.25);
-    REQUIRE(loadedMp.backlight.paintTransmittance == 0.3);
-    REQUIRE(loadedMp.backlight.bloomRadiusPx == 32.0);
-    REQUIRE(loadedMp.backlight.bloomStrength == 0.7);
+    REQUIRE_FALSE(loadedMp.framingLock);
+    REQUIRE(loadedMp.framingWidthMm == 480.0);
+    REQUIRE(loadedMp.framingRefDistanceMm == 700.0);
 
-    // マルチプレーン設定を持たないカットは既定(無効・段なし・透過光無効)のまま
+    REQUIRE(loadedMp.backlights.size() == 2);
+    REQUIRE(loadedMp.backlights[0].name == "灯1");
+    REQUIRE(loadedMp.backlights[0].enabled == true);
+    REQUIRE(loadedMp.backlights[0].intensity == 6.0);
+    REQUIRE(loadedMp.backlights[0].colorR == 1.0);
+    REQUIRE(loadedMp.backlights[0].colorG == 0.5);
+    REQUIRE(loadedMp.backlights[0].colorB == 0.25);
+    REQUIRE(loadedMp.backlights[0].paintTransmittance == 0.3);
+    REQUIRE(loadedMp.backlights[0].bloomRadiusPx == 32.0);
+    REQUIRE(loadedMp.backlights[0].bloomStrength == 0.7);
+    REQUIRE(loadedMp.backlights[1].name == "灯2");
+    REQUIRE(loadedMp.backlights[1].enabled == false);
+    REQUIRE(loadedMp.backlights[1].intensity == 3.0);
+    REQUIRE(loadedMp.backlights[1].colorR == 0.2);
+    REQUIRE(loadedMp.backlights[1].colorG == 0.8);
+    REQUIRE(loadedMp.backlights[1].colorB == 0.9);
+
+    // マルチプレーン設定を持たないカットは既定(無効・段なし・灯なし・フレーミング既定)のまま
     const core::MultiplaneSetup& defaultMp = loaded->scene(0).cut(1).multiplane();
     REQUIRE_FALSE(defaultMp.enabled);
     REQUIRE(defaultMp.planes.empty());
-    REQUIRE_FALSE(defaultMp.backlight.enabled);
+    REQUIRE(defaultMp.backlights.empty());
+    REQUIRE(defaultMp.framingLock);
+    REQUIRE(defaultMp.framingWidthMm == 360.0);
+    REQUIRE(defaultMp.framingRefDistanceMm == 500.0);
 
     std::filesystem::remove_all(folder);
 }
@@ -194,8 +226,10 @@ TEST_CASE("Multiplane backlight mask/cel-mask and keyframe curves round trip thr
     core::MultiplaneSetup& mp = cut.multiplane();
     mp.enabled = true;
     mp.planes.push_back({0, 500.0, 400.0});
-    mp.backlight.enabled = true;
-    mp.backlight.intensity = 5.0;
+
+    core::MultiplaneBacklight bl;
+    bl.enabled = true;
+    bl.intensity = 5.0;
 
     // 光源マスク(ペンで塗った範囲): 4x4のグレースケール、alphaが位置ごとに変わるパターン
     core::Bitmap mask(4, 4);
@@ -204,14 +238,18 @@ TEST_CASE("Multiplane backlight mask/cel-mask and keyframe curves round trip thr
             mask.setPixel(x, y, {200, 100, 50, static_cast<uint8_t>((x + y * 4) * 16)});
         }
     }
-    mp.backlight.mask = mask;
-    mp.backlight.maskCelIndex = 1;
-    mp.backlight.maskLayerIndex = 2;
+    bl.mask = mask;
+    bl.maskCelIndex = 1;
+    bl.maskLayerIndex = 2;
 
-    // コマ→値のキーフレーム曲線(点滅+滑らかなカメラ変化)
-    mp.intensityKeys = {{0, 0.0}, {1, 8.0}, {2, 0.0}};
+    // この灯だけの点滅キー
+    bl.intensityKeys = {{0, 0.0}, {1, 8.0}, {2, 0.0}};
+    mp.backlights.push_back(bl);
+
+    // コマ→値のキーフレーム曲線(滑らかなカメラ変化・絞り)
     mp.focalKeys = {{0, 35.0}, {5, 85.0}};
     mp.focusKeys = {{0, 300.0}, {5, 900.0}};
+    mp.fstopKeys = {{0, 0.0}, {5, 2.8}};
 
     std::string error;
     REQUIRE(core::ProjectIO::save(project, folder, &error));
@@ -219,47 +257,56 @@ TEST_CASE("Multiplane backlight mask/cel-mask and keyframe curves round trip thr
     REQUIRE(loaded != nullptr);
 
     const core::MultiplaneSetup& loadedMp = loaded->scene(0).cut(0).multiplane();
-    REQUIRE(loadedMp.backlight.enabled == true);
-    REQUIRE_FALSE(loadedMp.backlight.mask.isEmpty());
-    REQUIRE(loadedMp.backlight.mask.width() == 4);
-    REQUIRE(loadedMp.backlight.mask.height() == 4);
+    REQUIRE(loadedMp.backlights.size() == 1);
+    const core::MultiplaneBacklight& loadedBl = loadedMp.backlights[0];
+    REQUIRE(loadedBl.enabled == true);
+    REQUIRE_FALSE(loadedBl.mask.isEmpty());
+    REQUIRE(loadedBl.mask.width() == 4);
+    REQUIRE(loadedBl.mask.height() == 4);
     for (int y = 0; y < 4; ++y) {
         for (int x = 0; x < 4; ++x) {
-            const core::Bitmap::Pixel p = loadedMp.backlight.mask.pixel(x, y);
+            const core::Bitmap::Pixel p = loadedBl.mask.pixel(x, y);
             REQUIRE(p.r == 200);
             REQUIRE(p.g == 100);
             REQUIRE(p.b == 50);
             REQUIRE(p.a == static_cast<uint8_t>((x + y * 4) * 16));
         }
     }
-    REQUIRE(loadedMp.backlight.maskCelIndex == 1);
-    REQUIRE(loadedMp.backlight.maskLayerIndex == 2);
+    REQUIRE(loadedBl.maskCelIndex == 1);
+    REQUIRE(loadedBl.maskLayerIndex == 2);
 
-    REQUIRE(loadedMp.intensityKeys.size() == 3);
-    REQUIRE(loadedMp.intensityKeys.at(0) == 0.0);
-    REQUIRE(loadedMp.intensityKeys.at(1) == 8.0);
-    REQUIRE(loadedMp.intensityKeys.at(2) == 0.0);
+    REQUIRE(loadedBl.intensityKeys.size() == 3);
+    REQUIRE(loadedBl.intensityKeys.at(0) == 0.0);
+    REQUIRE(loadedBl.intensityKeys.at(1) == 8.0);
+    REQUIRE(loadedBl.intensityKeys.at(2) == 0.0);
     REQUIRE(loadedMp.focalKeys.size() == 2);
     REQUIRE(loadedMp.focalKeys.at(0) == 35.0);
     REQUIRE(loadedMp.focalKeys.at(5) == 85.0);
     REQUIRE(loadedMp.focusKeys.size() == 2);
     REQUIRE(loadedMp.focusKeys.at(0) == 300.0);
     REQUIRE(loadedMp.focusKeys.at(5) == 900.0);
+    REQUIRE(loadedMp.fstopKeys.size() == 2);
+    REQUIRE(loadedMp.fstopKeys.at(0) == 0.0);
+    REQUIRE(loadedMp.fstopKeys.at(5) == 2.8);
 
     // マスク/セルマスク/キーを持たないカットは既定(空・-1)のまま
     core::Cut& cutB = scene.addCut("Cut B");
     cutB.multiplane().enabled = true;
-    cutB.multiplane().backlight.enabled = true;  // 有効だがmask/maskCel/keysは未設定
+    core::MultiplaneBacklight defaultBl;
+    defaultBl.enabled = true;  // 有効だがmask/maskCel/keysは未設定
+    cutB.multiplane().backlights.push_back(defaultBl);
     REQUIRE(core::ProjectIO::save(project, folder, &error));
     const auto loaded2 = core::ProjectIO::load(folder, &error);
     REQUIRE(loaded2 != nullptr);
     const core::MultiplaneSetup& defaultMp = loaded2->scene(0).cut(1).multiplane();
-    REQUIRE(defaultMp.backlight.mask.isEmpty());
-    REQUIRE(defaultMp.backlight.maskCelIndex == -1);
-    REQUIRE(defaultMp.backlight.maskLayerIndex == -1);
-    REQUIRE(defaultMp.intensityKeys.empty());
+    REQUIRE(defaultMp.backlights.size() == 1);
+    REQUIRE(defaultMp.backlights[0].mask.isEmpty());
+    REQUIRE(defaultMp.backlights[0].maskCelIndex == -1);
+    REQUIRE(defaultMp.backlights[0].maskLayerIndex == -1);
+    REQUIRE(defaultMp.backlights[0].intensityKeys.empty());
     REQUIRE(defaultMp.focalKeys.empty());
     REQUIRE(defaultMp.focusKeys.empty());
+    REQUIRE(defaultMp.fstopKeys.empty());
 
     std::filesystem::remove_all(folder);
 }

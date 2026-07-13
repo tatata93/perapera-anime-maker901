@@ -101,7 +101,7 @@ double sampleMaskAlpha01(const Bitmap& mask, int ox, int oy, int outW, int outH)
 
 Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const MultiplaneCamera& camera, int width,
                          int height, int samplesPerPixel, uint32_t seed,
-                         const MultiplaneBacklight* backlight) {
+                         const std::vector<MultiplaneBacklight>* backlights) {
     Bitmap out(width, height);
     if (width <= 0 || height <= 0) return out;
 
@@ -137,12 +137,24 @@ Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const Multip
     const bool pinhole = camera.apertureFStop <= 0.0;
     const int samples = std::max(1, samplesPerPixel);
 
-    const bool useBacklight = backlight != nullptr && backlight->enabled;
-    const double blIntensity = useBacklight ? backlight->intensity : 0.0;
-    const double blTau = useBacklight ? std::clamp(backlight->paintTransmittance, 0.0, 1.0) : 0.0;
+    const bool useBacklight =
+        backlights != nullptr &&
+        std::any_of(backlights->begin(), backlights->end(), [](const MultiplaneBacklight& bl) { return bl.enabled; });
+    // paintTransmittance(τ)は光路を共有するため灯ごとに変えられない(同一の光線に沿って
+    // ∏T=per-channel透過率の積を1回だけ計算するため)。先頭の有効灯のτを全体で使う
+    double blTau = 0.0;
+    if (useBacklight) {
+        for (const MultiplaneBacklight& bl : *backlights) {
+            if (bl.enabled) {
+                blTau = std::clamp(bl.paintTransmittance, 0.0, 1.0);
+                break;
+            }
+        }
+    }
 
-    // 透過光(バックライト)成分の蓄積バッファ。反射光と分けて持ち、後段でハレーション
-    // (ブルーム)をかけてから加算する(実際の透過光撮影の二重露光に相当)
+    // 透過率(∏T、per-channel)の蓄積バッファ。全灯で共有する生の透過率(intensity/colorは未適用)。
+    // 反射光と分けて持ち、後段で灯ごとにintensity×color×マスクを掛けてハレーション(ブルーム)を
+    // かけてから加算する(実際の透過光撮影の二重露光に相当)
     const size_t pixelCount = static_cast<size_t>(width) * height;
     std::vector<float> transR, transG, transB;
     if (useBacklight) {
@@ -224,9 +236,11 @@ Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const Multip
                     sumB += accumB + remain;
 
                     if (useBacklight) {
-                        sumTr += blIntensity * backlight->colorR * trR;
-                        sumTg += blIntensity * backlight->colorG * trG;
-                        sumTb += blIntensity * backlight->colorB * trB;
+                        // ここではintensity/colorを掛けない(灯ごとに異なるため、後段で灯ごとに適用する)。
+                        // ∏Tの生値だけを蓄積する
+                        sumTr += trR;
+                        sumTg += trG;
+                        sumTb += trB;
                     }
                 }
 
@@ -243,39 +257,68 @@ Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const Multip
         }
     });
 
-    // 光源マスク: 各出力ピクセルの透過光成分(ブルーム前)へマスクのアルファを乗算し、光源の形を絞る。
-    // ブルームはマスク後の透過光に掛かる(=絞った光がにじむ、物理的に正しい)ため、この乗算は
-    // ブルーム計算より前に行う
-    if (useBacklight && !backlight->mask.isEmpty()) {
-        const Bitmap& mask = backlight->mask;
-        parallelForRows(0, height, [&](int rowBegin, int rowEnd) {
-            for (int py = rowBegin; py < rowEnd; ++py) {
-                for (int px = 0; px < width; ++px) {
-                    const size_t idx = static_cast<size_t>(py) * width + px;
-                    const double a = sampleMaskAlpha01(mask, px, py, width, height);
-                    transR[idx] = static_cast<float>(transR[idx] * a);
-                    transG[idx] = static_cast<float>(transG[idx] * a);
-                    transB[idx] = static_cast<float>(transB[idx] * a);
+    // 灯ごとに: intensity×color×∏T(全灯共有の生の透過率)→光源マスク→ブルームをかけて、
+    // 全灯ぶんを合算する(灯ごとに異なる色/強度/マスク/にじみを持てるようにするため、
+    // ここから先だけ灯ごとにループする。∏Tの計算自体は上のサンプルループで1回だけ行い共有する)
+    std::vector<float> totalTransR, totalTransG, totalTransB;
+    if (useBacklight) {
+        totalTransR.assign(pixelCount, 0.0f);
+        totalTransG.assign(pixelCount, 0.0f);
+        totalTransB.assign(pixelCount, 0.0f);
+
+        for (const MultiplaneBacklight& bl : *backlights) {
+            if (!bl.enabled) continue;
+
+            // この灯のintensity×colorを∏Tへ掛け、光源マスクがあればアルファで絞る
+            std::vector<float> lightR(pixelCount), lightG(pixelCount), lightB(pixelCount);
+            parallelForRows(0, height, [&](int rowBegin, int rowEnd) {
+                for (int py = rowBegin; py < rowEnd; ++py) {
+                    for (int px = 0; px < width; ++px) {
+                        const size_t idx = static_cast<size_t>(py) * width + px;
+                        double r = bl.intensity * bl.colorR * transR[idx];
+                        double g = bl.intensity * bl.colorG * transG[idx];
+                        double b = bl.intensity * bl.colorB * transB[idx];
+                        if (!bl.mask.isEmpty()) {
+                            const double a = sampleMaskAlpha01(bl.mask, px, py, width, height);
+                            r *= a;
+                            g *= a;
+                            b *= a;
+                        }
+                        lightR[idx] = static_cast<float>(r);
+                        lightG[idx] = static_cast<float>(g);
+                        lightB[idx] = static_cast<float>(b);
+                    }
+                }
+            });
+
+            // ハレーション(ブルーム): この灯の(マスク後の)光成分だけをぼかして加算する
+            // (フィルムの光のにじみの近似。絞った光がにじむ=物理的に正しい)
+            const bool hasBloom = bl.bloomStrength > 0.0 && bl.bloomRadiusPx >= 1.0;
+            std::vector<float> bloomR, bloomG, bloomB;
+            if (hasBloom) {
+                const int radius = std::max(1, static_cast<int>(std::lround(bl.bloomRadiusPx)));
+                bloomR = lightR;
+                bloomG = lightG;
+                bloomB = lightB;
+                tripleBoxBlur(bloomR, width, height, radius);
+                tripleBoxBlur(bloomG, width, height, radius);
+                tripleBoxBlur(bloomB, width, height, radius);
+            }
+
+            for (size_t idx = 0; idx < pixelCount; ++idx) {
+                totalTransR[idx] += lightR[idx];
+                totalTransG[idx] += lightG[idx];
+                totalTransB[idx] += lightB[idx];
+                if (hasBloom) {
+                    totalTransR[idx] += static_cast<float>(bl.bloomStrength * bloomR[idx]);
+                    totalTransG[idx] += static_cast<float>(bl.bloomStrength * bloomG[idx]);
+                    totalTransB[idx] += static_cast<float>(bl.bloomStrength * bloomB[idx]);
                 }
             }
-        });
+        }
     }
 
-    // ハレーション(ブルーム): 透過光成分だけをぼかして加算する(フィルムの光のにじみの近似)
-    std::vector<float> bloomR, bloomG, bloomB;
-    double bloomStrength = 0.0;
-    if (useBacklight && backlight->bloomStrength > 0.0 && backlight->bloomRadiusPx >= 1.0) {
-        bloomStrength = backlight->bloomStrength;
-        const int radius = std::max(1, static_cast<int>(std::lround(backlight->bloomRadiusPx)));
-        bloomR = transR;
-        bloomG = transG;
-        bloomB = transB;
-        tripleBoxBlur(bloomR, width, height, radius);
-        tripleBoxBlur(bloomG, width, height, radius);
-        tripleBoxBlur(bloomB, width, height, radius);
-    }
-
-    // 反射光+透過光(+ハレーション)を合算し、量子化する(二重露光の加算)
+    // 反射光+透過光(全灯合算)を合算し、量子化する(二重露光の加算)
     parallelForRows(0, height, [&](int rowBegin, int rowEnd) {
         for (int py = rowBegin; py < rowEnd; ++py) {
             for (int px = 0; px < width; ++px) {
@@ -284,14 +327,9 @@ Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const Multip
                 double g = reflG[idx];
                 double b = reflB[idx];
                 if (useBacklight) {
-                    r += transR[idx];
-                    g += transG[idx];
-                    b += transB[idx];
-                    if (bloomStrength > 0.0 && !bloomR.empty()) {
-                        r += bloomStrength * bloomR[idx];
-                        g += bloomStrength * bloomG[idx];
-                        b += bloomStrength * bloomB[idx];
-                    }
+                    r += totalTransR[idx];
+                    g += totalTransG[idx];
+                    b += totalTransB[idx];
                 }
                 const auto quantize = [](double v) {
                     return static_cast<uint8_t>(std::lround(std::clamp(v * 255.0, 0.0, 255.0)));

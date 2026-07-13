@@ -69,4 +69,10 @@ double MultiplaneSetup::valueAt(const std::map<size_t, double>& keys, size_t fra
     return lower->second + (upper->second - lower->second) * t;
 }
 
+MultiplaneBacklight& firstBacklight(Cut& cut) {
+    std::vector<MultiplaneBacklight>& backlights = cut.multiplane().backlights;
+    if (backlights.empty()) backlights.emplace_back();
+    return backlights.front();
+}
+
 }  // namespace core

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <map>
 #include <vector>
 
 #include "EffectProcessor.h"
@@ -323,6 +324,55 @@ Bitmap buildBacklightCelMaskSource(const Cut& cut, int celIndex, int layerIndex,
     return layer.frame(static_cast<size_t>(drawing)).bitmap();
 }
 
+// 段(マルチプレーンの1つの平面)に割り付いているセルの物理配置(T光セルマスク投影に使う)
+struct CelPlaneInfo {
+    double distanceMm = 0.0;
+    double widthMm = 0.0;
+    double offsetXMm = 0.0;  // タップ/ペグ移動を反映済み(mm)
+    double offsetYMm = 0.0;
+};
+
+// アートワークのアルファ(0〜1)をバイリニア補間でサンプルする。範囲外は0(透明)。
+// Multiplane.cppのsampleArtworkBilinearと同じ流儀(テクセル中心はu-0.5)
+double sampleAlphaBilinear(const Bitmap& bmp, double u, double v) {
+    const auto tap = [&](int x, int y) -> double {
+        if (x < 0 || y < 0 || x >= bmp.width() || y >= bmp.height()) return 0.0;
+        return bmp.pixel(x, y).a / 255.0;
+    };
+    const double su = u - 0.5;
+    const double sv = v - 0.5;
+    const int x0 = static_cast<int>(std::floor(su));
+    const int y0 = static_cast<int>(std::floor(sv));
+    const double fx = su - x0;
+    const double fy = sv - y0;
+    const double top = tap(x0, y0) + (tap(x0 + 1, y0) - tap(x0, y0)) * fx;
+    const double bottom = tap(x0, y0 + 1) + (tap(x0 + 1, y0 + 1) - tap(x0, y0 + 1)) * fx;
+    return top + (bottom - top) * fy;
+}
+
+// T光のセルマスクを、そのセルが割り付いている段の物理配置(距離・幅・オフセット)でピンホール投影
+// してサンプルする(renderMultiplaneのsamplePlane/PlaneContextと同じ式)。
+// バグ修正: 従来はマスクセルを「出力px→フル解像度キャンバスpx→セルビットマップpx(1:1)」で参照して
+// いたが、クラシック撮影のセルは距離mm/幅mmでレンズ投影される座標系なので、これでは実際にそのセルが
+// 画面に写る位置・大きさとズレる(例: 望遠で奥のセルが小さく写っていてもマスクは等倍のまま)。
+// outX/outYは出力解像度(width×height、プロキシ時は縮小済み)のピクセル座標
+double sampleCelMaskAlphaProjected(const Bitmap& celSource, const CelPlaneInfo& info, double focalLengthMm,
+                                    double sensorWidthMm, int outX, int outY, int outW, int outH) {
+    if (celSource.isEmpty() || info.widthMm <= 0.0 || focalLengthMm <= 0.0 || outW <= 0 || outH <= 0) return 0.0;
+    const double sensorHeightMm = sensorWidthMm * outH / outW;
+    const double sx = ((outX + 0.5) / outW - 0.5) * sensorWidthMm;
+    const double sy = ((outY + 0.5) / outH - 0.5) * sensorHeightMm;
+    const double wx = sx * info.distanceMm / focalLengthMm;
+    const double wy = sy * info.distanceMm / focalLengthMm;
+
+    const double heightMm = info.widthMm * celSource.height() / celSource.width();
+    const double pxPerMmX = celSource.width() / info.widthMm;
+    const double pxPerMmY = celSource.height() / heightMm;
+    const double u = (wx - info.offsetXMm + info.widthMm / 2.0) * pxPerMmX;
+    const double v = (wy - info.offsetYMm + heightMm / 2.0) * pxPerMmY;
+    return sampleAlphaBilinear(celSource, u, v);
+}
+
 // クラシック撮影(マルチプレーン撮影台)経路。割付(planes)にあるセルごとに
 // セル単独の透明合成ビットマップを作り、マルチプレーンのレイトレースで撮影する。
 // その後は従来経路と同じく全体エフェクト→カメラフレームクロップを適用する。
@@ -339,6 +389,11 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
     std::vector<MultiplanePlane> mplanes;
     composites.reserve(setup.planes.size());
     mplanes.reserve(setup.planes.size());
+
+    // セルindex→最初に割り付いた段の物理配置(T光セルマスクの段投影に使う、バグ修正)。
+    // 「そのセルが割り付いている段(planes内でcelIndex一致する最初の段)」を採用するため、
+    // 既に登録済みのcelIndexは上書きしない
+    std::map<int, CelPlaneInfo> celPlaneInfo;
 
     for (const MultiplaneCelPlane& p : setup.planes) {
         if (options.onlyCel >= 0 && options.onlyCel != p.celIndex) continue;
@@ -376,75 +431,109 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
         mp.offsetXMm = position.x * mmPerPx;
         mp.offsetYMm = position.y * mmPerPx;
         mplanes.push_back(mp);
+
+        if (celPlaneInfo.find(p.celIndex) == celPlaneInfo.end()) {
+            celPlaneInfo[p.celIndex] = {p.distanceMm, p.widthMm, mp.offsetXMm, mp.offsetYMm};
+        }
     }
 
     int samples = setup.samplesPerPixel;
     if (options.multiplaneSampleCap > 0) samples = std::min(samples, options.multiplaneSampleCap);
 
-    // 透過光のハレーション半径は出力px単位なのでプロキシ時はスケールする
-    MultiplaneBacklight backlight = setup.backlight;
-    if (proxied) backlight.bloomRadiusPx *= s;
-
-    // キーフレーム(点滅=intensityKeys、滑らかなカメラ変化=focalKeys/focusKeys)をこのコマの値へ解決する。
-    // キーが無ければ基本値(setup.camera/backlight.intensity)のまま
-    backlight.intensity = MultiplaneSetup::valueAt(setup.intensityKeys, frame, backlight.intensity);
+    // キーフレーム(滑らかなカメラ変化=focalKeys/focusKeys/fstopKeys)をこのコマの値へ解決する。
+    // フレーミング固定: framingLockならsensorWidthMmを「基準距離framingRefDistanceMmの平面上で
+    // 写る幅framingWidthMm」から導出する(焦点距離を変えても基準距離の構図が変わらない)。
+    // セルマスクの段投影(下記)はこの解決後のfocal/sensorを使う
     MultiplaneCamera camera = setup.camera;
     camera.focalLengthMm = MultiplaneSetup::valueAt(setup.focalKeys, frame, camera.focalLengthMm);
     camera.focusDistanceMm = MultiplaneSetup::valueAt(setup.focusKeys, frame, camera.focusDistanceMm);
-
-    // 光源マスク(T光にもマスクを): ペンマスク(setup.backlight.mask、フル解像度スクリーン座標)と
-    // セル/レイヤーマスク(setup.backlight.maskCelIndex)を組み合わせた実効マスクを、この出力解像度
-    // (width×height、プロキシ時は縮小済み)へ直接構築する。座標はapplyEffectWithMaskと同じ流儀
-    // (出力px→フル解像度pxへ逆スケールしてから参照)なので、ペンマスク自体は常にフル解像度のまま
-    // 参照でき、別途ダウンサンプルする必要が無い(丸め誤差でサイズがズレる心配も無い)
-    const bool hasPenMask = !setup.backlight.mask.isEmpty();
-    const bool hasCelMask = setup.backlight.maskCelIndex >= 0;
-    if (hasPenMask || hasCelMask) {
-        const Bitmap maskCelSource =
-            hasCelMask ? buildBacklightCelMaskSource(cut, setup.backlight.maskCelIndex,
-                                                      setup.backlight.maskLayerIndex, frame, options)
-                       : Bitmap();
-        Vec2 maskCelPos{0.0f, 0.0f};
-        if (hasCelMask && static_cast<size_t>(setup.backlight.maskCelIndex) < cut.celCount()) {
-            maskCelPos = cut.cel(static_cast<size_t>(setup.backlight.maskCelIndex)).positionAt(frame);
-        }
-        const int maskCelOffsetX = static_cast<int>(std::lround(maskCelPos.x));
-        const int maskCelOffsetY = static_cast<int>(std::lround(maskCelPos.y));
-        const Bitmap& penMask = setup.backlight.mask;
-
-        Bitmap effectiveMask(width, height);
-        parallelForRows(0, height, [&](int rowBegin, int rowEnd) {
-            for (int y = rowBegin; y < rowEnd; ++y) {
-                for (int x = 0; x < width; ++x) {
-                    const int lx = proxied ? static_cast<int>(std::lround((x + 0.5) / s - 0.5)) : x;
-                    const int ly = proxied ? static_cast<int>(std::lround((y + 0.5) / s - 0.5)) : y;
-
-                    double a = 1.0;
-                    if (hasPenMask) {
-                        uint8_t pa = 0;
-                        if (lx >= 0 && ly >= 0 && lx < penMask.width() && ly < penMask.height())
-                            pa = penMask.pixel(lx, ly).a;
-                        a *= pa / 255.0;
-                    }
-                    if (hasCelMask) {
-                        double ca = 0.0;
-                        if (!maskCelSource.isEmpty()) {
-                            const int mx = lx - maskCelOffsetX;
-                            const int my = ly - maskCelOffsetY;
-                            if (mx >= 0 && my >= 0 && mx < maskCelSource.width() && my < maskCelSource.height())
-                                ca = maskCelSource.pixel(mx, my).a / 255.0;
-                        }
-                        a *= ca;
-                    }
-                    const uint8_t a8 = static_cast<uint8_t>(std::lround(std::clamp(a, 0.0, 1.0) * 255.0));
-                    effectiveMask.setPixel(x, y, {255, 255, 255, a8});
-                }
-            }
-        });
-        backlight.mask = std::move(effectiveMask);
+    camera.apertureFStop = MultiplaneSetup::valueAt(setup.fstopKeys, frame, camera.apertureFStop);
+    if (setup.framingLock && setup.framingRefDistanceMm > 0.0) {
+        camera.sensorWidthMm = setup.framingWidthMm * camera.focalLengthMm / setup.framingRefDistanceMm;
     }
 
-    Bitmap out = renderMultiplane(mplanes, camera, width, height, samples, 1, &backlight);
+    // 灯ごとに: intensity(灯のintensityKeysで解決)・実効マスク(ペン×セル)・プロキシ時の
+    // ブルーム半径スケールを解決する。ペンマスク=スクリーン1:1(従来どおり)、セルマスクは
+    // そのセルが割り付いている段の物理配置でピンホール投影する(バグ修正、無ければ従来の
+    // キャンバス1:1フォールバック)
+    std::vector<MultiplaneBacklight> resolvedBacklights;
+    resolvedBacklights.reserve(setup.backlights.size());
+    for (const MultiplaneBacklight& srcBl : setup.backlights) {
+        MultiplaneBacklight bl = srcBl;
+        if (!bl.enabled) {
+            resolvedBacklights.push_back(std::move(bl));
+            continue;
+        }
+
+        // 透過光のハレーション半径は出力px単位なのでプロキシ時はスケールする
+        if (proxied) bl.bloomRadiusPx *= s;
+        bl.intensity = MultiplaneSetup::valueAt(srcBl.intensityKeys, frame, bl.intensity);
+
+        // 光源マスク(T光にもマスクを): ペンマスク(srcBl.mask、フル解像度スクリーン座標)と
+        // セル/レイヤーマスク(srcBl.maskCelIndex)を組み合わせた実効マスクを、この出力解像度
+        // (width×height、プロキシ時は縮小済み)へ直接構築する。ペンマスクの座標は
+        // applyEffectWithMaskと同じ流儀(出力px→フル解像度pxへ逆スケールしてから参照)
+        const bool hasPenMask = !srcBl.mask.isEmpty();
+        const bool hasCelMask = srcBl.maskCelIndex >= 0;
+        if (hasPenMask || hasCelMask) {
+            const Bitmap maskCelSource =
+                hasCelMask ? buildBacklightCelMaskSource(cut, srcBl.maskCelIndex, srcBl.maskLayerIndex, frame,
+                                                          options)
+                           : Bitmap();
+
+            // 段投影(バグ修正): マスクセルが撮影台の段に割り付いていれば(celPlaneInfoにあれば)
+            // その段の距離・幅・オフセットでピンホール投影してサンプルする
+            const auto celPlaneIt = celPlaneInfo.find(srcBl.maskCelIndex);
+            const bool hasProjection = hasCelMask && celPlaneIt != celPlaneInfo.end() && !maskCelSource.isEmpty();
+
+            // フォールバック用(段に割り付いていないセル): 従来のキャンバス1:1参照
+            Vec2 maskCelPos{0.0f, 0.0f};
+            if (hasCelMask && static_cast<size_t>(srcBl.maskCelIndex) < cut.celCount()) {
+                maskCelPos = cut.cel(static_cast<size_t>(srcBl.maskCelIndex)).positionAt(frame);
+            }
+            const int maskCelOffsetX = static_cast<int>(std::lround(maskCelPos.x));
+            const int maskCelOffsetY = static_cast<int>(std::lround(maskCelPos.y));
+            const Bitmap& penMask = srcBl.mask;
+
+            Bitmap effectiveMask(width, height);
+            parallelForRows(0, height, [&](int rowBegin, int rowEnd) {
+                for (int y = rowBegin; y < rowEnd; ++y) {
+                    for (int x = 0; x < width; ++x) {
+                        const int lx = proxied ? static_cast<int>(std::lround((x + 0.5) / s - 0.5)) : x;
+                        const int ly = proxied ? static_cast<int>(std::lround((y + 0.5) / s - 0.5)) : y;
+
+                        double a = 1.0;
+                        if (hasPenMask) {
+                            uint8_t pa = 0;
+                            if (lx >= 0 && ly >= 0 && lx < penMask.width() && ly < penMask.height())
+                                pa = penMask.pixel(lx, ly).a;
+                            a *= pa / 255.0;
+                        }
+                        if (hasCelMask) {
+                            double ca = 0.0;
+                            if (hasProjection) {
+                                ca = sampleCelMaskAlphaProjected(maskCelSource, celPlaneIt->second,
+                                                                  camera.focalLengthMm, camera.sensorWidthMm, x, y,
+                                                                  width, height);
+                            } else if (!maskCelSource.isEmpty()) {
+                                const int mx = lx - maskCelOffsetX;
+                                const int my = ly - maskCelOffsetY;
+                                if (mx >= 0 && my >= 0 && mx < maskCelSource.width() && my < maskCelSource.height())
+                                    ca = maskCelSource.pixel(mx, my).a / 255.0;
+                            }
+                            a *= ca;
+                        }
+                        const uint8_t a8 = static_cast<uint8_t>(std::lround(std::clamp(a, 0.0, 1.0) * 255.0));
+                        effectiveMask.setPixel(x, y, {255, 255, 255, a8});
+                    }
+                }
+            });
+            bl.mask = std::move(effectiveMask);
+        }
+        resolvedBacklights.push_back(std::move(bl));
+    }
+
+    Bitmap out = renderMultiplane(mplanes, camera, width, height, samples, 1, &resolvedBacklights);
 
     // 全平面合成後: 画面全体(targetCel==-1)を対象とする有効な撮影エフェクトをスタック順で適用する
     for (const Effect& effect : cut.effects()) {

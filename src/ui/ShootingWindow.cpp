@@ -354,7 +354,7 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_blMaskClearButton, &QPushButton::clicked, this, [this] {
         core::Cut* cut = currentCut();
         if (!cut) return;
-        cut->multiplane().backlight.mask = core::Bitmap();
+        core::firstBacklight(*cut).mask = core::Bitmap();
         if (m_backlightMaskDialog) closeBacklightMaskDialogIfOpen();  // 開いていれば作り直しのため一旦閉じる
         markEdited();
     });
@@ -1058,23 +1058,39 @@ QString ShootingWindow::frameFingerprint(const core::Cut& cut, int koma) const {
     // このコマへ解決した値を必ず含める(含め漏れると点滅がキャッシュで固まる)
     const core::MultiplaneSetup& mp = cut.multiplane();
     fp += mp.enabled ? QStringLiteral("m1") : QStringLiteral("m0");
-    fp += mp.backlight.enabled ? QStringLiteral("b1") : QStringLiteral("b0");
     if (mp.enabled) {
-        fp += QLatin1Char(',');
-        fp += QString::number(core::MultiplaneSetup::valueAt(mp.intensityKeys, frame, mp.backlight.intensity),
-                              'f', 4);
         fp += QLatin1Char(',');
         fp += QString::number(core::MultiplaneSetup::valueAt(mp.focalKeys, frame, mp.camera.focalLengthMm), 'f',
                               4);
         fp += QLatin1Char(',');
         fp += QString::number(core::MultiplaneSetup::valueAt(mp.focusKeys, frame, mp.camera.focusDistanceMm),
                               'f', 4);
-        // 光源マスク(ペン/セル/レイヤー)。セルマスクの形はマスクセルの露出・位置に依存するが、
-        // それらは冒頭のセル節で既に指紋へ含まれている
-        fp += mp.backlight.mask.isEmpty() ? QStringLiteral(",p0,") : QStringLiteral(",p1,");
-        fp += QString::number(mp.backlight.maskCelIndex);
         fp += QLatin1Char(',');
-        fp += QString::number(mp.backlight.maskLayerIndex);
+        fp += QString::number(core::MultiplaneSetup::valueAt(mp.fstopKeys, frame, mp.camera.apertureFStop), 'f',
+                              4);
+        fp += QLatin1Char(',');
+        fp += mp.framingLock ? QStringLiteral("fl1") : QStringLiteral("fl0");
+        fp += QLatin1Char(',');
+        fp += QString::number(mp.framingWidthMm, 'f', 4);
+        fp += QLatin1Char(',');
+        fp += QString::number(mp.framingRefDistanceMm, 'f', 4);
+
+        // 透過光(T光、複数灯): 灯ごとに有効/解決後の強度/光源マスク(ペン/セル/レイヤー)有無を含める。
+        // セルマスクの形はマスクセルの露出・位置に依存するが、それらは冒頭のセル節で既に指紋へ
+        // 含まれている
+        for (const core::MultiplaneBacklight& bl : mp.backlights) {
+            fp += QLatin1Char(';');
+            fp += bl.enabled ? QStringLiteral("b1") : QStringLiteral("b0");
+            if (bl.enabled) {
+                fp += QLatin1Char(',');
+                fp += QString::number(core::MultiplaneSetup::valueAt(bl.intensityKeys, frame, bl.intensity), 'f',
+                                      4);
+                fp += bl.mask.isEmpty() ? QStringLiteral(",p0,") : QStringLiteral(",p1,");
+                fp += QString::number(bl.maskCelIndex);
+                fp += QLatin1Char(',');
+                fp += QString::number(bl.maskLayerIndex);
+            }
+        }
     }
 
     // プレビュー画質(出力解像度が変わる)。画質変更時はclearFrameCache()するので通常は不要だが、
@@ -1462,22 +1478,27 @@ void ShootingWindow::rebuildMultiplanePanel() {
     m_mpAddButton->setEnabled(cut != nullptr);
     m_mpRemoveButton->setEnabled(!setup.planes.empty());
 
+    // 既存の単灯前提UIは「先頭の灯」を編集する形に繋ぐ(本格的な複数灯UIは別タスク)。
+    // ここは表示専用なのでcutを変更しない読み取り専用コピーを使う(空なら既定値の灯を仮表示)
+    const core::MultiplaneBacklight bl0 =
+        setup.backlights.empty() ? core::MultiplaneBacklight{} : setup.backlights.front();
+
     m_backlightGroup->setEnabled(cut != nullptr);
-    m_backlightGroup->setChecked(setup.backlight.enabled);
-    m_blIntensitySpin->setValue(setup.backlight.intensity);
-    m_blColorRSpin->setValue(setup.backlight.colorR);
-    m_blColorGSpin->setValue(setup.backlight.colorG);
-    m_blColorBSpin->setValue(setup.backlight.colorB);
-    m_blTransmittanceSpin->setValue(setup.backlight.paintTransmittance);
-    m_blBloomRadiusSpin->setValue(setup.backlight.bloomRadiusPx);
-    m_blBloomStrengthSpin->setValue(setup.backlight.bloomStrength);
+    m_backlightGroup->setChecked(bl0.enabled);
+    m_blIntensitySpin->setValue(bl0.intensity);
+    m_blColorRSpin->setValue(bl0.colorR);
+    m_blColorGSpin->setValue(bl0.colorG);
+    m_blColorBSpin->setValue(bl0.colorB);
+    m_blTransmittanceSpin->setValue(bl0.paintTransmittance);
+    m_blBloomRadiusSpin->setValue(bl0.bloomRadiusPx);
+    m_blBloomStrengthSpin->setValue(bl0.bloomStrength);
     updateBacklightColorSwatch();
 
     // 光源マスクのセル/レイヤーコンボを作り直す(0=なし、以降セル名)
     m_blMaskCelCombo->clear();
     m_blMaskCelCombo->addItem(tr("なし"));
     m_blMaskCelCombo->addItems(celNames);
-    const int maskCel = setup.backlight.maskCelIndex;
+    const int maskCel = bl0.maskCelIndex;
     m_blMaskCelCombo->setCurrentIndex(maskCel >= 0 && maskCel < celNames.size() ? maskCel + 1 : 0);
     m_blMaskCelCombo->setEnabled(cut != nullptr);
     refreshBacklightMaskLayerCombo();
@@ -1554,7 +1575,7 @@ void ShootingWindow::onBacklightChanged() {
     if (m_updating) return;
     core::Cut* cut = currentCut();
     if (!cut) return;
-    core::MultiplaneBacklight& backlight = cut->multiplane().backlight;
+    core::MultiplaneBacklight& backlight = core::firstBacklight(*cut);
     backlight.enabled = m_backlightGroup->isChecked();
     backlight.intensity = m_blIntensitySpin->value();
     backlight.colorR = m_blColorRSpin->value();
@@ -1617,7 +1638,7 @@ void ShootingWindow::openBacklightMaskEditDialog() {
 
     closeBacklightMaskDialogIfOpen();
 
-    core::MultiplaneBacklight& backlight = cut->multiplane().backlight;
+    core::MultiplaneBacklight& backlight = core::firstBacklight(*cut);
     ensureBacklightMaskAllocated(backlight);
 
     auto* dialog = new QDialog(this);
@@ -1705,7 +1726,7 @@ void ShootingWindow::openBacklightMaskEditDialog() {
     connect(clearButton, &QPushButton::clicked, this, [this, canvas] {
         core::Cut* c = currentCut();
         if (!c) return;
-        core::MultiplaneBacklight& bl = c->multiplane().backlight;
+        core::MultiplaneBacklight& bl = core::firstBacklight(*c);
         bl.mask = core::Bitmap();          // 空に戻す(=全面に光が通る)
         ensureBacklightMaskAllocated(bl);  // 引き続きこのダイアログで塗れるよう確保し直す
         canvas->setBitmap(&bl.mask);
@@ -1730,8 +1751,9 @@ void ShootingWindow::onBacklightMaskCelChanged(int comboIndex) {
     if (m_updating) return;
     core::Cut* cut = currentCut();
     if (!cut) return;
-    cut->multiplane().backlight.maskCelIndex = comboIndex <= 0 ? -1 : comboIndex - 1;
-    cut->multiplane().backlight.maskLayerIndex = -1;  // セルを変えたらレイヤー指定はリセット(セル全体)
+    core::MultiplaneBacklight& backlight = core::firstBacklight(*cut);
+    backlight.maskCelIndex = comboIndex <= 0 ? -1 : comboIndex - 1;
+    backlight.maskLayerIndex = -1;  // セルを変えたらレイヤー指定はリセット(セル全体)
     refreshBacklightMaskLayerCombo();
     markEdited();
 }
@@ -1741,11 +1763,12 @@ void ShootingWindow::onBacklightMaskLayerChanged(int comboIndex) {
     if (m_updating) return;
     core::Cut* cut = currentCut();
     if (!cut) return;
-    cut->multiplane().backlight.maskLayerIndex = comboIndex <= 0 ? -1 : comboIndex - 1;
+    core::firstBacklight(*cut).maskLayerIndex = comboIndex <= 0 ? -1 : comboIndex - 1;
     markEdited();
 }
 
-// 「マスクレイヤー」コンボの項目を、選択中のマスクセルのレイヤー一覧で作り直す
+// 「マスクレイヤー」コンボの項目を、選択中のマスクセルのレイヤー一覧で作り直す。
+// 表示専用なので読み取りだけ行い、cutは変更しない(空なら「灯なし」相当のマスク未設定として扱う)
 void ShootingWindow::refreshBacklightMaskLayerCombo() {
     if (!m_blMaskLayerCombo) return;
     const bool wasUpdating = m_updating;
@@ -1754,14 +1777,15 @@ void ShootingWindow::refreshBacklightMaskLayerCombo() {
     m_blMaskLayerCombo->addItem(tr("セル全体"));
 
     core::Cut* cut = currentCut();
-    const int maskCel = cut ? cut->multiplane().backlight.maskCelIndex : -1;
+    const bool hasBacklight = cut && !cut->multiplane().backlights.empty();
+    const int maskCel = hasBacklight ? cut->multiplane().backlights.front().maskCelIndex : -1;
     const bool hasCel = cut && maskCel >= 0 && static_cast<size_t>(maskCel) < cut->celCount();
     if (hasCel) {
         const core::Cel& cel = cut->cel(static_cast<size_t>(maskCel));
         for (size_t li = 0; li < cel.layerCount(); ++li) {
             m_blMaskLayerCombo->addItem(QString::fromStdString(cel.layer(li).name()));
         }
-        const int layerIndex = cut->multiplane().backlight.maskLayerIndex;
+        const int layerIndex = cut->multiplane().backlights.front().maskLayerIndex;
         m_blMaskLayerCombo->setCurrentIndex(
             layerIndex >= 0 && layerIndex < static_cast<int>(cel.layerCount()) ? layerIndex + 1 : 0);
     }
@@ -1774,7 +1798,7 @@ void ShootingWindow::refreshBacklightMaskLayerCombo() {
 void ShootingWindow::onIntensityKeyAddClicked() {
     core::Cut* cut = currentCut();
     if (!cut) return;
-    cut->multiplane().intensityKeys[static_cast<size_t>(m_koma)] = m_blIntensitySpin->value();
+    core::firstBacklight(*cut).intensityKeys[static_cast<size_t>(m_koma)] = m_blIntensitySpin->value();
     refreshMultiplaneKeyedFields();
     markEdited();
 }
@@ -1782,7 +1806,7 @@ void ShootingWindow::onIntensityKeyAddClicked() {
 void ShootingWindow::onIntensityKeyRemoveClicked() {
     core::Cut* cut = currentCut();
     if (!cut) return;
-    cut->multiplane().intensityKeys.erase(static_cast<size_t>(m_koma));
+    core::firstBacklight(*cut).intensityKeys.erase(static_cast<size_t>(m_koma));
     refreshMultiplaneKeyedFields();
     markEdited();
 }
@@ -1828,9 +1852,11 @@ void ShootingWindow::refreshMultiplaneKeyedFields() {
     if (cut) {
         const core::MultiplaneSetup& mp = cut->multiplane();
         const size_t frame = static_cast<size_t>(m_koma);
-        if (!mp.intensityKeys.empty()) {
-            m_blIntensitySpin->setValue(
-                core::MultiplaneSetup::valueAt(mp.intensityKeys, frame, mp.backlight.intensity));
+        // 表示専用の読み取りなのでcutは変更しない(灯が無ければ既定値の灯として扱う)
+        const core::MultiplaneBacklight bl0 =
+            mp.backlights.empty() ? core::MultiplaneBacklight{} : mp.backlights.front();
+        if (!bl0.intensityKeys.empty()) {
+            m_blIntensitySpin->setValue(core::MultiplaneSetup::valueAt(bl0.intensityKeys, frame, bl0.intensity));
         }
         if (!mp.focalKeys.empty()) {
             m_mpFocalSpin->setValue(core::MultiplaneSetup::valueAt(mp.focalKeys, frame, mp.camera.focalLengthMm));
@@ -1839,7 +1865,7 @@ void ShootingWindow::refreshMultiplaneKeyedFields() {
             m_mpFocusSpin->setValue(
                 core::MultiplaneSetup::valueAt(mp.focusKeys, frame, mp.camera.focusDistanceMm));
         }
-        m_blIntensityKeyRemoveButton->setEnabled(mp.intensityKeys.count(frame) > 0);
+        m_blIntensityKeyRemoveButton->setEnabled(bl0.intensityKeys.count(frame) > 0);
         m_mpFocalKeyRemoveButton->setEnabled(mp.focalKeys.count(frame) > 0);
         m_mpFocusKeyRemoveButton->setEnabled(mp.focusKeys.count(frame) > 0);
         m_blIntensityKeyAddButton->setEnabled(true);
