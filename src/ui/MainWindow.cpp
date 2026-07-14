@@ -29,6 +29,7 @@
 #include <QToolButton>
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <filesystem>
 #include <utility>
 
@@ -130,6 +131,171 @@ void drawPenStroke(core::Bitmap& bitmap, const std::vector<QPointF>& pts, QColor
     }
     engine.endStroke();
 }
+
+// ===== ガンダム風メカの手続き描画(関節角度でポーズを付けて動かせる) =====
+namespace mech {
+
+using Px = core::Bitmap::Pixel;
+constexpr double kPi = 3.14159265358979323846;
+
+// メカのカラーパレット(白装甲+青/赤/黄アクセント、暗い関節)
+const Px kWhite{196, 202, 214, 255};    // 装甲の白(グロー/フレアで飛ばないよう少し抑えめ)
+const Px kWhiteSh{150, 156, 174, 255};  // 白の陰
+const Px kBlue{40, 60, 150, 255};
+const Px kRed{198, 44, 52, 255};
+const Px kYellow{238, 202, 42, 255};
+const Px kJoint{54, 58, 70, 255};
+const Px kEye{250, 235, 70, 255};
+
+// 回転矩形を塗る(cx,cyを中心、長半径hl・短半径hw、角度angDeg=長軸の向き)
+void fillRotRect(core::Bitmap& b, double cx, double cy, double hl, double hw, double angDeg, Px c) {
+    const double a = angDeg * kPi / 180.0, ca = std::cos(a), sa = std::sin(a);
+    const double R = std::hypot(hl, hw) + 1.0;
+    const int minx = std::max(0, static_cast<int>(std::floor(cx - R))), maxx = std::min(b.width() - 1, static_cast<int>(std::ceil(cx + R)));
+    const int miny = std::max(0, static_cast<int>(std::floor(cy - R))), maxy = std::min(b.height() - 1, static_cast<int>(std::ceil(cy + R)));
+    for (int y = miny; y <= maxy; ++y)
+        for (int x = minx; x <= maxx; ++x) {
+            const double dx = x - cx, dy = y - cy;
+            const double lx = dx * ca + dy * sa, ly = -dx * sa + dy * ca;
+            if (std::abs(lx) <= hl && std::abs(ly) <= hw) b.setPixel(x, y, c);
+        }
+}
+
+void fillCircle(core::Bitmap& b, double cx, double cy, double r, Px c) {
+    const int ir = static_cast<int>(std::ceil(r));
+    for (int y = -ir; y <= ir; ++y)
+        for (int x = -ir; x <= ir; ++x)
+            if (x * x + y * y <= r * r) {
+                const int px = static_cast<int>(cx) + x, py = static_cast<int>(cy) + y;
+                if (px >= 0 && py >= 0 && px < b.width() && py < b.height()) b.setPixel(px, py, c);
+            }
+}
+
+// 関節間を1本の装甲(回転矩形+両端の関節円)として描く
+void limb(core::Bitmap& b, QPointF p0, QPointF p1, double halfW, Px armor) {
+    const double dx = p1.x() - p0.x(), dy = p1.y() - p0.y();
+    const double len = std::hypot(dx, dy);
+    const double ang = std::atan2(dy, dx) * 180.0 / kPi;
+    fillCircle(b, p0.x(), p0.y(), halfW * 0.72, kJoint);  // 関節
+    fillRotRect(b, (p0.x() + p1.x()) / 2, (p0.y() + p1.y()) / 2, len / 2 + halfW * 0.2, halfW, ang, armor);
+}
+
+// 関節角度によるポーズ(F=奥側/N=手前側。角度は真下=0、前方(+x)へ振る=正)
+struct Pose {
+    double torsoLean = 4, head = -2;
+    double shF = 18, elF = 20, shN = -8, elN = 24;   // 肩・肘(奥/手前の腕)
+    double hipF = 10, knF = 8, hipN = -8, knN = 10;  // 股・膝(奥/手前の脚)
+    double beamLen = 0;                              // ビームサーベルの長さ(0=無し)
+    bool eyesOn = true;                              // 目の発光(起動演出でoff→on)
+};
+
+// 2つのポーズを線形補間する(t=0でa、1でb)。eyesOnはbを採用
+inline Pose lerpPose(const Pose& a, const Pose& b, double t) {
+    const auto L = [t](double x, double y) { return x + (y - x) * t; };
+    Pose r;
+    r.torsoLean = L(a.torsoLean, b.torsoLean);
+    r.head = L(a.head, b.head);
+    r.shF = L(a.shF, b.shF);
+    r.elF = L(a.elF, b.elF);
+    r.shN = L(a.shN, b.shN);
+    r.elN = L(a.elN, b.elN);
+    r.hipF = L(a.hipF, b.hipF);
+    r.knF = L(a.knF, b.knF);
+    r.hipN = L(a.hipN, b.hipN);
+    r.knN = L(a.knN, b.knN);
+    r.beamLen = L(a.beamLen, b.beamLen);
+    r.eyesOn = b.eyesOn;
+    return r;
+}
+
+// (rx,ry)=骨盤中心、s=スケール。手前を向いた横向き(右向き)のメカを描く
+void drawMech(core::Bitmap& b, double rx, double ry, double s, const Pose& p) {
+    const auto up = [](QPointF q, double len, double ang) {
+        const double a = ang * kPi / 180.0;
+        return QPointF(q.x() + len * std::sin(a), q.y() - len * std::cos(a));
+    };
+    const auto down = [](QPointF q, double len, double ang) {
+        const double a = ang * kPi / 180.0;
+        return QPointF(q.x() + len * std::sin(a), q.y() + len * std::cos(a));
+    };
+
+    const QPointF pelvis(rx, ry);
+    const QPointF chest = up(pelvis, 92 * s, p.torsoLean);
+    const QPointF neck = up(chest, 20 * s, p.torsoLean);
+    const QPointF headC = up(neck, 30 * s, p.torsoLean + p.head);
+
+    // 脚の付け根/腕の付け根(手前は少し+x側)
+    const QPointF hipF(pelvis.x() - 10 * s, pelvis.y());
+    const QPointF hipN(pelvis.x() + 12 * s, pelvis.y());
+    const QPointF shF(chest.x() - 8 * s, chest.y() + 6 * s);
+    const QPointF shN(chest.x() + 12 * s, chest.y() + 10 * s);
+
+    const QPointF kneeF = down(hipF, 88 * s, p.hipF), footF = down(kneeF, 90 * s, p.hipF + p.knF);
+    const QPointF kneeN = down(hipN, 88 * s, p.hipN), footN = down(kneeN, 90 * s, p.hipN + p.knN);
+    const QPointF elbF = down(shF, 72 * s, p.shF), handF = down(elbF, 66 * s, p.shF + p.elF);
+    const QPointF elbN = down(shN, 72 * s, p.shN), handN = down(elbN, 66 * s, p.shN + p.elN);
+
+    // --- 奥のパーツ(暗めの白で奥行き) ---
+    limb(b, hipF, kneeF, 20 * s, kWhiteSh);
+    limb(b, kneeF, footF, 17 * s, kWhiteSh);
+    fillRotRect(b, footF.x() + 10 * s, footF.y() + 8 * s, 26 * s, 12 * s, 0, kWhiteSh);  // 足
+    limb(b, shF, elbF, 15 * s, kWhiteSh);
+    limb(b, elbF, handF, 13 * s, kWhiteSh);
+    fillRotRect(b, shF.x(), shF.y(), 26 * s, 22 * s, p.torsoLean, kWhiteSh);  // 奥の肩
+
+    // --- 胴 ---
+    fillRotRect(b, (pelvis.y() + chest.y()) / 2 == 0 ? chest.x() : (pelvis.x() + chest.x()) / 2,
+                (pelvis.y() + chest.y()) / 2, 54 * s, 40 * s, p.torsoLean, kWhite);  // 胸〜腹の白
+    fillRotRect(b, pelvis.x(), pelvis.y() - 6 * s, 30 * s, 26 * s, p.torsoLean, kBlue);      // 腰ブロック(青)
+    fillRotRect(b, chest.x(), chest.y() + 8 * s, 44 * s, 24 * s, p.torsoLean, kWhite);       // 胸
+    fillRotRect(b, chest.x(), chest.y() + 6 * s, 16 * s, 12 * s, p.torsoLean, kRed);         // 胸ダクト(赤)
+    fillRotRect(b, chest.x() - 22 * s, chest.y() + 8 * s, 6 * s, 10 * s, p.torsoLean, kYellow);
+    fillRotRect(b, chest.x() + 22 * s, chest.y() + 8 * s, 6 * s, 10 * s, p.torsoLean, kYellow);
+
+    // --- 手前の脚 ---
+    limb(b, hipN, kneeN, 22 * s, kWhite);
+    limb(b, kneeN, footN, 18 * s, kWhite);
+    fillRotRect(b, kneeN.x() + 6 * s, kneeN.y(), 10 * s, 14 * s, 0, kBlue);                 // 膝アーマー
+    fillRotRect(b, footN.x() + 12 * s, footN.y() + 9 * s, 30 * s, 13 * s, 0, kWhite);      // 足
+    fillRotRect(b, footN.x() + 12 * s, footN.y() + 16 * s, 30 * s, 5 * s, 0, kJoint);      // 靴底
+
+    // --- 頭(V字アンテナ・目) ---
+    fillRotRect(b, headC.x(), headC.y(), 22 * s, 20 * s, p.torsoLean, kWhite);            // 頭(白)
+    fillRotRect(b, headC.x(), headC.y() + 2 * s, 20 * s, 8 * s, p.torsoLean, kJoint);     // 顔(暗)
+    if (p.eyesOn) {
+        fillCircle(b, headC.x() - 8 * s, headC.y() + 2 * s, 3.2 * s, kEye);                // 目
+        fillCircle(b, headC.x() + 8 * s, headC.y() + 2 * s, 3.2 * s, kEye);
+    }
+    fillRotRect(b, headC.x(), headC.y() - 12 * s, 5 * s, 12 * s, p.torsoLean, kYellow);   // 額(黄)
+    // V字アンテナ(左右に開いた2本)
+    fillRotRect(b, headC.x() - 14 * s, headC.y() - 20 * s, 18 * s, 2.5 * s, 55, kYellow);
+    fillRotRect(b, headC.x() + 14 * s, headC.y() - 20 * s, 18 * s, 2.5 * s, -55, kYellow);
+
+    // --- 手前の腕 ---
+    limb(b, shN, elbN, 17 * s, kWhite);
+    limb(b, elbN, handN, 15 * s, kWhite);
+    fillRotRect(b, shN.x() + 2 * s, shN.y(), 28 * s, 24 * s, p.torsoLean, kWhite);         // 手前の肩(大)
+    fillRotRect(b, shN.x() + 2 * s, shN.y() - 16 * s, 24 * s, 6 * s, p.torsoLean, kRed);   // 肩トリム
+    fillCircle(b, handN.x(), handN.y(), 12 * s, kWhite);                                    // 拳
+
+    // --- ビームサーベル(手前の手から伸びる) ---
+    if (p.beamLen > 1.0) {
+        const double a = (p.shN + p.elN) * kPi / 180.0;
+        const QPointF hiltEnd(handN.x() + 26 * s * std::sin(a), handN.y() + 26 * s * std::cos(a));
+        fillRotRect(b, (handN.x() + hiltEnd.x()) / 2, (handN.y() + hiltEnd.y()) / 2, 14 * s, 5 * s,
+                    std::atan2(hiltEnd.y() - handN.y(), hiltEnd.x() - handN.x()) * 180 / kPi, kJoint);  // 柄
+        const QPointF beamEnd(hiltEnd.x() + p.beamLen * std::sin(a), hiltEnd.y() + p.beamLen * std::cos(a));
+        // ビーム本体(白芯)。周囲のにじみ/フレアはアナモルフィックフレア等のエフェクトに任せる
+        const double ang = std::atan2(beamEnd.y() - hiltEnd.y(), beamEnd.x() - hiltEnd.x()) * 180 / kPi;
+        fillRotRect(b, (hiltEnd.x() + beamEnd.x()) / 2, (hiltEnd.y() + beamEnd.y()) / 2, p.beamLen / 2, 9 * s, ang,
+                    Px{170, 235, 255, 255});
+        fillRotRect(b, (hiltEnd.x() + beamEnd.x()) / 2, (hiltEnd.y() + beamEnd.y()) / 2, p.beamLen / 2, 4 * s, ang,
+                    Px{255, 255, 255, 255});
+        fillCircle(b, beamEnd.x(), beamEnd.y(), 8 * s, Px{255, 255, 255, 255});
+    }
+}
+
+}  // namespace mech
 
 // プリビズカメラ画像(QImage)をキャンバスサイズへアスペクト維持でスケール(レターボックス)し、
 // アルファを下げて淡い下敷き用Bitmapにする。renderCameraViewImage()はグリッド背景色で
@@ -2163,6 +2329,41 @@ void MainWindow::debugSetupShootingDemo() {
     m_shootingWindow->debugSelectKoma(12);
 }
 
+bool MainWindow::debugRenderMechTest(const QString& png) {
+    core::Bitmap b(1920, 1080);
+    b.fill({26, 30, 44, 255});
+    for (int x = 0; x < 1920; ++x)
+        for (int y = 900; y < 1080; ++y) b.setPixel(x, y, {16, 18, 28, 255});  // 地面
+
+    mech::Pose stand;  // 立ち
+    mech::drawMech(b, 380, 860, 1.25, stand);
+
+    mech::Pose guard;  // サーベル構え(手前の腕を上へ、ビーム展開)
+    guard.torsoLean = 8;
+    guard.shN = -125;
+    guard.elN = -18;
+    guard.beamLen = 330;
+    guard.hipF = 24;
+    guard.knF = 16;
+    guard.hipN = -18;
+    guard.knN = 22;
+    mech::drawMech(b, 960, 860, 1.25, guard);
+
+    mech::Pose slash;  // 斬り下ろし
+    slash.torsoLean = 20;
+    slash.shN = 70;
+    slash.elN = 15;
+    slash.beamLen = 330;
+    slash.hipF = -25;
+    slash.knF = 20;
+    slash.hipN = 30;
+    slash.knN = 18;
+    mech::drawMech(b, 1540, 860, 1.25, slash);
+
+    const QImage img(b.data(), b.width(), b.height(), QImage::Format_RGBA8888);
+    return img.save(png);
+}
+
 void MainWindow::debugBuildSampleWork() {
     const int W = 1920, H = 1080;
     using Px = core::Bitmap::Pixel;
@@ -2512,6 +2713,210 @@ bool MainWindow::debugBuildAndSaveWork(const QString& folder, const QString& pre
     openStoryboardWindow();
     m_storyboardWindow->grab().save(previewDir + QStringLiteral("/storyboard.png"));
     // .ppprojへ保存
+    std::string err;
+    return core::ProjectIO::save(*m_project, std::filesystem::path(folder.toStdWString()), &err);
+}
+
+void MainWindow::debugBuildRobotWork() {
+    const int W = 1920, H = 1080;
+    using Px = core::Bitmap::Pixel;
+    const double kPi = 3.14159265358979323846;
+
+    auto fillRect = [&](core::Bitmap& b, int x0, int y0, int x1, int y1, Px c) {
+        for (int y = std::max(0, y0); y < std::min(H, y1); ++y)
+            for (int x = std::max(0, x0); x < std::min(W, x1); ++x) b.setPixel(x, y, c);
+    };
+    auto stars = [&](core::Bitmap& b, int n, unsigned seed) {
+        unsigned s = seed;
+        auto rnd = [&]() { s = s * 1664525u + 1013904223u; return (s >> 8) & 0xFFFF; };
+        for (int i = 0; i < n; ++i) mech::fillCircle(b, rnd() % W, rnd() % (H * 2 / 3), (rnd() % 5 == 0) ? 2 : 1, {200, 205, 225, 255});
+    };
+    auto smooth = [](double t) { t = std::clamp(t, 0.0, 1.0); return t * t * (3 - 2 * t); };
+
+    // 背景: 格納庫(縦のライトバー+床グリッド)
+    auto paintHangar = [&](core::Bitmap& b) {
+        b.fill({26, 30, 46, 255});
+        fillRect(b, 0, 940, W, H, {14, 16, 26, 255});                 // 床
+        for (int gx = 0; gx <= W; gx += 160) {                        // 床グリッド(奥行き)
+            std::vector<QPointF> l{{(double)W / 2 + (gx - W / 2.0) * 0.35, 942}, {(double)gx, (double)H}};
+            drawPenStroke(b, l, QColor(40, 46, 66), 2.0f);
+        }
+        fillRect(b, 90, 0, 140, 940, {40, 90, 150, 255});             // 左ライトバー
+        fillRect(b, W - 140, 0, W - 90, 940, {40, 90, 150, 255});     // 右ライトバー
+        fillRect(b, 300, 120, 320, 940, {34, 40, 60, 255});
+        fillRect(b, W - 320, 120, W - 300, 940, {34, 40, 60, 255});
+    };
+    // 背景: 宇宙(星+惑星)
+    auto paintSpace = [&](core::Bitmap& b) {
+        b.fill({12, 14, 30, 255});
+        stars(b, 120, 999u);
+        mech::fillCircle(b, 300, 240, 200, {30, 44, 92, 255});         // 惑星
+        mech::fillCircle(b, 360, 200, 190, {40, 58, 116, 255});        // 惑星の光側
+    };
+
+    // --- キーポーズ ---
+    mech::Pose idle;
+    idle.shN = -8; idle.elN = 20; idle.shF = 14; idle.elF = 22;
+    idle.hipF = 8; idle.knF = 6; idle.hipN = -8; idle.knN = 8; idle.torsoLean = 4;
+    mech::Pose raise = idle;
+    raise.torsoLean = 8; raise.shN = -125; raise.elN = -18; raise.hipF = 24; raise.knF = 16; raise.hipN = -18; raise.knN = 22;
+    mech::Pose slash = idle;
+    slash.torsoLean = 24; slash.shN = 72; slash.elN = 12; slash.beamLen = 330;
+    slash.hipF = -30; slash.knF = 22; slash.hipN = 34; slash.knN = 14;
+
+    // --- プロジェクト ---
+    m_project = std::make_unique<core::Project>("鋼の一閃");
+    m_project->setCanvasSize(W, H);
+    core::Scene& scene = m_project->addScene("Scene 1");
+    if (m_fpsSpin) m_fpsSpin->setValue(24);
+
+    auto addEffect = [&](core::Cut& c, core::EffectType t) -> core::Effect& {
+        core::Effect e; e.type = t; e.enabled = true; e.targetCel = -1; e.params = core::effectDefaultParams(t);
+        c.effects().push_back(std::move(e)); return c.effects().back();
+    };
+    // 動画セルを構築: framesコマをkoma打ちで、poseAt(t=0..1)から各動画を描く
+    auto buildMechCel = [&](core::Cut& cut, int frames, int koma, const std::function<mech::Pose(double)>& poseAt) {
+        core::Cel& cel = cut.addCel("メカ");
+        core::Layer& ly = cel.addLayer("メカ");
+        const int nd = (frames + koma - 1) / koma;
+        for (int i = 0; i < nd; ++i) {
+            core::Bitmap bmp = makeTransparentCel(W, H);
+            const double t = nd > 1 ? static_cast<double>(i) / (nd - 1) : 0.0;
+            mech::drawMech(bmp, 950, 740, 1.7, poseAt(t));
+            ly.addFrame().bitmap() = bmp;
+        }
+        for (int f = 0; f < frames; ++f) cel.setExposure(static_cast<size_t>(f), std::min(nd - 1, f / koma));
+    };
+
+    // ============ C1「起動」(72コマ) 目が光り待機 ============
+    {
+        core::Cut& cut = scene.addCut("C1 起動");
+        cut.setStatus(core::CutStatus::Shooting);
+        cut.setAction("格納庫。待機するロボットの目が起動して光る。ゆっくり寄る。");
+        cut.setDialogue("(SE: 起動音 ヴゥン…)");
+        cut.setFrameCount(72);
+        core::Cel& bg = cut.addCel("背景");
+        core::Bitmap bgBmp = makeTransparentCel(W, H); paintHangar(bgBmp);
+        bg.addLayer("背景").addFrame().bitmap() = bgBmp;
+        for (size_t t = 0; t < 72; ++t) bg.setExposure(t, 0);
+        buildMechCel(cut, 72, 6, [&](double t) {
+            mech::Pose ps = idle;
+            const double br = std::sin(t * kPi * 2);
+            ps.torsoLean = 4 + br * 2; ps.head = -1 + br * 2;
+            ps.eyesOn = t > 0.28;  // 起動
+            return ps;
+        });
+        cut.setCameraKey(0, core::CameraFrameState{{950.0f, 520.0f}, 1.0});
+        cut.setCameraKey(71, core::CameraFrameState{{950.0f, 500.0f}, 0.9});
+        addEffect(cut, core::EffectType::Glow).params["threshold"] = 235.0;
+        addEffect(cut, core::EffectType::Vignette).params["amount"] = 0.45;
+        addEffect(cut, core::EffectType::Film);
+        core::PrevizScene& pv = cut.previz();
+        { core::PrevizModel m; m.name = "胴"; m.filePath = ":box"; m.transform.position = {0, 1.4f, 0}; m.transform.scale = {0.7f, 1.2f, 0.5f}; pv.models.push_back(m); }
+        { core::PrevizModel m; m.name = "頭"; m.filePath = ":box"; m.transform.position = {0, 2.4f, 0}; m.transform.scale = {0.35f, 0.35f, 0.35f}; pv.models.push_back(m); }
+        pv.camera.state.position = {0, 1.6f, 6}; pv.camera.state.focalLengthMm = 40;
+        pv.camera.keys[0] = pv.camera.state; { core::PrevizCameraState s = pv.camera.state; s.position = {0, 1.6f, 5.2f}; pv.camera.keys[71] = s; }
+    }
+
+    // ============ C2「サーベル起動」(96コマ) 腕を掲げビーム展開 ============
+    {
+        core::Cut& cut = scene.addCut("C2 サーベル起動");
+        cut.setStatus(core::CutStatus::Shooting);
+        cut.setAction("右腕を掲げ、ビームサーベルを起動。青い光条が空を裂く。");
+        cut.setDialogue("行くぞ。");
+        cut.setFrameCount(96);
+        core::Cel& bg = cut.addCel("背景");
+        core::Bitmap bgBmp = makeTransparentCel(W, H); paintSpace(bgBmp);
+        bg.addLayer("背景").addFrame().bitmap() = bgBmp;
+        for (size_t t = 0; t < 96; ++t) bg.setExposure(t, 0);
+        buildMechCel(cut, 96, 4, [&](double t) {
+            const double u = smooth(std::clamp(t / 0.5, 0.0, 1.0));  // 腕上げ
+            mech::Pose ps = lerpPose(idle, raise, u);
+            ps.beamLen = 330.0 * std::clamp((u - 0.45) / 0.55, 0.0, 1.0);  // 途中でビーム点火
+            return ps;
+        });
+        cut.setCameraKey(0, core::CameraFrameState{{950.0f, 470.0f}, 1.0});
+        cut.setCameraKey(95, core::CameraFrameState{{1000.0f, 440.0f}, 0.92});
+        { core::Effect& a = addEffect(cut, core::EffectType::AnaFlare); a.params["intensity"] = 1.1; a.params["length"] = 240.0; a.params["threshold"] = 238.0; }
+        addEffect(cut, core::EffectType::Glow).params["threshold"] = 235.0;
+        addEffect(cut, core::EffectType::Vignette).params["amount"] = 0.45;
+        addEffect(cut, core::EffectType::Film);
+        core::PrevizScene& pv = cut.previz();
+        { core::PrevizModel m; m.name = "胴"; m.filePath = ":box"; m.transform.position = {0, 1.4f, 0}; m.transform.scale = {0.7f, 1.2f, 0.5f}; pv.models.push_back(m); }
+        { core::PrevizModel m; m.name = "サーベル"; m.filePath = ":cylinder"; m.transform.position = {0.8f, 3.2f, 0}; m.transform.rotationDeg = {0, 0, 30}; m.transform.scale = {0.08f, 1.2f, 0.08f}; pv.models.push_back(m); }
+        pv.camera.state.position = {0.5f, 1.8f, 5.5f}; pv.camera.state.focalLengthMm = 38;
+        pv.camera.keys[0] = pv.camera.state;
+    }
+
+    // ============ C3「斬撃」(72コマ) 踏み込んで斬り下ろす+カメラ揺れ ============
+    {
+        core::Cut& cut = scene.addCut("C3 斬撃");
+        cut.setStatus(core::CutStatus::Shooting);
+        cut.setAction("踏み込んで一気に斬り下ろす。衝撃でカメラが揺れる。");
+        cut.setDialogue("せいっ!");
+        cut.setFrameCount(72);
+        core::Cel& bg = cut.addCel("背景");
+        core::Bitmap bgBmp = makeTransparentCel(W, H); paintSpace(bgBmp);
+        bg.addLayer("背景").addFrame().bitmap() = bgBmp;
+        for (size_t t = 0; t < 72; ++t) bg.setExposure(t, 0);
+        buildMechCel(cut, 72, 3, [&](double t) {
+            if (t < 0.18) return raise;
+            if (t < 0.6) return lerpPose(raise, slash, smooth((t - 0.18) / 0.42));  // 踏み込み+斬り
+            return slash;
+        });
+        cut.setCameraKey(0, core::CameraFrameState{{950.0f, 500.0f}, 0.95});
+        cut.setCameraKey(71, core::CameraFrameState{{950.0f, 520.0f}, 0.9});
+        { core::Effect& a = addEffect(cut, core::EffectType::AnaFlare); a.params["intensity"] = 1.2; a.params["length"] = 260.0; a.params["threshold"] = 238.0; }
+        { core::Effect& sh = addEffect(cut, core::EffectType::Shake); sh.params["amplitudeX"] = 14.0; sh.params["amplitudeY"] = 10.0; sh.startFrame = 30; sh.endFrame = 48; }  // 斬撃の瞬間だけ揺らす
+        addEffect(cut, core::EffectType::Vignette).params["amount"] = 0.5;
+        addEffect(cut, core::EffectType::Film);
+        core::PrevizScene& pv = cut.previz();
+        { core::PrevizModel m; m.name = "胴"; m.filePath = ":box"; m.transform.position = {0, 1.4f, 0}; m.transform.scale = {0.7f, 1.2f, 0.5f}; m.transformKeys[0] = m.transform; core::PrevizTransform e = m.transform; e.position = {0.4f, 1.3f, 0.6f}; e.rotationDeg = {0, 0, 12}; m.transformKeys[40] = e; pv.models.push_back(m); }
+        pv.camera.state.position = {0.4f, 1.7f, 5.0f}; pv.camera.state.focalLengthMm = 40; pv.camera.lensDistortion = 0.12f;
+        pv.camera.keys[0] = pv.camera.state;
+    }
+
+    // --- 絵コンテ(3パネル) ---
+    auto& panels = scene.storyboard();
+    panels.clear();
+    constexpr int SBW = 1920, SBH = 600;
+    auto makePanel = [&](const char* label, const char* action, const char* dialogue, int dur, const mech::Pose& pose, bool hangar) {
+        core::StoryboardPanel p;
+        p.drawing = core::Bitmap(SBW, SBH);
+        p.drawing.fill({255, 255, 255, 255});
+        // 枠内(130,30)-(1090,570)にラフのメカを描く
+        mech::drawMech(p.drawing, 500, 430, 0.85, pose);
+        p.cutLabel = label; p.action = action; p.dialogue = dialogue; p.durationFrames = static_cast<size_t>(dur);
+        return p;
+    };
+    panels.push_back(makePanel("1", "格納庫。ロボットの目が起動して光る。寄り。", "(SE:起動音)", 72, idle, true));
+    { mech::Pose r = raise; r.beamLen = 200; panels.push_back(makePanel("2", "右腕を掲げビームサーベル起動。青い光条。", "「行くぞ。」", 96, r, false)); }
+    { mech::Pose s = slash; panels.push_back(makePanel("3", "踏み込んで斬り下ろす。カメラが揺れる。", "「せいっ!」", 72, s, false)); }
+
+    m_activeCut = 0; m_currentFrame = 0; m_activeCel = 0; m_activeLayer = 0;
+    m_canvas->setCanvasSize(W, H);
+    m_canvas->clearTextureCache();
+    updateCanvasLayers();
+    updateOnionSkin();
+}
+
+bool MainWindow::debugBuildAndSaveRobot(const QString& folder, const QString& previewDir) {
+    debugBuildRobotWork();
+    QDir().mkpath(previewDir);
+    core::Scene& sc = m_project->scene(0);
+    const int W = canvasWidth(), H = canvasHeight();
+    core::RenderOptions opts;
+    opts.proxyScale = 0.5;
+    const size_t picks[3] = {40, 78, 40};
+    for (int i = 0; i < 3; ++i) {
+        core::Cut& c = sc.cut(static_cast<size_t>(i));
+        const size_t f = std::min(picks[i], c.frameCount() - 1);
+        const core::Bitmap bmp = core::renderCutFrame(c, f, W, H, opts);
+        const QImage img(bmp.data(), bmp.width(), bmp.height(), QImage::Format_RGBA8888);
+        img.save(previewDir + QStringLiteral("/cut%1.png").arg(i + 1));
+    }
+    openStoryboardWindow();
+    m_storyboardWindow->grab().save(previewDir + QStringLiteral("/storyboard.png"));
     std::string err;
     return core::ProjectIO::save(*m_project, std::filesystem::path(folder.toStdWString()), &err);
 }

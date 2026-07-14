@@ -104,6 +104,9 @@ private:
     // 指定エフェクトのマスク(適用範囲)をペンで塗るモードレスダイアログを開く。
     // 既に開いていれば閉じてから開き直す
     void openMaskEditDialog(int effectIndex);
+    // クラシック撮影の段(planeIndex)の距離マップ(セル内の距離塗り分け)をペンで塗るダイアログを開く
+    void openDistanceBrushDialog(int planeIndex);
+    void closeDistanceBrushDialogIfOpen();
     // マスク編集ダイアログが開いていれば閉じる(エフェクト構成が変わるrebuildEffectControls
     // の直前に呼び、GLCanvasが束縛しているeffect.maskへの生ポインタが無効化するのを防ぐ)
     void closeMaskEditDialogIfOpen();
@@ -318,6 +321,7 @@ private:
     // マスク編集ダイアログ(開いていなければnullptr)。QDialogはWA_DeleteOnCloseで自動破棄される
     QDialog* m_maskEditDialog = nullptr;
     int m_maskEditEffectIndex = -1;  // ダイアログが対象としているエフェクトindex
+    QDialog* m_distanceBrushDialog = nullptr;  // 距離ブラシ編集ダイアログ(段の距離マップ)
 
     // エフェクトコントロールパネルの現在のパラメータ行(コマ移動時の軽量更新に使う)
     std::vector<ParamRowWidgets> m_paramRows;

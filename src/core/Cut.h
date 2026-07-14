@@ -24,8 +24,15 @@ struct CameraFrameState {
 // クラシック撮影(マルチプレーン撮影台)のセル1枚分の段割付
 struct MultiplaneCelPlane {
     int celIndex = 0;          // 対象セル(インデックス)
-    double distanceMm = 500.0;  // レンズから平面までの距離
+    double distanceMm = 500.0;  // レンズから平面までの距離(距離マップ未塗り部・並べ替えの基準)
     double widthMm = 400.0;     // アートワークの物理幅
+
+    // 距離ブラシ: 1枚のセル内で距離を塗り分けるグレースケールマップ(空=一様distanceMm)。
+    // 塗られた画素(alpha>0)は輝度0..1を distanceNearMm..distanceFarMm へ線形写像した距離になり、
+    // その画素だけ違う距離としてレンズ(被写界深度)計算される。未塗り(alpha=0)は distanceMm を使う
+    Bitmap distanceMap;
+    double distanceNearMm = 300.0;   // 距離マップの黒(0)が表す距離
+    double distanceFarMm = 3000.0;   // 距離マップの白(255)が表す距離
 };
 
 // カット単位のクラシック撮影設定。enabled=falseなら従来のデジタル合成

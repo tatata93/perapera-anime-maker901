@@ -705,6 +705,57 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 距離ブラシ確認: --distbrush-test <PNG>。縦バー背景に横グラデの距離マップを付け、強いDoFで
+    // レンダリングする。距離がfocus(=700)に近い所はシャープ、離れる所ほどボケるはず
+    const int distIdx = args.indexOf("--distbrush-test");
+    if (distIdx >= 0 && distIdx + 1 < args.size()) {
+        const QString out = args.at(distIdx + 1);
+        const int AW = 900, AH = 506;
+        core::Bitmap art(AW, AH);
+        art.fill({0, 0, 0, 0});
+        for (int x = 0; x < AW; ++x)
+            if ((x / 40) % 2 == 0)
+                for (int y = 0; y < AH; ++y) art.setPixel(x, y, {20, 20, 20, 255});  // 縦バー(黒・不透明)
+        core::Bitmap dm(AW, AH);
+        for (int y = 0; y < AH; ++y)
+            for (int x = 0; x < AW; ++x) {
+                const auto g = static_cast<uint8_t>(255.0 * x / (AW - 1));  // 左=near(0)→右=far(255)
+                dm.setPixel(x, y, {g, g, g, 255});
+            }
+        core::MultiplanePlane pl;
+        pl.artwork = &art;
+        pl.distanceMm = 700;
+        pl.widthMm = 400;
+        pl.distanceMap = &dm;
+        pl.distanceNearMm = 250;
+        pl.distanceFarMm = 1500;
+        core::MultiplaneCamera cam;
+        cam.focalLengthMm = 50;
+        cam.sensorWidthMm = 36;
+        cam.apertureFStop = 1.4;
+        cam.focusDistanceMm = 700;
+        const core::Bitmap res = core::renderMultiplane({pl}, cam, 960, 540, 64, 1, nullptr);
+        const QImage img(res.data(), res.width(), res.height(), QImage::Format_RGBA8888);
+        return img.save(out) ? 0 : 1;
+    }
+
+    // ロボット作品生成: --build-robot <.ppprojフォルダ> <確認用PNGフォルダ>
+    const int buildRobotIdx = args.indexOf("--build-robot");
+    if (buildRobotIdx >= 0 && buildRobotIdx + 2 < args.size()) {
+        const QString folder = args.at(buildRobotIdx + 1);
+        const QString previewDir = args.at(buildRobotIdx + 2);
+        QTimer::singleShot(400, &window, [&window, folder, previewDir] {
+            QApplication::exit(window.debugBuildAndSaveRobot(folder, previewDir) ? 0 : 1);
+        });
+    }
+
+    // メカ見た目確認: --mech-test <PNG>
+    const int mechTestIdx = args.indexOf("--mech-test");
+    if (mechTestIdx >= 0 && mechTestIdx + 1 < args.size()) {
+        const QString out = args.at(mechTestIdx + 1);
+        QTimer::singleShot(300, &window, [&window, out] { QApplication::exit(window.debugRenderMechTest(out) ? 0 : 1); });
+    }
+
     // サンプル作品生成: --build-work <.ppprojフォルダ> <確認用PNGフォルダ> で10秒の作品「流星の夜」を
     // 構築し、確認用PNGとプロジェクトを保存する
     const int buildWorkIdx = args.indexOf("--build-work");

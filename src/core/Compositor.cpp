@@ -460,6 +460,12 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
         mp.widthMm = p.widthMm;
         mp.offsetXMm = position.x * mmPerPx;
         mp.offsetYMm = position.y * mmPerPx;
+        // 距離ブラシ(セル内の距離塗り分け)。setup.planesは呼び出し中生存するのでポインタで渡してよい
+        if (!p.distanceMap.isEmpty()) {
+            mp.distanceMap = &p.distanceMap;
+            mp.distanceNearMm = p.distanceNearMm;
+            mp.distanceFarMm = p.distanceFarMm;
+        }
         mplanes.push_back(mp);
 
         if (celPlaneInfo.find(p.celIndex) == celPlaneInfo.end()) {

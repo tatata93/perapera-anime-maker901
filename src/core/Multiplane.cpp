@@ -65,13 +65,40 @@ struct PlaneContext {
     double distanceMm = 0.0;
     double pinholeScale = 0.0;  // ピンホール時: ワールド座標 = センサー座標 * (D / focal)
     double lensT = 0.0;         // 薄レンズ時: 交点 = L + (P - L) * (D / F)
+    // 距離ブラシ(セル内の距離塗り分け)。nullなら一様distanceMm
+    const Bitmap* distanceMap = nullptr;
+    double distNearMm = 0.0;
+    double distFarMm = 0.0;
 };
+
+// 平面のワールド交点(wx, wy)からアートワークの連続座標(u, v)を求める
+inline void artworkUV(const PlaneContext& ctx, double wx, double wy, double& u, double& v) {
+    u = (wx - ctx.offsetXMm + ctx.halfWidthMm) * ctx.pxPerMmX;
+    v = (wy - ctx.offsetYMm + ctx.halfHeightMm) * ctx.pxPerMmY;
+}
 
 // 平面のワールド交点(wx, wy)でアートワークをサンプルする
 inline FloatPixel samplePlane(const PlaneContext& ctx, double wx, double wy) {
-    const double u = (wx - ctx.offsetXMm + ctx.halfWidthMm) * ctx.pxPerMmX;
-    const double v = (wy - ctx.offsetYMm + ctx.halfHeightMm) * ctx.pxPerMmY;
+    double u, v;
+    artworkUV(ctx, wx, wy, u, v);
     return sampleArtworkBilinear(*ctx.artwork, u, v);
+}
+
+// 距離ブラシの距離(mm)を返す。マップ未設定/未塗り(alpha小)ならその平面の一様distanceMm。
+// マップはアート座標(u,v)を正規化して参照するため、プロキシで解像度が変わっても整合する
+inline double sampleDistanceMm(const PlaneContext& ctx, double wx, double wy) {
+    if (ctx.distanceMap == nullptr || ctx.distanceMap->isEmpty()) return ctx.distanceMm;
+    double u, v;
+    artworkUV(ctx, wx, wy, u, v);
+    const double un = u / std::max(1, ctx.artwork->width());
+    const double vn = v / std::max(1, ctx.artwork->height());
+    int mx = static_cast<int>(std::floor(un * ctx.distanceMap->width()));
+    int my = static_cast<int>(std::floor(vn * ctx.distanceMap->height()));
+    if (mx < 0 || my < 0 || mx >= ctx.distanceMap->width() || my >= ctx.distanceMap->height()) return ctx.distanceMm;
+    const Bitmap::Pixel p = ctx.distanceMap->pixel(mx, my);
+    if (p.a < 128) return ctx.distanceMm;  // 未塗り
+    const double g = (0.299 * p.r + 0.587 * p.g + 0.114 * p.b) / 255.0;
+    return ctx.distNearMm + (ctx.distFarMm - ctx.distNearMm) * g;
 }
 
 // 光源マスクの出力ピクセル(ox, oy)におけるアルファ(0〜1)を返す。マスクが出力と同サイズなら
@@ -130,6 +157,11 @@ Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const Multip
         ctx.distanceMm = p->distanceMm;
         ctx.pinholeScale = p->distanceMm / camera.focalLengthMm;
         ctx.lensT = focusDistanceMm > 0.0 ? p->distanceMm / focusDistanceMm : 1.0;
+        if (p->distanceMap != nullptr && !p->distanceMap->isEmpty()) {
+            ctx.distanceMap = p->distanceMap;
+            ctx.distNearMm = p->distanceNearMm;
+            ctx.distFarMm = p->distanceFarMm;
+        }
         contexts.push_back(ctx);
     }
 
@@ -213,6 +245,20 @@ Bitmap renderMultiplane(const std::vector<MultiplanePlane>& planes, const Multip
                         } else {
                             wx = lx + (focusX - lx) * ctx.lensT;
                             wy = ly + (focusY - ly) * ctx.lensT;
+                        }
+                        // 距離ブラシ: まず基準距離での交点でマップを読み、その画素の距離で投影し直す
+                        // (1回反復。滑らかな距離マップならこれで十分)。マップ無しなら従来どおり
+                        if (ctx.distanceMap != nullptr) {
+                            const double dLocal = sampleDistanceMm(ctx, wx, wy);
+                            if (pinhole) {
+                                const double ps = dLocal / camera.focalLengthMm;
+                                wx = sx * ps;
+                                wy = sy * ps;
+                            } else {
+                                const double t = focusDistanceMm > 0.0 ? dLocal / focusDistanceMm : 1.0;
+                                wx = lx + (focusX - lx) * t;
+                                wy = ly + (focusY - ly) * t;
+                            }
                         }
                         const FloatPixel sample = samplePlane(ctx, wx, wy);
                         if (sample.a <= 0.0) continue;

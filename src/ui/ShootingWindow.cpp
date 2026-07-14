@@ -353,8 +353,8 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
     mpLayout->addLayout(mpForm);
 
     m_mpTable = new QTableWidget(m_multiplaneGroup);
-    m_mpTable->setColumnCount(3);
-    m_mpTable->setHorizontalHeaderLabels({tr("セル"), tr("距離mm"), tr("幅mm")});
+    m_mpTable->setColumnCount(4);
+    m_mpTable->setHorizontalHeaderLabels({tr("セル"), tr("距離mm"), tr("幅mm"), tr("距離ブラシ")});
     m_mpTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_mpTable->verticalHeader()->setVisible(false);
     m_mpTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -986,6 +986,172 @@ void ShootingWindow::openMaskEditDialog(int effectIndex) {
             m_maskEditDialog = nullptr;
             m_maskEditEffectIndex = -1;
         }
+    });
+
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
+void ShootingWindow::closeDistanceBrushDialogIfOpen() {
+    if (!m_distanceBrushDialog) return;
+    QDialog* d = m_distanceBrushDialog;
+    m_distanceBrushDialog = nullptr;  // 先にnull化し、finishedハンドラの再入(rebuild)を避ける
+    d->close();                        // WA_DeleteOnCloseで破棄される
+}
+
+void ShootingWindow::openDistanceBrushDialog(int planeIndex) {
+    core::Cut* cut = currentCut();
+    if (!cut || planeIndex < 0 || planeIndex >= static_cast<int>(cut->multiplane().planes.size())) return;
+    closeDistanceBrushDialogIfOpen();
+
+    core::MultiplaneCelPlane& plane = cut->multiplane().planes[static_cast<size_t>(planeIndex)];
+    // 距離マップ未確保ならキャンバスサイズの透明ビットマップ(=全面未塗り)を確保する
+    if (plane.distanceMap.isEmpty()) {
+        plane.distanceMap = core::Bitmap(m_canvasWidth, m_canvasHeight);
+        plane.distanceMap.fill({0, 0, 0, 0});
+    }
+    const int celIndex = plane.celIndex;
+
+    auto* dialog = new QDialog(this);
+    dialog->setWindowTitle(tr("距離ブラシ - 段%1").arg(planeIndex + 1));
+    dialog->resize(960, 600);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    auto* layout = new QVBoxLayout(dialog);
+
+    layout->addWidget(new QLabel(
+        tr("1枚のセル内で距離を塗り分けます。近い所と遠い所でボケ方(被写界深度)が変わります。\n"
+           "「筆の距離」を選んで塗る=その距離、消しゴム=未塗り(段の基準距離に戻る)。"),
+        dialog));
+
+    // 近/遠の距離レンジ
+    auto* rangeRow = new QHBoxLayout();
+    rangeRow->addWidget(new QLabel(tr("近(黒) mm"), dialog));
+    auto* nearSpin = new QDoubleSpinBox(dialog);
+    nearSpin->setRange(1.0, 100000.0);
+    nearSpin->setDecimals(0);
+    nearSpin->setValue(plane.distanceNearMm);
+    nearSpin->setKeyboardTracking(false);
+    rangeRow->addWidget(nearSpin);
+    rangeRow->addWidget(new QLabel(tr("遠(白) mm"), dialog));
+    auto* farSpin = new QDoubleSpinBox(dialog);
+    farSpin->setRange(1.0, 100000.0);
+    farSpin->setDecimals(0);
+    farSpin->setValue(plane.distanceFarMm);
+    farSpin->setKeyboardTracking(false);
+    rangeRow->addWidget(farSpin);
+    rangeRow->addStretch(1);
+    layout->addLayout(rangeRow);
+
+    // ツール行: ペン/消しゴム・太さ・筆の距離
+    auto* toolRow = new QHBoxLayout();
+    auto* penButton = new QToolButton(dialog);
+    penButton->setText(tr("ペン"));
+    penButton->setCheckable(true);
+    penButton->setChecked(true);
+    penButton->setAutoExclusive(true);
+    auto* eraserButton = new QToolButton(dialog);
+    eraserButton->setText(tr("消しゴム"));
+    eraserButton->setCheckable(true);
+    eraserButton->setAutoExclusive(true);
+    toolRow->addWidget(penButton);
+    toolRow->addWidget(eraserButton);
+    toolRow->addWidget(new QLabel(tr("太さ"), dialog));
+    auto* radiusSlider = new QSlider(Qt::Horizontal, dialog);
+    radiusSlider->setRange(10, 200);
+    radiusSlider->setValue(60);
+    radiusSlider->setFixedWidth(140);
+    toolRow->addWidget(radiusSlider);
+    toolRow->addWidget(new QLabel(tr("筆の距離 mm"), dialog));
+    auto* penDistSpin = new QDoubleSpinBox(dialog);
+    penDistSpin->setRange(1.0, 100000.0);
+    penDistSpin->setDecimals(0);
+    penDistSpin->setValue(std::clamp(plane.distanceMm, plane.distanceNearMm, plane.distanceFarMm));
+    penDistSpin->setKeyboardTracking(false);
+    toolRow->addWidget(penDistSpin);
+    auto* clearButton = new QPushButton(tr("全消去"), dialog);
+    toolRow->addWidget(clearButton);
+    toolRow->addStretch(1);
+    layout->addLayout(toolRow);
+
+    auto* canvas = new GLCanvas(dialog);
+    canvas->setCanvasSize(m_canvasWidth, m_canvasHeight);
+    canvas->setTool(GLCanvas::Tool::Pen);
+    canvas->setPenRadius(60.0f);
+    canvas->setEraserRadius(60.0f);
+    canvas->setBitmap(&plane.distanceMap);
+    layout->addWidget(canvas, 1);
+
+    // 筆の距離→ペンのグレー(近=黒/遠=白)を決める
+    const auto updatePenColor = [canvas, nearSpin, farSpin, penDistSpin] {
+        const double near = nearSpin->value(), far = farSpin->value();
+        const double t = far > near ? std::clamp((penDistSpin->value() - near) / (far - near), 0.0, 1.0) : 0.0;
+        const int g = static_cast<int>(std::lround(t * 255.0));
+        canvas->setPenColor(QColor(g, g, g, 255));
+    };
+    updatePenColor();
+
+    // 下敷き: このセルの現在コマの絵(マルチプレーンを一時的に切って平面の絵をそのまま出す)
+    {
+        const bool mpOn = cut->multiplane().enabled;
+        cut->multiplane().enabled = false;
+        core::RenderOptions options;
+        options.onlyCel = celIndex;
+        const core::Bitmap under =
+            core::renderCutFrame(*cut, static_cast<size_t>(m_koma), m_canvasWidth, m_canvasHeight, options);
+        cut->multiplane().enabled = mpOn;
+        const QImage underImage = QImage(under.data(), under.width(), under.height(), QImage::Format_RGBA8888).copy();
+        canvas->setUnderlayImage(underImage);
+        canvas->setUnderlayOpacity(0.55f);
+    }
+
+    connect(penButton, &QToolButton::toggled, canvas, [canvas, radiusSlider](bool checked) {
+        if (!checked) return;
+        canvas->setTool(GLCanvas::Tool::Pen);
+        canvas->setPenRadius(static_cast<float>(radiusSlider->value()));
+    });
+    connect(eraserButton, &QToolButton::toggled, canvas, [canvas, radiusSlider](bool checked) {
+        if (!checked) return;
+        canvas->setTool(GLCanvas::Tool::Eraser);
+        canvas->setEraserRadius(static_cast<float>(radiusSlider->value()));
+    });
+    connect(radiusSlider, &QSlider::valueChanged, dialog, [canvas, penButton](int value) {
+        if (penButton->isChecked()) canvas->setPenRadius(static_cast<float>(value));
+        else canvas->setEraserRadius(static_cast<float>(value));
+    });
+    connect(penDistSpin, &QDoubleSpinBox::valueChanged, dialog, [updatePenColor] { updatePenColor(); });
+    connect(nearSpin, &QDoubleSpinBox::valueChanged, this, [this, planeIndex, nearSpin, penDistSpin, updatePenColor](double v) {
+        core::Cut* c = currentCut();
+        if (c && planeIndex < static_cast<int>(c->multiplane().planes.size()))
+            c->multiplane().planes[static_cast<size_t>(planeIndex)].distanceNearMm = v;
+        penDistSpin->setMinimum(1.0);
+        updatePenColor();
+        markEdited();
+    });
+    connect(farSpin, &QDoubleSpinBox::valueChanged, this, [this, planeIndex, updatePenColor](double v) {
+        core::Cut* c = currentCut();
+        if (c && planeIndex < static_cast<int>(c->multiplane().planes.size()))
+            c->multiplane().planes[static_cast<size_t>(planeIndex)].distanceFarMm = v;
+        updatePenColor();
+        markEdited();
+    });
+    connect(clearButton, &QPushButton::clicked, this, [this, planeIndex, canvas] {
+        core::Cut* c = currentCut();
+        if (!c || planeIndex >= static_cast<int>(c->multiplane().planes.size())) return;
+        core::MultiplaneCelPlane& pl = c->multiplane().planes[static_cast<size_t>(planeIndex)];
+        pl.distanceMap = core::Bitmap(m_canvasWidth, m_canvasHeight);
+        pl.distanceMap.fill({0, 0, 0, 0});
+        canvas->setBitmap(&pl.distanceMap);
+        canvas->clearTextureCache();
+        markEdited();
+    });
+    canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command>) { markEdited(); });
+
+    m_distanceBrushDialog = dialog;
+    connect(dialog, &QDialog::finished, this, [this, dialog] {
+        if (m_distanceBrushDialog == dialog) m_distanceBrushDialog = nullptr;
+        // ボタン表示(「*」)更新のためのパネル再構築は、rebuild中からの再入を避けて次のループへ遅延する
+        QTimer::singleShot(0, this, [this] { rebuildMultiplanePanel(); });
     });
 
     dialog->show();
@@ -1855,6 +2021,8 @@ void ShootingWindow::markEdited() {
 void ShootingWindow::clearFrameCache() { m_frameCache.clear(); }
 
 void ShootingWindow::rebuildMultiplanePanel() {
+    // 段(planes)の再配置やカット切替でplane.distanceMapへの生ポインタが無効化する前にダイアログを閉じる
+    closeDistanceBrushDialogIfOpen();
     m_updating = true;
     core::Cut* cut = currentCut();
     const core::MultiplaneSetup setup = cut ? cut->multiplane() : core::MultiplaneSetup{};
@@ -1922,6 +2090,12 @@ void ShootingWindow::rebuildMultiplanePanel() {
             markEdited();
         });
         m_mpTable->setCellWidget(r, 2, widthSpin);
+
+        // 距離ブラシ: セル内で距離を塗り分けるマップを編集するダイアログを開く。塗り済みは「*」で表示
+        auto* brushButton = new QPushButton(plane.distanceMap.isEmpty() ? tr("距離ブラシ") : tr("距離ブラシ *"), m_mpTable);
+        brushButton->setToolTip(tr("1枚のセルの中で距離を塗り分ける(近い所/遠い所でボケ方が変わる)"));
+        connect(brushButton, &QPushButton::clicked, this, [this, r] { openDistanceBrushDialog(r); });
+        m_mpTable->setCellWidget(r, 3, brushButton);
     }
 
     m_mpAddButton->setEnabled(cut != nullptr);

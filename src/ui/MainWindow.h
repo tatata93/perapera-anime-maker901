@@ -158,6 +158,11 @@ public:
     // 総合テスト用: 絵コンテ・プリビズ・作画・撮影(マルチプレーン/透過光/エフェクト)を使った
     // 10秒(240コマ/3カット)のサンプル作品「流星の夜」をm_projectへ構築する
     void debugBuildSampleWork();
+    // メカ描画の見た目確認用: 1枚に3ポーズ(立ち/サーベル構え/斬り)を並べて保存する
+    bool debugRenderMechTest(const QString& png);
+    // ガンダム風ロボットが動く10秒(240コマ/3カット)の作品「鋼の一閃」をm_projectへ構築する
+    void debugBuildRobotWork();
+    bool debugBuildAndSaveRobot(const QString& folder, const QString& previewDir);
     // 上記を構築し、確認用PNG(各カット代表コマ・プリビズ・絵コンテ)をpreviewDirへ、
     // プロジェクト本体を.ppproj(folder)へ保存する。成功でtrue
     bool debugBuildAndSaveWork(const QString& folder, const QString& previewDir);

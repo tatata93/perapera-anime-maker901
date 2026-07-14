@@ -375,7 +375,16 @@ bool buildCutJson(const Cut& cut, json* jCutOut, std::vector<unsigned char>* blo
         const MultiplaneSetup& mp = cut.multiplane();
         json jPlanes = json::array();
         for (const MultiplaneCelPlane& p : mp.planes) {
-            jPlanes.push_back({{"cel", p.celIndex}, {"distance", p.distanceMm}, {"width", p.widthMm}});
+            json jPlane = {{"cel", p.celIndex}, {"distance", p.distanceMm}, {"width", p.widthMm}};
+            // 距離ブラシ(セル内の距離塗り分け)。空なら省略
+            if (!p.distanceMap.isEmpty()) {
+                json jDist;
+                if (!writeBitmapBlob(p.distanceMap, jDist, *blobsOut, errorOut)) return false;
+                jPlane["distanceMap"] = std::move(jDist);
+                jPlane["distanceNear"] = p.distanceNearMm;
+                jPlane["distanceFar"] = p.distanceFarMm;
+            }
+            jPlanes.push_back(std::move(jPlane));
         }
         json jMultiplane = {{"enabled", mp.enabled},
                             {"camera",
@@ -601,7 +610,13 @@ bool parseCutJson(const json& jCut, Cut& cut, const unsigned char* blobBase, uin
                 plane.celIndex = jPlane.value("cel", 0);
                 plane.distanceMm = jPlane.value("distance", 500.0);
                 plane.widthMm = jPlane.value("width", 400.0);
-                mp.planes.push_back(plane);
+                plane.distanceNearMm = jPlane.value("distanceNear", 300.0);
+                plane.distanceFarMm = jPlane.value("distanceFar", 3000.0);
+                if (jPlane.contains("distanceMap")) {
+                    if (!readBitmapBlob(jPlane.at("distanceMap"), blobBase, blobTotal, &plane.distanceMap, errorOut))
+                        return false;
+                }
+                mp.planes.push_back(std::move(plane));
             }
         }
     }

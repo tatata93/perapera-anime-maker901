@@ -12,10 +12,16 @@ namespace core {
 // 撮影台の1段(セル/背景を置く平面)。カメラは原点でZ+方向(下)を向く
 struct MultiplanePlane {
     const Bitmap* artwork = nullptr;  // 透明ビットマップ(straight-alpha)
-    double distanceMm = 500.0;        // レンズから平面までの距離(mm)
+    double distanceMm = 500.0;        // レンズから平面までの距離(mm)。距離マップ未塗り部・並べ替えの基準
     double widthMm = 400.0;           // アートワークの物理幅(mm)。高さはビットマップのアスペクトから
     double offsetXMm = 0.0;           // 面内オフセット(mm、+xは画面右方向)
     double offsetYMm = 0.0;           // (+yは画面下方向)
+
+    // 距離ブラシ(セル内の距離塗り分け)。nullptr/空なら一様distanceMm。塗られた画素の輝度0..1を
+    // distanceNearMm..distanceFarMm へ線形写像した距離を、その画素のレンズ計算に使う
+    const Bitmap* distanceMap = nullptr;
+    double distanceNearMm = 0.0;
+    double distanceFarMm = 0.0;
 };
 
 // 撮影台カメラ(実写相当の薄レンズモデル)
