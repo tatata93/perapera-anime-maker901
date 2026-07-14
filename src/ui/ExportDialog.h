@@ -33,6 +33,8 @@ public:
 
     Format format() const;
     Content content() const;
+    // trueなら全カットを通しで書き出す(範囲指定は無視)。falseなら現在のカットのfrom〜to
+    bool exportAllCuts() const;
     QString outputPath() const;
     int fromFrame() const;
     int toFrame() const;
@@ -54,6 +56,7 @@ private:
 
     QComboBox* m_formatCombo = nullptr;
     QComboBox* m_contentCombo = nullptr;
+    QComboBox* m_scopeCombo = nullptr;
     QLineEdit* m_outputPathEdit = nullptr;
     QSpinBox* m_fromSpin = nullptr;
     QSpinBox* m_toSpin = nullptr;

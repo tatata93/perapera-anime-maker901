@@ -50,6 +50,12 @@ ExportDialog::ExportDialog(const QStringList& celNames, int frameCount, QWidget*
     m_contentCombo->addItem(tr("作画+プリビズ"));
     formLayout->addRow(tr("含める内容:"), m_contentCombo);
 
+    // 書き出す範囲(スコープ): 現在のカット / 全カット通し(作品全体を1本に)
+    m_scopeCombo = new QComboBox(this);
+    m_scopeCombo->addItem(tr("現在のカット"));
+    m_scopeCombo->addItem(tr("全カット(通し)"));
+    formLayout->addRow(tr("対象範囲:"), m_scopeCombo);
+
     // 出力先: 形式に応じて参照ボタンの動作(フォルダ選択/保存ファイル名)を切り替える
     auto* outputRow = new QWidget(this);
     auto* outputLayout = new QHBoxLayout(outputRow);
@@ -125,6 +131,7 @@ ExportDialog::ExportDialog(const QStringList& celNames, int frameCount, QWidget*
 
     connect(m_formatCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) { updateFormatDependentUi(); });
     connect(m_contentCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) { updateFormatDependentUi(); });
+    connect(m_scopeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) { updateFormatDependentUi(); });
     updateFormatDependentUi();
 }
 
@@ -140,6 +147,10 @@ void ExportDialog::updateFormatDependentUi() {
     m_correctionCheck->setEnabled(hasDrawing);
     // 透明背景は 連番PNG かつ 作画のみ のときだけ有効(動画・プリビズ含みは不透明)
     m_transparentCheck->setEnabled(!isMovie && drawingOnly);
+    // 全カット通しでは範囲(開始/終了コマ)は使わない
+    const bool allCuts = exportAllCuts();
+    m_fromSpin->setEnabled(!allCuts);
+    m_toSpin->setEnabled(!allCuts);
 }
 
 void ExportDialog::browseOutputPath() {
@@ -156,6 +167,8 @@ void ExportDialog::browseOutputPath() {
 ExportDialog::Format ExportDialog::format() const {
     return m_formatCombo->currentIndex() == 1 ? Format::Movie : Format::Sequence;
 }
+
+bool ExportDialog::exportAllCuts() const { return m_scopeCombo->currentIndex() == 1; }
 
 ExportDialog::Content ExportDialog::content() const {
     switch (m_contentCombo->currentIndex()) {

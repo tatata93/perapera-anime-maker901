@@ -946,6 +946,17 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --exportall-test <出力フォルダ> で全カット通し(編集デモ=尺12+24+12=48コマ)を書き出す
+    const int exportAllIdx = args.indexOf("--exportall-test");
+    if (exportAllIdx >= 0 && exportAllIdx + 1 < args.size()) {
+        const QString dir = args.at(exportAllIdx + 1);
+        QTimer::singleShot(500, &window, [&window, dir] {
+            window.debugSetupEditDemo();
+            const int n = window.debugExportAllCuts(dir);
+            QApplication::exit(n == 48 ? 0 : 1);  // 3カット合計48コマになるはず
+        });
+    }
+
     // 動作確認用: --newproject-dialog-test <PNG> / --newcut-dialog-test <PNG> で作成ダイアログを表示保存する
     const int newProjIdx = args.indexOf("--newproject-dialog-test");
     if (newProjIdx >= 0 && newProjIdx + 1 < args.size()) {

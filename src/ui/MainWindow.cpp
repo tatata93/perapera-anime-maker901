@@ -3268,14 +3268,26 @@ void MainWindow::openExportDialog() {
     const int outW = std::max(2, static_cast<int>(std::lround(canvasWidth() * scale))) & ~1;
     const int outH = std::max(2, static_cast<int>(std::lround(canvasHeight() * scale))) & ~1;
 
-    // ダイアログのコマ番号は1始まり、renderCutFrame等の内部は0始まりなので変換する
-    const int from = dialog.fromFrame() - 1;
-    const int to = dialog.toFrame() - 1;
+    // 書き出す1コマの並びを作る: 全カット通しなら全カットの全コマを連結、そうでなければ現在カットの範囲
+    std::vector<ExportFrameRef> frames;
+    if (dialog.exportAllCuts() && m_project && m_project->sceneCount() > 0) {
+        core::Scene& scene = m_project->scene(0);
+        for (size_t ci = 0; ci < scene.cutCount(); ++ci) {
+            core::Cut& c = scene.cut(ci);
+            for (size_t f = 0; f < c.frameCount(); ++f) frames.push_back({&c, f});
+        }
+    } else {
+        // ダイアログのコマ番号は1始まり、内部は0始まり
+        core::Cut& c = activeCut();
+        const int from = std::max(0, dialog.fromFrame() - 1);
+        const int to = std::min(static_cast<int>(c.frameCount()) - 1, dialog.toFrame() - 1);
+        for (int f = from; f <= to; ++f) frames.push_back({&c, static_cast<size_t>(f)});
+    }
 
     const bool success =
         dialog.format() == ExportDialog::Format::Sequence
-            ? exportSequence(outputPath, from, to, opts, outW, outH, includeDrawing, includePreviz)
-            : exportMovie(outputPath, from, to, dialog.fps(), opts, outW, outH, includeDrawing, includePreviz);
+            ? exportFramesToDir(outputPath, frames, opts, outW, outH, includeDrawing, includePreviz)
+            : exportMovieFrames(outputPath, frames, dialog.fps(), opts, outW, outH, includeDrawing, includePreviz);
 
     // プリビズ書き出しでビューポートのシーン/コマを触った分を現在カットへ戻す
     if (includePreviz && m_previzWindow) {
@@ -3329,15 +3341,14 @@ QImage MainWindow::renderExportFrameImage(core::Cut& cut, size_t frame, int outW
     return result;
 }
 
-bool MainWindow::exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts, int outW,
-                                int outH, bool includeDrawing, bool includePreviz) {
+bool MainWindow::exportFramesToDir(const QString& dir, const std::vector<ExportFrameRef>& frames,
+                                   const core::RenderOptions& opts, int outW, int outH, bool includeDrawing,
+                                   bool includePreviz) {
     QDir outDir(dir);
     if (!outDir.exists() && !QDir().mkpath(dir)) return false;
 
-    const int total = to - from + 1;
+    const int total = static_cast<int>(frames.size());
     if (total <= 0) return false;
-
-    core::Cut& cut = activeCut();
 
     QProgressDialog progress(tr("書き出し中..."), tr("キャンセル"), 0, total, this);
     progress.setWindowModality(Qt::WindowModal);
@@ -3347,8 +3358,9 @@ bool MainWindow::exportSequence(const QString& dir, int from, int to, const core
         progress.setValue(i);
         if (progress.wasCanceled()) return false;
 
-        const size_t frame = static_cast<size_t>(from + i);
-        const QImage image = renderExportFrameImage(cut, frame, outW, outH, opts, includeDrawing, includePreviz);
+        const ExportFrameRef& ref = frames[static_cast<size_t>(i)];
+        const QImage image =
+            renderExportFrameImage(*ref.cut, ref.frame, outW, outH, opts, includeDrawing, includePreviz);
         const QString path = outDir.filePath(QStringLiteral("frame_%1.png").arg(i + 1, 4, 10, QChar('0')));
         if (!image.save(path)) return false;
     }
@@ -3356,12 +3368,13 @@ bool MainWindow::exportSequence(const QString& dir, int from, int to, const core
     return true;
 }
 
-bool MainWindow::exportMovie(const QString& mp4Path, int from, int to, int fps, const core::RenderOptions& opts,
-                            int outW, int outH, bool includeDrawing, bool includePreviz) {
+bool MainWindow::exportMovieFrames(const QString& mp4Path, const std::vector<ExportFrameRef>& frames, int fps,
+                                   const core::RenderOptions& opts, int outW, int outH, bool includeDrawing,
+                                   bool includePreviz) {
     // 連番PNGを一時フォルダに書き出してからffmpegでエンコードする
     QTemporaryDir tempDir;
     if (!tempDir.isValid()) return false;
-    if (!exportSequence(tempDir.path(), from, to, opts, outW, outH, includeDrawing, includePreviz)) return false;
+    if (!exportFramesToDir(tempDir.path(), frames, opts, outW, outH, includeDrawing, includePreviz)) return false;
 
     const QString framePattern = QDir(tempDir.path()).filePath(QStringLiteral("frame_%04d.png"));
 
@@ -3485,7 +3498,9 @@ int MainWindow::debugExportSequence(const QString& dir) {
     const core::RenderOptions opts;
     const int outW = canvasWidth() & ~1;
     const int outH = canvasHeight() & ~1;
-    return exportSequence(dir, 0, static_cast<int>(cut.frameCount()) - 1, opts, outW, outH, true, false) ? 0 : 1;
+    std::vector<ExportFrameRef> frames;
+    for (size_t f = 0; f < cut.frameCount(); ++f) frames.push_back({&cut, f});
+    return exportFramesToDir(dir, frames, opts, outW, outH, true, false) ? 0 : 1;
 }
 
 bool MainWindow::debugExportFrame(const QString& pngPath, int mode, bool transparent) {
@@ -3499,6 +3514,21 @@ bool MainWindow::debugExportFrame(const QString& pngPath, int mode, bool transpa
     const int outH = canvasHeight() & ~1;
     const QImage img = renderExportFrameImage(cut, 0, outW, outH, opts, includeDrawing, includePreviz);
     return img.save(pngPath);
+}
+
+int MainWindow::debugExportAllCuts(const QString& dir) {
+    if (!m_project || m_project->sceneCount() == 0) return 0;
+    core::Scene& scene = m_project->scene(0);
+    core::RenderOptions opts;
+    opts.useExportSamples = true;
+    std::vector<ExportFrameRef> frames;
+    for (size_t ci = 0; ci < scene.cutCount(); ++ci) {
+        core::Cut& c = scene.cut(ci);
+        for (size_t f = 0; f < c.frameCount(); ++f) frames.push_back({&c, f});
+    }
+    const int outW = canvasWidth() & ~1;
+    const int outH = canvasHeight() & ~1;
+    return exportFramesToDir(dir, frames, opts, outW, outH, true, false) ? static_cast<int>(frames.size()) : 0;
 }
 
 void MainWindow::checkAutosaveRecovery() {
