@@ -69,6 +69,22 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     m_fovLabel = new QLabel(this);
     toolBar->addWidget(m_fovLabel);
 
+    // レンズ歪曲(魚眼/樽/糸巻き)。カメラ全体のレンズ特性(コマ非依存)。描画後の放射状ワープで表現する
+    toolBar->addWidget(new QLabel(tr(" レンズ歪曲: "), this));
+    m_distortSpin = new QDoubleSpinBox(this);
+    m_distortSpin->setRange(-0.5, 1.5);
+    m_distortSpin->setSingleStep(0.05);
+    m_distortSpin->setValue(0.0);
+    m_distortSpin->setToolTip(tr("0=標準(直線を直線に写す) / 正=樽型・魚眼(外へ膨らむ) / 負=糸巻き型"));
+    m_distortSpin->setFocusPolicy(Qt::ClickFocus);
+    connect(m_distortSpin, &QDoubleSpinBox::valueChanged, this, [this](double value) {
+        if (m_updating || !m_scene) return;
+        m_scene->camera.lensDistortion = static_cast<float>(value);
+        m_viewport->update();
+        emit sceneEdited();
+    });
+    toolBar->addWidget(m_distortSpin);
+
     // プリビズ内再生(モーション確認)
     toolBar->addSeparator();
     m_playAction = toolBar->addAction(tr("再生"));
@@ -436,6 +452,10 @@ void PrevizWindow::debugSetSelectedPosition(double x, double y, double z) {
     m_posZ->setValue(z);
 }
 
+void PrevizWindow::debugSetLensDistortion(double d) {
+    if (m_distortSpin) m_distortSpin->setValue(d);
+}
+
 void PrevizWindow::addPrimitive(const QString& kind, bool select) {
     if (!m_scene) return;
     // kind(":box"/":cylinder"/":sphere")に応じた表示名を決める
@@ -543,6 +563,7 @@ void PrevizWindow::refreshCameraUi() {
     m_updating = true;
     m_focalSpin->setValue(m_scene->camera.stateAt(m_viewport->frame()).focalLengthMm);
     m_fovLabel->setText(tr(" 水平画角: %1°").arg(m_scene->camera.horizontalFovDeg(m_viewport->frame()), 0, 'f', 1));
+    if (m_distortSpin) m_distortSpin->setValue(m_scene->camera.lensDistortion);
     m_updating = false;
 }
 

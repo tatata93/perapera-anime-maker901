@@ -16,6 +16,7 @@
 #include "previz/GltfLoader.h"
 
 class QOpenGLShaderProgram;
+class QOpenGLFramebufferObject;
 
 // プリビズの3Dビューポート。glTFモデル群とグリッド床を描画する。
 //
@@ -106,6 +107,13 @@ private:
     QMatrix4x4 cameraProjection(size_t frame, float aspect) const;
     // シーン一式(グリッド/モデル/ギズモ)を指定のビュー射影で描く(paintGLとオフスクリーンで共用)
     void renderScene(const QMatrix4x4& viewProj);
+    // レンズ歪曲(魚眼/樽/糸巻き)を反映して描く。distortionが0付近ならそのまま直接描画、
+    // それ以外はいったんオフスクリーンFBOへ描いてから放射状ワープのフルスクリーン合成を行う。
+    // w×hは現在の描画先のピクセルサイズ、targetは戻すべき描画先FBO(paintGLは既定FBO)
+    void renderSceneWithLens(const QMatrix4x4& viewProj, int w, int h, float distortion);
+    void ensurePostResources();  // 歪曲ポスト処理用のシェーダ/全画面クアッドを遅延生成
+    // 現在(このコマ)のカメラのレンズ歪曲量。カメラビュー以外(作業オービット)では0
+    float currentLensDistortion() const;
     // FPS移動: ローカル方向(x=右, y=上, z=前)へ視点を動かす
     void moveFreely(const QVector3D& localDir, float step);
 
@@ -116,6 +124,10 @@ private:
     int m_selectedModel = -1;
 
     std::unique_ptr<QOpenGLShaderProgram> m_program;
+    // レンズ歪曲ポスト処理: シーンを一度描くオフスクリーンFBOと、放射状ワープする全画面シェーダ
+    std::unique_ptr<QOpenGLShaderProgram> m_postProgram;
+    std::unique_ptr<QOpenGLBuffer> m_postQuad;
+    std::unique_ptr<QOpenGLFramebufferObject> m_sceneFbo;
     std::map<std::string, GpuMesh> m_meshCache;
     GpuPrimitive m_grid;         // 床グリッド(ライン)
     GpuPrimitive m_placeholder;  // モデル未配置時の目安キューブ

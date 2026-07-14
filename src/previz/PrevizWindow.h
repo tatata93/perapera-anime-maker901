@@ -39,6 +39,8 @@ public:
     void debugSetSelectedScale(double sx, double sy, double sz);
     // 動作確認用: 現在選択中モデルの位置XYZをUI経由で設定する(デモで形状同士を離して見せる用)
     void debugSetSelectedPosition(double x, double y, double z);
+    // 動作確認用: レンズ歪曲量を設定する(魚眼/樽/糸巻きの確認用)
+    void debugSetLensDistortion(double d);
 
 signals:
     void sceneEdited();          // シーンが変更された(MainWindowが未保存フラグを立てる)
@@ -74,6 +76,7 @@ private:
     QListWidget* m_modelList = nullptr;
     QDoubleSpinBox* m_focalSpin = nullptr;
     QLabel* m_fovLabel = nullptr;
+    QDoubleSpinBox* m_distortSpin = nullptr;  // レンズ歪曲(魚眼/樽/糸巻き)
     // 選択モデルのトランスフォーム編集(位置XYZ/回転XYZ/スケールXYZ=任意変形対応)
     QDoubleSpinBox* m_posX = nullptr;
     QDoubleSpinBox* m_posY = nullptr;

@@ -702,6 +702,23 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 動作確認用: --previz-distort-test <歪みなしPNG> <魚眼PNG> でプリビズのカメラ絵を歪曲0/0.9で保存する
+    const int previzDistortIdx = args.indexOf("--previz-distort-test");
+    if (previzDistortIdx >= 0 && previzDistortIdx + 2 < args.size()) {
+        const QString out0 = args.at(previzDistortIdx + 1);
+        const QString out1 = args.at(previzDistortIdx + 2);
+        QTimer::singleShot(500, &window, [&window, out0, out1] {
+            window.debugOpenPreviz();
+            QTimer::singleShot(300, &window, [&window, out0, out1] {
+                window.previzWindow()->debugSetLensDistortion(0.0);
+                window.previzWindow()->viewport()->renderCameraViewImage(16.0f / 9.0f).save(out0);
+                window.previzWindow()->debugSetLensDistortion(0.9);
+                window.previzWindow()->viewport()->renderCameraViewImage(16.0f / 9.0f).save(out1);
+                QApplication::exit(0);
+            });
+        });
+    }
+
     // 動作確認用: --previz-prim-test <出力PNG> でプリビズウィンドウを開き、円柱・球の
     // プリミティブを追加する(既定の箱・円柱・球が重ならないようX方向に離して配置)。
     // 球は選択したまま非一様スケール(X=2倍)を掛けて楕円体に変形し、

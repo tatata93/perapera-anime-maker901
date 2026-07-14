@@ -48,6 +48,38 @@ void main() {
 }
 )";
 
+// レンズ歪曲ポスト処理: 全画面クアッド(pos.xy + uv)をそのまま出す頂点シェーダ
+const char* kPostVertexShader = R"(
+attribute vec2 aPos;
+attribute vec2 aUv;
+varying vec2 vUv;
+void main() {
+    vUv = aUv;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)";
+
+// 放射状のレンズ歪曲。uDistort>0=樽型/魚眼(中心が拡大・周辺が圧縮)、<0=糸巻き型。
+// アスペクト補正して円形の歪みにする。標準レンズ相当の直線→直線は uDistort=0
+const char* kPostFragmentShader = R"(
+uniform sampler2D uTex;
+uniform float uDistort;
+uniform float uAspect;
+varying vec2 vUv;
+void main() {
+    vec2 d = vUv - 0.5;
+    vec2 dc = vec2(d.x * uAspect, d.y);   // アスペクト補正した中心からのベクトル
+    float r2 = dot(dc, dc);
+    float f = 1.0 - uDistort * r2;         // 樽型は周辺ほど内側をサンプル(中心拡大)
+    vec2 uv = 0.5 + d * f;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        gl_FragColor = vec4(0.16, 0.17, 0.20, 1.0);  // 画面外は背景色で埋める(糸巻き時)
+        return;
+    }
+    gl_FragColor = texture2D(uTex, uv);
+}
+)";
+
 const QVector4D kGizmoColor(1.0f, 0.6f, 0.2f, 1.0f);      // 本番カメラのギズモ(オレンジ)
 const QVector4D kHighlightColor(1.0f, 0.65f, 0.25f, 1.0f);  // 選択モデルの強調色
 
@@ -65,6 +97,9 @@ PrevizViewport::~PrevizViewport() {
     m_placeholder = {};
     m_cameraGizmo = {};
     m_program.reset();
+    m_postProgram.reset();
+    m_postQuad.reset();
+    m_sceneFbo.reset();
     doneCurrent();
 }
 
@@ -112,7 +147,8 @@ QImage PrevizViewport::renderCameraViewImage(float aspectWOverH) {
     const core::PrevizCameraState state = m_scene ? m_scene->camera.stateAt(m_frame) : core::PrevizCameraState{};
     const QMatrix4x4 viewProj =
         cameraProjection(m_frame, static_cast<float>(kWidth) / static_cast<float>(kHeight)) * cameraView(state);
-    renderScene(viewProj);
+    // 本番カメラの絵なのでレンズ歪曲(魚眼/樽/糸巻き)を反映する。この関数は常にカメラビュー扱い
+    renderSceneWithLens(viewProj, kWidth, kHeight, m_scene ? m_scene->camera.lensDistortion : 0.0f);
     m_forceCameraView = false;
 
     fbo.release();
@@ -338,11 +374,94 @@ void PrevizViewport::drawPrimitive(const GpuPrimitive& prim, const QMatrix4x4& m
     prim.vbo->release();
 }
 
+float PrevizViewport::currentLensDistortion() const {
+    // レンズ歪曲は本番カメラの絵にのみ効かせる(作業オービット視点は歪ませない)
+    if (!usingCameraView() || !m_scene) return 0.0f;
+    return m_scene->camera.lensDistortion;
+}
+
+void PrevizViewport::ensurePostResources() {
+    if (!m_postProgram) {
+        m_postProgram = std::make_unique<QOpenGLShaderProgram>();
+        m_postProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, kPostVertexShader);
+        m_postProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, kPostFragmentShader);
+        m_postProgram->bindAttributeLocation("aPos", 0);
+        m_postProgram->bindAttributeLocation("aUv", 1);
+        m_postProgram->link();
+    }
+    if (!m_postQuad) {
+        // 2三角形の全画面クアッド: 各頂点 pos.xy, uv.xy
+        const float verts[] = {
+            -1.f, -1.f, 0.f, 0.f, 1.f, -1.f, 1.f, 0.f, -1.f, 1.f, 0.f, 1.f,
+            -1.f, 1.f,  0.f, 1.f, 1.f, -1.f, 1.f, 0.f, 1.f,  1.f, 1.f, 1.f,
+        };
+        m_postQuad = std::make_unique<QOpenGLBuffer>(QOpenGLBuffer::VertexBuffer);
+        m_postQuad->create();
+        m_postQuad->bind();
+        m_postQuad->allocate(verts, sizeof(verts));
+        m_postQuad->release();
+    }
+}
+
+void PrevizViewport::renderSceneWithLens(const QMatrix4x4& viewProj, int w, int h, float distortion) {
+    if (std::abs(distortion) < 1e-4f || w <= 0 || h <= 0) {
+        renderScene(viewProj);  // 歪みなし: 現在の描画先へ直接
+        return;
+    }
+    ensurePostResources();
+
+    // 現在の描画先FBO/ビューポートを退避(paintGLは既定FBO、renderCameraViewImageは外側FBO)
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    GLint prevVp[4];
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+
+    // シーンをいったんオフスクリーンFBOへ描く(サイズが変わったら作り直す)
+    if (!m_sceneFbo || m_sceneFbo->width() != w || m_sceneFbo->height() != h) {
+        QOpenGLFramebufferObjectFormat f;
+        f.setAttachment(QOpenGLFramebufferObject::CombinedDepthStencil);
+        m_sceneFbo = std::make_unique<QOpenGLFramebufferObject>(w, h, f);
+    }
+    m_sceneFbo->bind();
+    glViewport(0, 0, w, h);
+    glClearColor(0.16f, 0.17f, 0.20f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    renderScene(viewProj);
+
+    // 描画先を元に戻し、歪曲シェーダで全画面クアッドを合成する
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
+    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+    glDisable(GL_DEPTH_TEST);
+
+    m_postProgram->bind();
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_sceneFbo->texture());
+    m_postProgram->setUniformValue("uTex", 0);
+    m_postProgram->setUniformValue("uDistort", distortion);
+    m_postProgram->setUniformValue("uAspect", static_cast<float>(w) / static_cast<float>(h));
+
+    m_postQuad->bind();
+    m_postProgram->enableAttributeArray(0);
+    m_postProgram->enableAttributeArray(1);
+    m_postProgram->setAttributeBuffer(0, GL_FLOAT, 0, 2, 4 * sizeof(float));
+    m_postProgram->setAttributeBuffer(1, GL_FLOAT, 2 * sizeof(float), 2, 4 * sizeof(float));
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    m_postQuad->release();
+    m_postProgram->release();
+
+    glEnable(GL_DEPTH_TEST);
+    m_program->bind();  // 呼び出し側(renderScene後の状態)に合わせて主シェーダへ戻す
+}
+
 void PrevizViewport::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
     if (!m_program) return;
-    renderScene(currentProjection() * currentView());
+    // QOpenGLWidgetの実ピクセルサイズ(devicePixelRatio込み)は現在のGLビューポートから取得する
+    GLint vp[4];
+    glGetIntegerv(GL_VIEWPORT, vp);
+    renderSceneWithLens(currentProjection() * currentView(), vp[2], vp[3], currentLensDistortion());
 }
 
 void PrevizViewport::renderScene(const QMatrix4x4& viewProj) {

@@ -103,6 +103,7 @@ json previzToJson(const PrevizScene& scene) {
             {"camera",
              {{"state", cameraStateToJson(scene.camera.state)},
               {"sensorWidth", scene.camera.sensorWidthMm},
+              {"lensDistortion", scene.camera.lensDistortion},
               {"keys", std::move(jCameraKeys)}}}};
 }
 
@@ -120,6 +121,7 @@ void previzFromJson(const json& j, PrevizScene& scene) {
     const json& jCamera = j.at("camera");
     scene.camera.state = cameraStateFromJson(jCamera.at("state"));
     scene.camera.sensorWidthMm = jCamera.at("sensorWidth").get<float>();
+    scene.camera.lensDistortion = jCamera.value("lensDistortion", 0.0f);  // 旧データは歪みなし
     for (const json& jKey : jCamera.at("keys")) {
         scene.camera.keys[jKey.at("frame").get<size_t>()] = cameraStateFromJson(jKey.at("state"));
     }

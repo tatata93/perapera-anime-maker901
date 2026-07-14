@@ -70,6 +70,9 @@ struct PrevizCameraState {
 struct PrevizCamera {
     PrevizCameraState state;                       // キーが無いときの基本状態
     float sensorWidthMm = 36.0f;                   // フルサイズ横幅(35mm判)
+    // レンズ歪曲。0=歪みなし(直線を直線に写す標準レンズ)、正=樽型/魚眼(直線が外へ膨らむ)、
+    // 負=糸巻き型。描画後の放射状ワープで表現する(post-process、値は概ね-0.5〜+1.5が実用域)
+    float lensDistortion = 0.0f;
     std::map<size_t, PrevizCameraState> keys;      // コマ→カメラ状態(カメラワーク)
 
     PrevizCameraState stateAt(size_t frame) const {
