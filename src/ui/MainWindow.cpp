@@ -3241,9 +3241,11 @@ void MainWindow::openExportDialog() {
     }
 
     ExportDialog dialog(celNames, static_cast<int>(cut.frameCount()), this);
+    dialog.setOutputPath(m_lastExportPath);  // 前回の書き出し先を復元(毎回入力し直す手間を省く)
     if (dialog.exec() != QDialog::Accepted) return;
 
     const QString outputPath = dialog.outputPath();
+    m_lastExportPath = outputPath;  // 次回のために記憶する
     if (outputPath.isEmpty()) {
         QMessageBox::warning(this, tr("書き出しエラー"), tr("出力先を指定してください"));
         return;

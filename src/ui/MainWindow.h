@@ -394,6 +394,7 @@ private:
     ReferencePanel* m_referencePanel = nullptr;  // 設定ボード参照ドック
     int m_referenceBoardIndex = -1;  // 参照ドックで選択中の設定ボードインデックス(未選択-1)
     QString m_currentFilePath;
+    QString m_lastExportPath;  // 前回の書き出し先(書き出しダイアログの出力先を復元する)
     bool m_dirty = false;  // 未保存の変更があるか(表示用。詳細な範囲はm_dirtyScopeが持つ)
 
     // 保存スコープ: どのファイルを書き直す必要があるか(部分保存)。安全側に倒す(迷ったら全部)

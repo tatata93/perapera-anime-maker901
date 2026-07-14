@@ -31,6 +31,9 @@ public:
     // frameCount: カットの尺(開始/終了コマの範囲既定値・上限に使う)
     ExportDialog(const QStringList& celNames, int frameCount, QWidget* parent = nullptr);
 
+    // 出力先を事前設定する(前回の書き出し先を復元して毎回入力し直す手間を省く)
+    void setOutputPath(const QString& path);
+
     Format format() const;
     Content content() const;
     // trueなら全カットを通しで書き出す(範囲指定は無視)。falseなら現在のカットのfrom〜to

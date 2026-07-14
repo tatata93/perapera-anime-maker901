@@ -168,6 +168,10 @@ ExportDialog::Format ExportDialog::format() const {
     return m_formatCombo->currentIndex() == 1 ? Format::Movie : Format::Sequence;
 }
 
+void ExportDialog::setOutputPath(const QString& path) {
+    if (m_outputPathEdit) m_outputPathEdit->setText(path);
+}
+
 bool ExportDialog::exportAllCuts() const { return m_scopeCombo->currentIndex() == 1; }
 
 ExportDialog::Content ExportDialog::content() const {
