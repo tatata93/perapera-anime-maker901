@@ -181,6 +181,18 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
         requestPreview();
     });
 
+    // 被写界深度プレビュー: 既定OFFではクラシック撮影のプレビューを軽いピンホール(ボケ無し)で
+    // 高速表示する。焦点/絞りを詰めたいときだけONにすると、実際のボケを(サンプル控えめで)確認できる。
+    // ONは重くなるので既定はOFF
+    m_dofPreviewCheck = new QCheckBox(tr("被写界深度プレビュー"), toolBar);
+    m_dofPreviewCheck->setToolTip(tr("クラシック撮影のボケ(被写界深度)をプレビューに反映する。重くなるため既定はOFF(書き出しは常にフル品質)"));
+    toolBar->addWidget(m_dofPreviewCheck);
+    connect(m_dofPreviewCheck, &QCheckBox::toggled, this, [this](bool on) {
+        m_dofPreview = on;
+        clearFrameCache();  // ボケの有無でプレビュー画が変わるためキャッシュを破棄
+        requestPreview();
+    });
+
     auto* central = new QWidget(this);
     auto* rootLayout = new QVBoxLayout(central);
     rootLayout->setContentsMargins(4, 4, 4, 4);
@@ -1369,8 +1381,15 @@ void ShootingWindow::renderPreviewNow() {
     // で縮小レンダリングする(proxyScale)。プレビューのノイズが増える分は許容する。
     // 書き出し・編集ウィンドウの通しプレビューはこれらを渡さないのでフル品質のまま
     core::RenderOptions options;
-    options.multiplaneFastPreview = true;  // 被写界深度を省いたピンホール高速合成(固まらない・ノイズ無し)
-    options.multiplaneSampleCap = 1;       // ピンホールなので1サンプルで十分(念のため上限も1に)
+    if (m_dofPreview) {
+        // 被写界深度プレビューON: 実際のボケを反映(サンプルは控えめに絞って応答性を確保)
+        options.multiplaneFastPreview = false;
+        options.multiplaneSampleCap = 4;
+    } else {
+        // 既定: 被写界深度を省いたピンホール高速合成(固まらない・ノイズ無し)
+        options.multiplaneFastPreview = true;
+        options.multiplaneSampleCap = 1;
+    }
     options.proxyScale = computeProxyScale();
     const core::Bitmap bitmap =
         core::renderCutFrame(*cut, static_cast<size_t>(m_koma), m_canvasWidth, m_canvasHeight, options);

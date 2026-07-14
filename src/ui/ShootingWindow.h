@@ -237,6 +237,7 @@ private:
 
     QComboBox* m_cutCombo = nullptr;
     QComboBox* m_previewQualityCombo = nullptr;  // プレビュー画質(フル/1/2/1/4)
+    QCheckBox* m_dofPreviewCheck = nullptr;      // 被写界深度プレビューのトグル
 
     // 左: エフェクトコントロールパネル
     QScrollArea* m_effectScroll = nullptr;
@@ -333,6 +334,7 @@ private:
     // computeProxyScale()がキャンバスサイズと合わせてcore::RenderOptions::proxyScaleへの
     // 実際の値を算出する
     double m_previewQuality = 600.0;
+    bool m_dofPreview = false;  // 被写界深度プレビュー(既定OFF=ピンホール高速)
     // コマ指紋→描画済みプレビューのキャッシュ。同じ絵になるコマの再合成を省略する
     QHash<QString, QPixmap> m_frameCache;
     static constexpr int kFrameCacheLimit = 200;  // これを超えたら単純にclear()する

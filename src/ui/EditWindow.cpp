@@ -56,11 +56,13 @@ EditWindow::EditWindow(QWidget* parent) : QMainWindow(parent) {
     m_table->setColumnCount(kColCount);
     m_table->setHorizontalHeaderLabels({tr("No"), tr("カット名"), tr("尺コマ"), tr("秒"), tr("進捗")});
     m_table->verticalHeader()->setVisible(false);
-    m_table->setColumnWidth(kColName, 160);
-    m_table->setColumnWidth(kColDuration, 70);
-    m_table->setColumnWidth(kColSeconds, 70);
-    m_table->setColumnWidth(kColStatus, 110);
+    // カット名を伸縮列にして残りを固定幅にすることで、進捗列が横スクロールに隠れず常に見える
     m_table->horizontalHeader()->setStretchLastSection(false);
+    m_table->horizontalHeader()->setSectionResizeMode(kColName, QHeaderView::Stretch);
+    m_table->setColumnWidth(kColNo, 44);
+    m_table->setColumnWidth(kColDuration, 64);
+    m_table->setColumnWidth(kColSeconds, 56);
+    m_table->setColumnWidth(kColStatus, 96);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     leftLayout->addWidget(m_table);
