@@ -638,6 +638,84 @@ void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
     });
 }
 
+// アナモルフィックフレア(近似): 明部を抽出し、横方向へ長く伸ばした青い筋(アナモルフィックレンズ
+// 特有の水平フレア)と、明部を中心対称に写したゴーストを加算合成する。物理的な厳密再現ではなく、
+// 見た目重視の施策(擬似)実装。tintで筋・ゴーストの色(既定は青系)を決める
+void applyAnaFlare(Bitmap& image, const Effect& effect) {
+    const double threshold = param(effect, "threshold", 210.0);
+    const double intensity = std::max(0.0, param(effect, "intensity", 0.8));
+    const int length = std::max(1, static_cast<int>(std::lround(param(effect, "length", 220.0))));
+    const int ghosts = std::clamp(static_cast<int>(std::lround(param(effect, "ghosts", 3.0))), 0, 8);
+    const double ghostStrength = std::max(0.0, param(effect, "ghostStrength", 0.5));
+    const float tintR = static_cast<float>(std::clamp(param(effect, "tintR", 0.35), 0.0, 1.0));
+    const float tintG = static_cast<float>(std::clamp(param(effect, "tintG", 0.6), 0.0, 1.0));
+    const float tintB = static_cast<float>(std::clamp(param(effect, "tintB", 1.0), 0.0, 1.0));
+    const int w = image.width();
+    const int h = image.height();
+    if (w <= 0 || h <= 0 || intensity <= 0.0) return;
+    const size_t count = static_cast<size_t>(w) * h;
+
+    // 明部抽出: 輝度がthresholdを超えた分(0〜1程度)を保持する
+    std::vector<float> hi(count, 0.0f);
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const Bitmap::Pixel p = image.pixel(x, y);
+                if (p.a == 0) continue;
+                const double luma = 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
+                if (luma <= threshold) continue;
+                hi[static_cast<size_t>(y) * w + x] = static_cast<float>((luma - threshold) / 255.0);
+            }
+        }
+    });
+
+    // 水平フレアの筋: 横方向だけ長くぼかす。box blurは平均化で暗くなるため、窓幅に比例した
+    // ゲインで明るさを戻す(輝点が小さくても筋として見える強さにする)。縦はごく僅かに滲ませる
+    std::vector<float> streak = hi;
+    boxBlurHorizontal(streak, w, h, length);
+    const float streakGain = static_cast<float>((2 * length + 1) * 0.15);
+    for (float& v : streak) v *= streakGain;
+    boxBlurHorizontal(streak, w, h, std::max(1, length / 8));  // 仕上げの軽い平滑化
+    boxBlurVertical(streak, w, h, std::max(1, h / 250));
+
+    // ゴースト用: 明部を塊に丸める(中心対称でサンプルして重ねる)。こちらも平均化ぶんをゲインで戻す
+    std::vector<float> blob = hi;
+    const int blobR = std::max(2, length / 20);
+    tripleBoxBlur(blob, w, h, blobR);
+    const float blobGain = static_cast<float>((2 * blobR + 1) * 0.4);
+    for (float& v : blob) v *= blobGain;
+
+    // ゴーストの中心対称スケール係数(正負で中心を挟んで反対側にも出る)
+    static const double kGhostScales[8] = {-0.35, 0.5, -0.65, 0.85, -1.05, 1.25, -1.45, 1.65};
+
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const size_t idx = static_cast<size_t>(y) * w + x;
+                float add = streak[idx] * static_cast<float>(intensity);
+                // ゴースト: 出力座標を中心(0.5,0.5)対称+スケールしてblobをサンプルする
+                for (int g = 0; g < ghosts; ++g) {
+                    const double s = kGhostScales[g];
+                    const double sx = 0.5 + ((static_cast<double>(x) / (w - 1)) - 0.5) * s;
+                    const double sy = 0.5 + ((static_cast<double>(y) / (h - 1)) - 0.5) * s;
+                    if (sx < 0.0 || sx > 1.0 || sy < 0.0 || sy > 1.0) continue;
+                    const int gx = static_cast<int>(std::lround(sx * (w - 1)));
+                    const int gy = static_cast<int>(std::lround(sy * (h - 1)));
+                    const double falloff = 1.0 / (1.0 + g * 0.6);
+                    add += blob[static_cast<size_t>(gy) * w + gx] * static_cast<float>(ghostStrength * falloff);
+                }
+                if (add <= 0.0f) continue;
+                Bitmap::Pixel p = image.pixel(x, y);
+                // tint色で加算(単純加算+クランプ)。青系tintでアナモルフィックの青い筋になる
+                p.r = static_cast<uint8_t>(std::clamp(p.r + add * tintR * 255.0f, 0.0f, 255.0f));
+                p.g = static_cast<uint8_t>(std::clamp(p.g + add * tintG * 255.0f, 0.0f, 255.0f));
+                p.b = static_cast<uint8_t>(std::clamp(p.b + add * tintB * 255.0f, 0.0f, 255.0f));
+                image.setPixel(x, y, p);
+            }
+        }
+    });
+}
+
 }  // namespace
 
 void applyEffect(Bitmap& image, const Effect& effect, size_t frame, double pixelScale) {
@@ -661,6 +739,7 @@ void applyEffect(Bitmap& image, const Effect& effect, size_t frame, double pixel
         if (resolved.type == EffectType::ChromAb) scaleIf("amount");  // 色収差のずれ量(px)
         if (resolved.type == EffectType::Grain) scaleIf("size");      // 粒サイズ(px)
         if (resolved.type == EffectType::Film) scaleIf("grainSize");  // フィルム粒サイズ(px)
+        if (resolved.type == EffectType::AnaFlare) scaleIf("length");  // アナフレアの横筋の長さ(px)
     }
 
     switch (resolved.type) {
@@ -696,6 +775,9 @@ void applyEffect(Bitmap& image, const Effect& effect, size_t frame, double pixel
             break;
         case EffectType::Film:
             applyFilm(image, resolved, frame);
+            break;
+        case EffectType::AnaFlare:
+            applyAnaFlare(image, resolved);
             break;
     }
 }

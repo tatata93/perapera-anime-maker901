@@ -91,6 +91,10 @@ std::map<std::string, double> effectDefaultParams(EffectType type) {
                     {"respR0", 0.0},     {"respR1", 0.25},   {"respR2", 0.5},     {"respR3", 0.75}, {"respR4", 1.0},
                     {"respG0", 0.0},     {"respG1", 0.25},   {"respG2", 0.5},     {"respG3", 0.75}, {"respG4", 1.0},
                     {"respB0", 0.0},     {"respB1", 0.25},   {"respB2", 0.5},     {"respB3", 0.75}, {"respB4", 1.0}};
+        case EffectType::AnaFlare:
+            // アナモルフィック風: 明部を横に伸ばした青い筋+中心対称のゴースト(既定は青系)
+            return {{"threshold", 210.0}, {"intensity", 0.8}, {"length", 220.0},     {"ghosts", 3.0},
+                    {"ghostStrength", 0.5}, {"tintR", 0.35},  {"tintG", 0.6},        {"tintB", 1.0}};
     }
     return {};
 }
@@ -119,6 +123,8 @@ const char* effectTypeName(EffectType type) {
             return "色収差";
         case EffectType::Film:
             return "フィルム";
+        case EffectType::AnaFlare:
+            return "アナモルフィックフレア";
     }
     return "";
 }

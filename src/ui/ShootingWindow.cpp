@@ -60,6 +60,10 @@ QString paramLabel(const std::string& key) {
         {"fade", QObject::tr("黒浮き")},          {"warmth", QObject::tr("色温度")},
         {"crosstalk", QObject::tr("分光クロストーク")}, {"grain", QObject::tr("粒状")},
         {"grainSize", QObject::tr("粒サイズ")},
+        {"intensity", QObject::tr("強さ")},       {"length", QObject::tr("筋の長さ")},
+        {"ghosts", QObject::tr("ゴースト数")},    {"ghostStrength", QObject::tr("ゴースト強さ")},
+        {"tintR", QObject::tr("色R")},            {"tintG", QObject::tr("色G")},
+        {"tintB", QObject::tr("色B")},
     };
     const auto it = kLabels.find(key);
     if (it != kLabels.end()) return it->second;
@@ -77,7 +81,8 @@ QString paramLabel(const std::string& key) {
 bool isDensityParam(const std::string& key) {
     return key == "top" || key == "bottom" || key == "strength" || key == "amount" || key == "softness" ||
            key == "centerX" || key == "centerY" || key == "exposure" || key == "fade" || key == "warmth" ||
-           key == "crosstalk" || key == "grain";
+           key == "crosstalk" || key == "grain" || key == "intensity" || key == "ghostStrength" ||
+           key == "tintR" || key == "tintG" || key == "tintB";
 }
 
 bool isRgbParam(const std::string& key) { return key == "r" || key == "g" || key == "b"; }
@@ -100,6 +105,10 @@ std::pair<double, double> paramRange(core::EffectType type, const std::string& k
     if (key == "crosstalk") return {0.0, 0.5};
     if (key == "grain") return {0.0, 1.0};
     if (key == "grainSize") return {1.0, 4.0};
+    if (key == "intensity") return {0.0, 3.0};       // アナフレアの強さ
+    if (key == "ghosts") return {0.0, 8.0};          // ゴースト数
+    if (key == "ghostStrength") return {0.0, 2.0};
+    if (key == "tintR" || key == "tintG" || key == "tintB") return {0.0, 1.0};
     // resp{R|G|B}{0..4}: 層別応答カーブの制御点(0〜1)。グラフでしか編集しないが安全のため定義しておく
     if (key.rfind("resp", 0) == 0) return {0.0, 1.0};
     if (key == "amount") {
@@ -224,10 +233,11 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
         {core::EffectType::ColorCorrect, "色調補正"},
         {core::EffectType::Diffusion, "ディフュージョン"},
         {core::EffectType::RadialBlur, "放射ブラー"},
-        {core::EffectType::Vignette, "ビネット"},
+        {core::EffectType::Vignette, "ビネット(周辺減光)"},
         {core::EffectType::Grain, "グレイン"},
         {core::EffectType::ChromAb, "色収差"},
         {core::EffectType::Film, "フィルム"},
+        {core::EffectType::AnaFlare, "アナモルフィックフレア"},
     };
     for (const auto& entry : kTypes) {
         QAction* action = addMenu->addAction(QString::fromUtf8(entry.label));

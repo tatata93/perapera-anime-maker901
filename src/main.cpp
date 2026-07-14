@@ -13,6 +13,9 @@
 #include <filesystem>
 #include <fstream>
 
+#include "core/Bitmap.h"
+#include "core/Effect.h"
+#include "core/EffectProcessor.h"
 #include "core/Multiplane.h"
 #include "previz/PrevizViewport.h"
 #include "previz/PrevizWindow.h"
@@ -700,6 +703,31 @@ int main(int argc, char* argv[]) {
                 QApplication::exit(0);
             });
         });
+    }
+
+    // 動作確認用: --anaflare-test <出力PNG> で暗背景に輝点を置きアナモルフィックフレアを適用保存する
+    const int anaIdx = args.indexOf("--anaflare-test");
+    if (anaIdx >= 0 && anaIdx + 1 < args.size()) {
+        const QString out = args.at(anaIdx + 1);
+        core::Bitmap bmp(960, 540);
+        bmp.fill({18, 18, 24, 255});
+        const auto dot = [&](int cx, int cy, int r) {
+            for (int y = -r; y <= r; ++y)
+                for (int x = -r; x <= r; ++x)
+                    if (x * x + y * y <= r * r) {
+                        const int px = cx + x, py = cy + y;
+                        if (px >= 0 && py >= 0 && px < 960 && py < 540) bmp.setPixel(px, py, {255, 255, 255, 255});
+                    }
+        };
+        dot(300, 200, 10);
+        dot(660, 340, 6);
+        core::Effect e;
+        e.type = core::EffectType::AnaFlare;
+        e.enabled = true;
+        e.params = core::effectDefaultParams(core::EffectType::AnaFlare);
+        core::applyEffect(bmp, e, 0, 1.0);
+        const QImage img(bmp.data(), bmp.width(), bmp.height(), QImage::Format_RGBA8888);
+        return img.save(out) ? 0 : 1;
     }
 
     // 動作確認用: --previz-distort-test <歪みなしPNG> <魚眼PNG> でプリビズのカメラ絵を歪曲0/0.9で保存する

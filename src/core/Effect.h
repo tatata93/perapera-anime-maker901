@@ -9,7 +9,10 @@ namespace core {
 
 // 撮影エフェクトの種類
 // ColorCorrect以降は後から追加した種(ppamはint保存のため既存値の後ろに追加し、順序は変えない)
-enum class EffectType { Blur, Glow, Para, Shake, ColorCorrect, Diffusion, RadialBlur, Vignette, Grain, ChromAb, Film };
+enum class EffectType {
+    Blur, Glow, Para, Shake, ColorCorrect, Diffusion, RadialBlur, Vignette, Grain, ChromAb, Film,
+    AnaFlare  // アナモルフィックレンズ風のフレア/ゴースト(近似)。末尾追加でenum値の互換を保つ
+};
 
 // 撮影エフェクト1つ。カット単位のスタックとして順に適用される。
 // キーフレームはAfter Effects同様にプロパティ(パラメータ)単位で持つ:
