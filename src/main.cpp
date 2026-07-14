@@ -18,6 +18,7 @@
 #include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/EditWindow.h"
+#include "ui/ExportDialog.h"
 #include "ui/MainWindow.h"
 #include "ui/NewCutDialog.h"
 #include "ui/NewProjectDialog.h"
@@ -914,6 +915,34 @@ int main(int argc, char* argv[]) {
                 window.projectManagerWindow()->grab().save(outputPath);
                 QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
+        });
+    }
+
+    // 動作確認用: --exportdialog-test <PNG> で書き出しダイアログ(内容選択・詳細設定)を表示保存する
+    const int exportDlgIdx = args.indexOf("--exportdialog-test");
+    if (exportDlgIdx >= 0 && exportDlgIdx + 1 < args.size()) {
+        const QString outputPath = args.at(exportDlgIdx + 1);
+        QTimer::singleShot(300, &window, [outputPath] {
+            auto* d = new ExportDialog(QStringList{QStringLiteral("A"), QStringLiteral("B")}, 24);
+            d->show();
+            QTimer::singleShot(200, d, [d, outputPath] {
+                d->grab().save(outputPath);
+                QApplication::exit(0);
+            });
+        });
+    }
+    // 動作確認用: --exportmode-test <出力フォルダ> で作画/プリビズ/両方/透明の各モードを1枚ずつ書き出す
+    const int exportModeIdx = args.indexOf("--exportmode-test");
+    if (exportModeIdx >= 0 && exportModeIdx + 1 < args.size()) {
+        const QString dir = args.at(exportModeIdx + 1);
+        QTimer::singleShot(500, &window, [&window, dir] {
+            window.debugSetupEditDemo();
+            QDir().mkpath(dir);
+            const bool a = window.debugExportFrame(dir + "/drawing.png", 0, false);
+            const bool b = window.debugExportFrame(dir + "/drawing_alpha.png", 0, true);
+            const bool c = window.debugExportFrame(dir + "/previz.png", 1, false);
+            const bool d = window.debugExportFrame(dir + "/both.png", 2, false);
+            QApplication::exit((a && b && c && d) ? 0 : 1);
         });
     }
 

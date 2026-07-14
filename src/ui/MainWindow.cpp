@@ -12,6 +12,7 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPainter>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProcess>
@@ -3248,26 +3249,88 @@ void MainWindow::openExportDialog() {
         return;
     }
 
+    const ExportDialog::Content content = dialog.content();
+    const bool includeDrawing = content != ExportDialog::Content::Previz;
+    const bool includePreviz = content != ExportDialog::Content::Drawing;
+
     core::RenderOptions opts;
     opts.includeColorTrace = dialog.includeColorTrace();
     opts.includeCorrection = dialog.includeCorrection();
     opts.onlyCel = dialog.onlyCel();
     opts.useExportSamples = true;  // 書き出しはクラシック撮影を高サンプルでなめらかに
+    // 作画+プリビズ(Both)は作画を透明背景で合成してプリビズの上へ重ねる。
+    // 作画のみ(Drawing)はユーザーの透明背景指定に従う
+    opts.transparentBackground =
+        content == ExportDialog::Content::Both || (includeDrawing && dialog.transparentBackground());
+
+    // 出力解像度: キャンバス×スケール%(mp4のため常に2の倍数へ切り下げ)
+    const double scale = std::max(1, dialog.outputScalePercent()) / 100.0;
+    const int outW = std::max(2, static_cast<int>(std::lround(canvasWidth() * scale))) & ~1;
+    const int outH = std::max(2, static_cast<int>(std::lround(canvasHeight() * scale))) & ~1;
 
     // ダイアログのコマ番号は1始まり、renderCutFrame等の内部は0始まりなので変換する
     const int from = dialog.fromFrame() - 1;
     const int to = dialog.toFrame() - 1;
 
-    const bool success = dialog.format() == ExportDialog::Format::Sequence
-                              ? exportSequence(outputPath, from, to, opts)
-                              : exportMovie(outputPath, from, to, dialog.fps(), opts);
+    const bool success =
+        dialog.format() == ExportDialog::Format::Sequence
+            ? exportSequence(outputPath, from, to, opts, outW, outH, includeDrawing, includePreviz)
+            : exportMovie(outputPath, from, to, dialog.fps(), opts, outW, outH, includeDrawing, includePreviz);
+
+    // プリビズ書き出しでビューポートのシーン/コマを触った分を現在カットへ戻す
+    if (includePreviz && m_previzWindow) {
+        m_previzWindow->setScene(&activeCut().previz());
+        m_previzWindow->viewport()->setFrame(m_currentFrame);
+        if (m_previzUnderlay) updateUnderlay();
+    }
 
     if (success) {
         statusBar()->showMessage(tr("書き出しました: %1").arg(outputPath), 5000);
     }
 }
 
-bool MainWindow::exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts) {
+// カットのプリビズ(3Dレイアウト)を指定コマでレンダリングしoutW×outHのRGBA画像で返す。
+// プリビズ描画はGL(PrevizViewport)に依存するため、無ければ生成し、コンテキスト初期化のため
+// 未表示なら一度表示する(ユーザーがプリビズ出力を選んでいる文脈なので表示は許容)
+QImage MainWindow::renderPrevizExportImage(core::Cut& cut, size_t frame, int outW, int outH) {
+    if (!m_previzWindow) m_previzWindow = new PrevizWindow(this);
+    if (!m_previzWindow->isVisible()) {
+        m_previzWindow->show();  // QOpenGLWidgetのGLコンテキスト初期化を確実にする
+    }
+    m_previzWindow->setScene(&cut.previz());
+    PrevizViewport* vp = m_previzWindow->viewport();
+    vp->setFrame(frame);
+    const QImage img = vp->renderCameraViewImage(static_cast<float>(outW) / std::max(1, outH));
+    return img.scaled(outW, outH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+        .convertToFormat(QImage::Format_RGBA8888);
+}
+
+QImage MainWindow::renderExportFrameImage(core::Cut& cut, size_t frame, int outW, int outH,
+                                          const core::RenderOptions& opts, bool includeDrawing, bool includePreviz) {
+    QImage result(outW, outH, QImage::Format_RGBA8888);
+    if (includePreviz) {
+        result = renderPrevizExportImage(cut, frame, outW, outH);  // 不透明な3Dレイアウト
+    } else {
+        result.fill(opts.transparentBackground ? Qt::transparent : Qt::white);
+    }
+
+    if (includeDrawing) {
+        const core::Bitmap bmp = core::renderCutFrame(cut, frame, outW, outH, opts);
+        const QImage draw(bmp.data(), bmp.width(), bmp.height(), QImage::Format_RGBA8888);
+        if (includePreviz) {
+            // プリビズの上へ作画(透明背景)を重ねる
+            QPainter p(&result);
+            p.drawImage(0, 0, draw);
+            p.end();
+        } else {
+            result = draw.copy();  // 作画のみ(bmpの寿命に依存しないようコピー)
+        }
+    }
+    return result;
+}
+
+bool MainWindow::exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts, int outW,
+                                int outH, bool includeDrawing, bool includePreviz) {
     QDir outDir(dir);
     if (!outDir.exists() && !QDir().mkpath(dir)) return false;
 
@@ -3275,11 +3338,6 @@ bool MainWindow::exportSequence(const QString& dir, int from, int to, const core
     if (total <= 0) return false;
 
     core::Cut& cut = activeCut();
-
-    // mp4書き出し(libx264+yuv420p)は奇数解像度だと失敗するため、書き出しサイズは常に2の倍数へ
-    // 切り下げる(連番PNG単体の書き出しでも同じサイズに揃えることで挙動を一貫させる)
-    const int outW = canvasWidth() & ~1;
-    const int outH = canvasHeight() & ~1;
 
     QProgressDialog progress(tr("書き出し中..."), tr("キャンセル"), 0, total, this);
     progress.setWindowModality(Qt::WindowModal);
@@ -3290,9 +3348,7 @@ bool MainWindow::exportSequence(const QString& dir, int from, int to, const core
         if (progress.wasCanceled()) return false;
 
         const size_t frame = static_cast<size_t>(from + i);
-        const core::Bitmap bitmap = core::renderCutFrame(cut, frame, outW, outH, opts);
-        // コピーせずbitmapのデータへ直接QImageを被せてsave()する(bitmapの寿命内なので安全)
-        const QImage image(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
+        const QImage image = renderExportFrameImage(cut, frame, outW, outH, opts, includeDrawing, includePreviz);
         const QString path = outDir.filePath(QStringLiteral("frame_%1.png").arg(i + 1, 4, 10, QChar('0')));
         if (!image.save(path)) return false;
     }
@@ -3300,11 +3356,12 @@ bool MainWindow::exportSequence(const QString& dir, int from, int to, const core
     return true;
 }
 
-bool MainWindow::exportMovie(const QString& mp4Path, int from, int to, int fps, const core::RenderOptions& opts) {
+bool MainWindow::exportMovie(const QString& mp4Path, int from, int to, int fps, const core::RenderOptions& opts,
+                            int outW, int outH, bool includeDrawing, bool includePreviz) {
     // 連番PNGを一時フォルダに書き出してからffmpegでエンコードする
     QTemporaryDir tempDir;
     if (!tempDir.isValid()) return false;
-    if (!exportSequence(tempDir.path(), from, to, opts)) return false;
+    if (!exportSequence(tempDir.path(), from, to, opts, outW, outH, includeDrawing, includePreviz)) return false;
 
     const QString framePattern = QDir(tempDir.path()).filePath(QStringLiteral("frame_%04d.png"));
 
@@ -3426,7 +3483,22 @@ int MainWindow::debugExportSequence(const QString& dir) {
     debugSetupXsheetDemo();  // 尺6・2コマ打ちのデモを組む
     core::Cut& cut = activeCut();
     const core::RenderOptions opts;
-    return exportSequence(dir, 0, static_cast<int>(cut.frameCount()) - 1, opts) ? 0 : 1;
+    const int outW = canvasWidth() & ~1;
+    const int outH = canvasHeight() & ~1;
+    return exportSequence(dir, 0, static_cast<int>(cut.frameCount()) - 1, opts, outW, outH, true, false) ? 0 : 1;
+}
+
+bool MainWindow::debugExportFrame(const QString& pngPath, int mode, bool transparent) {
+    core::Cut& cut = activeCut();
+    core::RenderOptions opts;
+    opts.useExportSamples = true;
+    const bool includeDrawing = mode != 1;
+    const bool includePreviz = mode != 0;
+    opts.transparentBackground = (mode == 2) || (includeDrawing && transparent);
+    const int outW = canvasWidth() & ~1;
+    const int outH = canvasHeight() & ~1;
+    const QImage img = renderExportFrameImage(cut, 0, outW, outH, opts, includeDrawing, includePreviz);
+    return img.save(pngPath);
 }
 
 void MainWindow::checkAutosaveRecovery() {

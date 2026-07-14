@@ -22,6 +22,9 @@ struct RenderOptions {
     // (レイトレースのノイズを減らしてなめらかにする)。falseは作業用の setup.samplesPerPixel。
     // 書き出し(連番PNG/mp4)でのみtrueにする
     bool useExportSamples = false;
+    // 背景を透明にする: trueなら紙(白)の下地を敷かず、透明キャンバスへ作画だけを合成する。
+    // 透明PNG書き出しや、プリビズ等の別レイヤーの上へ作画を重ねる合成に使う(デジタル合成のみ対応)
+    bool transparentBackground = false;
     // クラシック撮影のプレビュー高速化: trueならレンズ絞り(被写界深度)を無効化して
     // ピンホール(1レイ/px)で合成する。DoFのモンテカルロ・サンプリングを丸ごと省くため
     // 圧倒的に速く、かつノイズが出ない(ボケは無くなる=シャープになる)。撮影ウィンドウの

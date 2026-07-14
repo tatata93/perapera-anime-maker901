@@ -28,6 +28,7 @@ class TapPanel;
 class XsheetPanel;
 class QCheckBox;
 class QCloseEvent;
+class QImage;
 class QComboBox;
 class QDialog;
 class QLabel;
@@ -109,6 +110,8 @@ public:
     // 書き出し確認用: タイムシートデモ(尺6・2コマ打ち)を組んでから全コマを連番PNGで書き出す。
     // 成功時0、失敗時1を返す
     int debugExportSequence(const QString& dir);
+    // 動作確認用: アクティブカットのコマ0を指定モード(0=作画/1=プリビズ/2=両方)で1枚書き出す
+    bool debugExportFrame(const QString& pngPath, int mode, bool transparent);
     // タップ移動確認用: 1枚の動画を尺3で止めにし、位置キー(コマ1=原点、コマ3=右下)を打つ
     void debugSetupTapDemo();
     // カメラフレーム確認用: ストローク1本+コマ0(中心・100%)とコマ23(左上寄り・50%)に
@@ -334,8 +337,15 @@ private:
 
     // 書き出し
     void openExportDialog();
-    bool exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts);
-    bool exportMovie(const QString& mp4Path, int from, int to, int fps, const core::RenderOptions& opts);
+    bool exportSequence(const QString& dir, int from, int to, const core::RenderOptions& opts, int outW, int outH,
+                        bool includeDrawing, bool includePreviz);
+    bool exportMovie(const QString& mp4Path, int from, int to, int fps, const core::RenderOptions& opts, int outW,
+                     int outH, bool includeDrawing, bool includePreviz);
+    // 1コマ分の最終画像(作画/プリビズ/両方)をoutW×outHで作る。書き出しの共通描画
+    QImage renderExportFrameImage(core::Cut& cut, size_t frame, int outW, int outH, const core::RenderOptions& opts,
+                                  bool includeDrawing, bool includePreviz);
+    // カットのプリビズ(3Dレイアウト)を指定コマでoutW×outHのQImageへレンダリングする
+    QImage renderPrevizExportImage(core::Cut& cut, size_t frame, int outW, int outH);
 
     std::unique_ptr<core::Project> m_project;
     core::CommandStack m_commands;

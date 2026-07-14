@@ -135,6 +135,36 @@ void blendOver(Bitmap& dst, const Bitmap& src, int offsetX, int offsetY) {
     }
 }
 
+// 透明背景対応のsrc-over合成。blendOverはdst不透明前提でd.a=255に固定するため、
+// 透明キャンバスへ重ねると縁が黒へ寄って不正になる。こちらは出力アルファ
+// (oa = sa + da*(1-sa))を正しく計算し、色は非プリマルチプライドで合成する(透明PNG・
+// 別レイヤー(プリビズ等)の上への重ね合成用)。
+void blendOverTransparent(Bitmap& dst, const Bitmap& src, int offsetX, int offsetY) {
+    const int x0 = std::max(0, offsetX);
+    const int y0 = std::max(0, offsetY);
+    const int x1 = std::min(dst.width(), src.width() + offsetX);
+    const int y1 = std::min(dst.height(), src.height() + offsetY);
+    for (int y = y0; y < y1; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            const Bitmap::Pixel s = src.pixel(x - offsetX, y - offsetY);
+            if (s.a == 0) continue;
+            const Bitmap::Pixel d = dst.pixel(x, y);
+            const float sa = s.a / 255.0f;
+            const float da = d.a / 255.0f;
+            const float oa = sa + da * (1.0f - sa);
+            if (oa <= 0.0f) {
+                dst.setPixel(x, y, {0, 0, 0, 0});
+                continue;
+            }
+            const auto ch = [&](uint8_t sc, uint8_t dc) {
+                return static_cast<uint8_t>(std::lround((sc * sa + dc * da * (1.0f - sa)) / oa));
+            };
+            dst.setPixel(x, y, {ch(s.r, d.r), ch(s.g, d.g), ch(s.b, d.b),
+                                static_cast<uint8_t>(std::lround(oa * 255.0f))});
+        }
+    }
+}
+
 // カメラフレーム(画面に写る範囲)でsrcをクロップ+バイリニア補間でリサンプルする。
 // 出力は同じwidth×height。切り出し矩形はキャンバス外にはみ出すことがあり、
 // その場合は紙(白)として扱う
@@ -578,7 +608,8 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
     }
 
     Bitmap out(outW, outH);
-    out.fill({255, 255, 255, 255});  // 紙(白)
+    // 透明背景指定時は紙(白)を敷かず透明のまま。作画レイヤーだけがアルファ付きで合成される
+    out.fill(options.transparentBackground ? Bitmap::Pixel{0, 0, 0, 0} : Bitmap::Pixel{255, 255, 255, 255});
 
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
         if (options.onlyCel >= 0 && static_cast<size_t>(options.onlyCel) != ci) continue;
@@ -620,7 +651,10 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
 
                 const Bitmap& src = layer.frame(static_cast<size_t>(drawing)).bitmap();
                 if (src.isEmpty()) continue;
-                blendOver(out, src, offsetX, offsetY);
+                if (options.transparentBackground)
+                    blendOverTransparent(out, src, offsetX, offsetY);
+                else
+                    blendOver(out, src, offsetX, offsetY);
             }
         } else {
             // エフェクトあり(またはプロキシ): セルのレイヤーをまずセル自身の座標系(0,0起点)の
@@ -631,7 +665,10 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
                 // マスクはセルの画面配置オフセット(タップ移動、フル解像度座標)を考慮して参照する
                 for (const Effect* effect : celEffects)
                     applyEffectWithMask(celImage, *effect, frame, offsetX, offsetY, s);
-                blendOver(out, celImage, outOffsetX, outOffsetY);
+                if (options.transparentBackground)
+                    blendOverTransparent(out, celImage, outOffsetX, outOffsetY);
+                else
+                    blendOver(out, celImage, outOffsetX, outOffsetY);
             }
         }
     }

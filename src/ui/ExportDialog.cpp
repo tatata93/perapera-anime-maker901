@@ -43,6 +43,13 @@ ExportDialog::ExportDialog(const QStringList& celNames, int frameCount, QWidget*
     }
     formLayout->addRow(tr("形式:"), m_formatCombo);
 
+    // 含める内容(作画/プリビズ/両方)。書き出しに何を入れるかを選ぶ
+    m_contentCombo = new QComboBox(this);
+    m_contentCombo->addItem(tr("作画のみ"));
+    m_contentCombo->addItem(tr("プリビズのみ"));
+    m_contentCombo->addItem(tr("作画+プリビズ"));
+    formLayout->addRow(tr("含める内容:"), m_contentCombo);
+
     // 出力先: 形式に応じて参照ボタンの動作(フォルダ選択/保存ファイル名)を切り替える
     auto* outputRow = new QWidget(this);
     auto* outputLayout = new QHBoxLayout(outputRow);
@@ -90,6 +97,17 @@ ExportDialog::ExportDialog(const QStringList& celNames, int frameCount, QWidget*
     m_correctionCheck = new QCheckBox(tr("作監修正を含める"), this);
     formLayout->addRow(QString(), m_correctionCheck);
 
+    // 透明背景: 連番PNG+作画のみで有効(アルファ付きPNG)
+    m_transparentCheck = new QCheckBox(tr("背景を透明にする(連番PNG・作画のみ)"), this);
+    formLayout->addRow(QString(), m_transparentCheck);
+
+    // 出力解像度スケール(%)。100=キャンバス等倍
+    m_scaleSpin = new QSpinBox(this);
+    m_scaleSpin->setRange(10, 400);
+    m_scaleSpin->setValue(100);
+    m_scaleSpin->setSuffix(tr(" %"));
+    formLayout->addRow(tr("出力スケール:"), m_scaleSpin);
+
     // FPS: mp4書き出し時のみ有効
     m_fpsSpin = new QSpinBox(this);
     m_fpsSpin->setRange(1, 60);
@@ -106,12 +124,22 @@ ExportDialog::ExportDialog(const QStringList& celNames, int frameCount, QWidget*
     mainLayout->addWidget(m_buttonBox);
 
     connect(m_formatCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) { updateFormatDependentUi(); });
+    connect(m_contentCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) { updateFormatDependentUi(); });
     updateFormatDependentUi();
 }
 
 void ExportDialog::updateFormatDependentUi() {
     const bool isMovie = format() == Format::Movie;
     m_fpsSpin->setEnabled(isMovie);
+
+    const bool drawingOnly = content() == Content::Drawing;
+    // 対象セル・色トレス/作監修正は「作画」を含むときだけ意味がある
+    const bool hasDrawing = content() != Content::Previz;
+    m_celCombo->setEnabled(hasDrawing);
+    m_colorTraceCheck->setEnabled(hasDrawing);
+    m_correctionCheck->setEnabled(hasDrawing);
+    // 透明背景は 連番PNG かつ 作画のみ のときだけ有効(動画・プリビズ含みは不透明)
+    m_transparentCheck->setEnabled(!isMovie && drawingOnly);
 }
 
 void ExportDialog::browseOutputPath() {
@@ -127,6 +155,17 @@ void ExportDialog::browseOutputPath() {
 
 ExportDialog::Format ExportDialog::format() const {
     return m_formatCombo->currentIndex() == 1 ? Format::Movie : Format::Sequence;
+}
+
+ExportDialog::Content ExportDialog::content() const {
+    switch (m_contentCombo->currentIndex()) {
+        case 1:
+            return Content::Previz;
+        case 2:
+            return Content::Both;
+        default:
+            return Content::Drawing;
+    }
 }
 
 QString ExportDialog::outputPath() const {
@@ -151,6 +190,15 @@ bool ExportDialog::includeColorTrace() const {
 
 bool ExportDialog::includeCorrection() const {
     return m_correctionCheck->isChecked();
+}
+
+bool ExportDialog::transparentBackground() const {
+    // UIで無効化されている条件(動画/プリビズ含み)では常にfalse
+    return m_transparentCheck->isEnabled() && m_transparentCheck->isChecked();
+}
+
+int ExportDialog::outputScalePercent() const {
+    return m_scaleSpin->value();
 }
 
 int ExportDialog::fps() const {
