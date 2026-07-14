@@ -155,6 +155,13 @@ public:
     // グローバルコマ18(カット2内)へシークする
     void debugSetupEditDemo();
 
+    // 総合テスト用: 絵コンテ・プリビズ・作画・撮影(マルチプレーン/透過光/エフェクト)を使った
+    // 10秒(240コマ/3カット)のサンプル作品「流星の夜」をm_projectへ構築する
+    void debugBuildSampleWork();
+    // 上記を構築し、確認用PNG(各カット代表コマ・プリビズ・絵コンテ)をpreviewDirへ、
+    // プロジェクト本体を.ppproj(folder)へ保存する。成功でtrue
+    bool debugBuildAndSaveWork(const QString& folder, const QString& previewDir);
+
     // 撮影ウィンドウ確認用
     ShootingWindow* shootingWindow() const { return m_shootingWindow; }
     // 撮影デモ確認用: ストローク1本を描いて尺24の止めにし、全体ブラー(コマ0=半径0→

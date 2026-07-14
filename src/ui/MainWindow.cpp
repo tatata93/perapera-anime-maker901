@@ -2163,6 +2163,359 @@ void MainWindow::debugSetupShootingDemo() {
     m_shootingWindow->debugSelectKoma(12);
 }
 
+void MainWindow::debugBuildSampleWork() {
+    const int W = 1920, H = 1080;
+    using Px = core::Bitmap::Pixel;
+
+    // --- 描画ヘルパー ---
+    auto fillCircle = [](core::Bitmap& b, int cx, int cy, int r, Px c) {
+        for (int y = -r; y <= r; ++y)
+            for (int x = -r; x <= r; ++x)
+                if (x * x + y * y <= r * r) {
+                    const int px = cx + x, py = cy + y;
+                    if (px >= 0 && py >= 0 && px < b.width() && py < b.height()) b.setPixel(px, py, c);
+                }
+    };
+    auto punchCircle = [](core::Bitmap& b, int cx, int cy, int r) {  // アルファ0の穴(透過光を抜く)
+        for (int y = -r; y <= r; ++y)
+            for (int x = -r; x <= r; ++x)
+                if (x * x + y * y <= r * r) {
+                    const int px = cx + x, py = cy + y;
+                    if (px >= 0 && py >= 0 && px < b.width() && py < b.height()) b.setPixel(px, py, {0, 0, 0, 0});
+                }
+    };
+    auto fillRow = [](core::Bitmap& b, int x0, int x1, int y, Px c) {
+        if (y < 0 || y >= b.height()) return;
+        for (int x = std::max(0, x0); x < std::min(b.width(), x1); ++x) b.setPixel(x, y, c);
+    };
+    auto scatterStars = [&](core::Bitmap& b, int n, unsigned seed) {
+        unsigned s = seed;
+        auto rnd = [&]() { s = s * 1664525u + 1013904223u; return (s >> 8) & 0xFFFF; };
+        for (int i = 0; i < n; ++i) {
+            const int x = rnd() % W, y = rnd() % (H * 3 / 5), r = (rnd() % 4 == 0) ? 2 : 1;
+            const int v = 190 + static_cast<int>(rnd() % 60);
+            fillCircle(b, x, y, r, {static_cast<uint8_t>(v), static_cast<uint8_t>(v),
+                                    static_cast<uint8_t>(std::min(255, v + 15)), 255});
+        }
+    };
+    auto drawHill = [&](core::Bitmap& b, Px c, int baseY) {
+        for (int x = 0; x < W; ++x) {
+            const int top = baseY + static_cast<int>(35.0 * std::sin(x * 0.006)) +
+                            static_cast<int>(16.0 * std::sin(x * 0.017 + 1.0));
+            for (int y = std::max(0, top); y < H; ++y) b.setPixel(x, y, c);
+        }
+    };
+    auto drawFigure = [&](core::Bitmap& b, int cx, int groundY, Px c, double scale) {
+        const int headR = static_cast<int>(30 * scale), headY = groundY - static_cast<int>(240 * scale);
+        fillCircle(b, cx, headY, headR, c);
+        const int shoulderY = headY + headR;
+        for (int y = shoulderY; y < groundY; ++y) {
+            const double t = static_cast<double>(y - shoulderY) / std::max(1, groundY - shoulderY);
+            const int halfW = static_cast<int>((16 + t * 72) * scale);
+            fillRow(b, cx - halfW, cx + halfW, y, c);
+        }
+    };
+
+    // --- プロジェクト再構築 ---
+    m_project = std::make_unique<core::Project>("流星の夜");
+    m_project->setCanvasSize(W, H);
+    core::Scene& scene = m_project->addScene("Scene 1");
+    if (m_fpsSpin) m_fpsSpin->setValue(24);
+
+    const Px kSky{14, 18, 44, 255}, kSkyDark{8, 10, 24, 255}, kHill{5, 7, 16, 255}, kMoon{236, 240, 220, 255},
+        kSil{3, 4, 10, 255};
+
+    auto addEffect = [&](core::Cut& c, core::EffectType t) -> core::Effect& {
+        core::Effect e;
+        e.type = t;
+        e.enabled = true;
+        e.targetCel = -1;
+        e.params = core::effectDefaultParams(t);
+        c.effects().push_back(std::move(e));
+        return c.effects().back();
+    };
+    auto paintSky = [&](core::Bitmap& b, Px skyCol) {
+        b.fill(skyCol);
+        scatterStars(b, 90, 12345u);
+        fillCircle(b, 1480, 300, 120, kMoon);
+    };
+
+    // ============ カット1「夜空」(72コマ) ============
+    {
+        core::Cut& cut = scene.addCut("C1 夜空");
+        cut.setStatus(core::CutStatus::Shooting);
+        cut.setAction("満天の星空と大きな月。丘のシルエット。ゆっくり寄る(T.U.)。");
+        cut.setDialogue("(SE: 夜の虫の声)");
+        cut.setFrameCount(72);
+        core::Cel& sky = cut.addCel("空");
+        core::Bitmap skyBmp = makeTransparentCel(W, H);
+        paintSky(skyBmp, kSky);
+        sky.addLayer("背景").addFrame().bitmap() = skyBmp;
+        for (size_t t = 0; t < 72; ++t) sky.setExposure(t, 0);
+        core::Cel& hill = cut.addCel("丘");
+        core::Bitmap hillBmp = makeTransparentCel(W, H);
+        drawHill(hillBmp, kHill, 850);
+        hill.addLayer("前景").addFrame().bitmap() = hillBmp;
+        for (size_t t = 0; t < 72; ++t) hill.setExposure(t, 0);
+        cut.setCameraKey(0, core::CameraFrameState{{960.0f, 540.0f}, 1.0});
+        cut.setCameraKey(71, core::CameraFrameState{{1200.0f, 430.0f}, 0.82});
+        addEffect(cut, core::EffectType::Film);
+        addEffect(cut, core::EffectType::Vignette).params["amount"] = 0.5;
+        core::PrevizScene& pv = cut.previz();
+        {
+            core::PrevizModel m;
+            m.name = "丘";
+            m.filePath = ":box";
+            m.transform.scale = {6, 0.5f, 4};
+            pv.models.push_back(m);
+        }
+        {
+            core::PrevizModel m;
+            m.name = "月";
+            m.filePath = ":sphere";
+            m.transform.position = {3, 3, -6};
+            m.transform.scale = {1.5f, 1.5f, 1.5f};
+            pv.models.push_back(m);
+        }
+        pv.camera.state.position = {0, 1.5f, 9};
+        pv.camera.state.focalLengthMm = 35;
+        pv.camera.keys[0] = pv.camera.state;
+        core::PrevizCameraState s = pv.camera.state;
+        s.position = {0.6f, 1.8f, 7};
+        pv.camera.keys[71] = s;
+    }
+
+    // ============ カット2「見上げる」(96コマ、クラシック撮影+透過光) ============
+    {
+        core::Cut& cut = scene.addCut("C2 見上げる");
+        cut.setStatus(core::CutStatus::Shooting);
+        cut.setAction("丘の上の人物のシルエットが夜空を見上げる。月は透過光でぼけて光る。被写界深度で人物にピント。");
+        cut.setDialogue("…きれい");
+        cut.setFrameCount(96);
+        core::Cel& skyCel = cut.addCel("夜空");
+        core::Bitmap skyBmp = makeTransparentCel(W, H);
+        skyBmp.fill(kSkyDark);
+        punchCircle(skyBmp, 1480, 300, 120);  // 月の穴(透過光が抜けて光る)
+        {
+            unsigned s = 777;
+            auto rnd = [&]() { s = s * 1664525u + 1013904223u; return (s >> 8) & 0xFFFF; };
+            for (int i = 0; i < 45; ++i) punchCircle(skyBmp, rnd() % W, rnd() % (H / 2), 1);  // 星の穴
+        }
+        skyCel.addLayer("背景").addFrame().bitmap() = skyBmp;
+        for (size_t t = 0; t < 96; ++t) skyCel.setExposure(t, 0);
+        core::Cel& figCel = cut.addCel("人物");
+        core::Bitmap figBmp = makeTransparentCel(W, H);
+        drawHill(figBmp, kHill, 880);
+        drawFigure(figBmp, 900, 900, kSil, 1.0);
+        figCel.addLayer("前景").addFrame().bitmap() = figBmp;
+        for (size_t t = 0; t < 96; ++t) figCel.setExposure(t, 0);
+        core::MultiplaneSetup& mp = cut.multiplane();
+        mp.enabled = true;
+        mp.camera.focalLengthMm = 50;
+        mp.camera.sensorWidthMm = 36;
+        mp.camera.apertureFStop = 2.8;
+        mp.camera.focusDistanceMm = 350;
+        mp.samplesPerPixel = 8;
+        mp.exportSamplesPerPixel = 96;
+        mp.planes.clear();
+        {
+            core::MultiplaneCelPlane p;
+            p.celIndex = 0;
+            p.distanceMm = 1600;
+            p.widthMm = 2000;
+            mp.planes.push_back(p);
+        }
+        {
+            core::MultiplaneCelPlane p;
+            p.celIndex = 1;
+            p.distanceMm = 350;
+            p.widthMm = 520;
+            mp.planes.push_back(p);
+        }
+        core::MultiplaneBacklight bl;
+        bl.name = "月光";
+        bl.enabled = true;
+        bl.intensity = 5.0;
+        bl.colorR = 0.85;
+        bl.colorG = 0.9;
+        bl.colorB = 1.0;
+        bl.bloomRadiusPx = 48;
+        bl.bloomStrength = 0.9;
+        bl.paintTransmittance = 0.03;
+        mp.backlights.push_back(bl);
+        addEffect(cut, core::EffectType::Vignette).params["amount"] = 0.55;
+        addEffect(cut, core::EffectType::Film);
+        core::PrevizScene& pv = cut.previz();
+        {
+            core::PrevizModel m;
+            m.name = "人物";
+            m.filePath = ":box";
+            m.transform.position = {0, 0.9f, 1.5f};
+            m.transform.scale = {0.35f, 1.8f, 0.35f};
+            pv.models.push_back(m);
+        }
+        {
+            core::PrevizModel m;
+            m.name = "月";
+            m.filePath = ":sphere";
+            m.transform.position = {3, 3, -8};
+            m.transform.scale = {1.6f, 1.6f, 1.6f};
+            pv.models.push_back(m);
+        }
+        pv.camera.state.position = {0, 1.6f, 6};
+        pv.camera.state.focalLengthMm = 50;
+        pv.camera.keys[0] = pv.camera.state;
+        core::PrevizCameraState s = pv.camera.state;
+        s.position = {0, 1.7f, 5.2f};
+        pv.camera.keys[95] = s;
+    }
+
+    // ============ カット3「流星」(72コマ、アナモルフィックフレア) ============
+    {
+        core::Cut& cut = scene.addCut("C3 流星");
+        cut.setStatus(core::CutStatus::Shooting);
+        cut.setAction("流星が斜めに流れ、アナモルフィックな青い光条が走る。人物が見つめる。");
+        cut.setDialogue("あ——");
+        cut.setFrameCount(72);
+        core::Cel& sky = cut.addCel("空");
+        core::Bitmap skyBmp = makeTransparentCel(W, H);
+        paintSky(skyBmp, kSky);
+        sky.addLayer("背景").addFrame().bitmap() = skyBmp;
+        for (size_t t = 0; t < 72; ++t) sky.setExposure(t, 0);
+        core::Cel& figCel = cut.addCel("人物");
+        core::Bitmap figBmp = makeTransparentCel(W, H);
+        drawHill(figBmp, kHill, 880);
+        drawFigure(figBmp, 900, 900, kSil, 1.0);
+        figCel.addLayer("前景").addFrame().bitmap() = figBmp;
+        for (size_t t = 0; t < 72; ++t) figCel.setExposure(t, 0);
+        core::Cel& star = cut.addCel("流星");
+        core::Layer& starLayer = star.addLayer("流星");
+        const int N = 16;
+        for (int i = 0; i < N; ++i) {
+            core::Bitmap sb = makeTransparentCel(W, H);
+            const double t = static_cast<double>(i) / (N - 1);
+            const double x0 = 260 + t * 1180, y0 = 130 + t * 360;
+            std::vector<QPointF> pts;
+            for (int k = 0; k < 8; ++k) {
+                const double u = k / 7.0;
+                pts.push_back(QPointF(x0 - u * 170, y0 - u * 54));
+            }
+            drawPenStroke(sb, pts, QColor(255, 255, 255, 255), 5.0f);
+            fillCircle(sb, static_cast<int>(x0), static_cast<int>(y0), 6, {255, 255, 255, 255});
+            starLayer.addFrame().bitmap() = sb;
+        }
+        for (size_t t = 0; t < 72; ++t) {
+            if (t >= 8 && t < 8 + static_cast<size_t>(N) * 4)
+                star.setExposure(t, std::min(static_cast<int>((t - 8) / 4), N - 1));
+            else
+                star.setExposure(t, -1);  // 流星の出ないコマ
+        }
+        {
+            core::Effect& a = addEffect(cut, core::EffectType::AnaFlare);
+            a.params["intensity"] = 1.0;
+            a.params["length"] = 260.0;
+        }
+        addEffect(cut, core::EffectType::Vignette).params["amount"] = 0.5;
+        addEffect(cut, core::EffectType::Film);
+        core::PrevizScene& pv = cut.previz();
+        {
+            core::PrevizModel m;
+            m.name = "人物";
+            m.filePath = ":box";
+            m.transform.position = {0, 0.9f, 1.5f};
+            m.transform.scale = {0.35f, 1.8f, 0.35f};
+            pv.models.push_back(m);
+        }
+        {
+            core::PrevizModel m;
+            m.name = "流星";
+            m.filePath = ":sphere";
+            m.transform.position = {-4, 4, -6};
+            m.transform.scale = {0.15f, 0.15f, 0.15f};
+            m.transformKeys[8] = m.transform;
+            core::PrevizTransform e = m.transform;
+            e.position = {4, 1.5f, -6};
+            m.transformKeys[64] = e;
+            pv.models.push_back(m);
+        }
+        pv.camera.state.position = {0, 1.6f, 6};
+        pv.camera.state.focalLengthMm = 40;
+        pv.camera.lensDistortion = 0.1f;  // ほんの少し歪ませて空気感を出す
+        pv.camera.keys[0] = pv.camera.state;
+    }
+
+    // --- 絵コンテ(3パネル、コンテ用紙1920x600にラフを描く) ---
+    auto& panels = scene.storyboard();
+    panels.clear();
+    constexpr int SBW = 1920, SBH = 600;
+    auto makePanel = [&](const char* label, const char* action, const char* dialogue, int dur) {
+        core::StoryboardPanel p;
+        p.drawing = core::Bitmap(SBW, SBH);
+        p.drawing.fill({0, 0, 0, 0});
+        p.cutLabel = label;
+        p.action = action;
+        p.dialogue = dialogue;
+        p.durationFrames = static_cast<size_t>(dur);
+        return p;
+    };
+    {
+        core::StoryboardPanel p = makePanel("1", "満天の星空・大きな月・丘。ゆっくり寄る(T.U.)。", "(SE: 虫の声)", 72);
+        fillCircle(p.drawing, 820, 150, 55, {40, 40, 40, 255});
+        std::vector<QPointF> ridge;
+        for (int i = 0; i <= 10; ++i) ridge.push_back(QPointF(150 + i * 94, 470 + (i % 2 ? 18 : -10)));
+        drawPenStroke(p.drawing, ridge, QColor(30, 30, 30), 4.0f);
+        drawPenStroke(p.drawing, {{320, 300}, {520, 250}}, QColor(200, 40, 40), 3.0f);  // 寄り矢印
+        panels.push_back(p);
+    }
+    {
+        core::StoryboardPanel p = makePanel("2", "丘の上の人物が空を見上げる。月は透過光でぼける。", "「…きれい」", 96);
+        fillCircle(p.drawing, 900, 120, 45, {40, 40, 40, 255});
+        drawFigure(p.drawing, 560, 520, {30, 30, 30, 255}, 1.0);
+        panels.push_back(p);
+    }
+    {
+        core::StoryboardPanel p = makePanel("3", "流星が斜めに流れ、青い光条(アナモルフィック)。", "「あ——」", 72);
+        drawPenStroke(p.drawing, {{250, 120}, {640, 320}}, QColor(40, 40, 40), 4.0f);
+        drawFigure(p.drawing, 560, 520, {30, 30, 30, 255}, 1.0);
+        panels.push_back(p);
+    }
+
+    m_activeCut = 0;
+    m_currentFrame = 0;
+    m_activeCel = 0;
+    m_activeLayer = 0;
+    m_canvas->setCanvasSize(W, H);
+    m_canvas->clearTextureCache();
+    updateCanvasLayers();
+    updateOnionSkin();
+}
+
+bool MainWindow::debugBuildAndSaveWork(const QString& folder, const QString& previewDir) {
+    debugBuildSampleWork();
+    QDir().mkpath(previewDir);
+    core::Scene& sc = m_project->scene(0);
+    const int W = canvasWidth(), H = canvasHeight();
+    // 各カットの代表コマを縮小(proxy 0.5)で描いて確認用に保存する
+    core::RenderOptions opts;
+    opts.proxyScale = 0.5;
+    const size_t picks[3] = {60, 48, 32};
+    for (int i = 0; i < 3; ++i) {
+        core::Cut& c = sc.cut(static_cast<size_t>(i));
+        const size_t f = std::min(picks[i], c.frameCount() - 1);
+        const core::Bitmap bmp = core::renderCutFrame(c, f, W, H, opts);
+        const QImage img(bmp.data(), bmp.width(), bmp.height(), QImage::Format_RGBA8888);
+        img.save(previewDir + QStringLiteral("/cut%1.png").arg(i + 1));
+    }
+    // プリビズ(C3)の確認
+    renderPrevizExportImage(sc.cut(2), 30, W, H).save(previewDir + QStringLiteral("/previz_c3.png"));
+    // 絵コンテウィンドウの確認
+    openStoryboardWindow();
+    m_storyboardWindow->grab().save(previewDir + QStringLiteral("/storyboard.png"));
+    // .ppprojへ保存
+    std::string err;
+    return core::ProjectIO::save(*m_project, std::filesystem::path(folder.toStdWString()), &err);
+}
+
 void MainWindow::debugSetupClassicDemo() {
     // クラシック撮影(マルチプレーン撮影台)確認用: セルA=赤い矩形枠(遠景、距離500mm/幅400mm)、
     // セルB=左寄り緑丸(近景、距離300mm/幅300mm)を作り、f/2.0・フォーカス500mm・samples=8で

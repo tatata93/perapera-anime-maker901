@@ -705,6 +705,18 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // サンプル作品生成: --build-work <.ppprojフォルダ> <確認用PNGフォルダ> で10秒の作品「流星の夜」を
+    // 構築し、確認用PNGとプロジェクトを保存する
+    const int buildWorkIdx = args.indexOf("--build-work");
+    if (buildWorkIdx >= 0 && buildWorkIdx + 2 < args.size()) {
+        const QString folder = args.at(buildWorkIdx + 1);
+        const QString previewDir = args.at(buildWorkIdx + 2);
+        QTimer::singleShot(400, &window, [&window, folder, previewDir] {
+            const bool ok = window.debugBuildAndSaveWork(folder, previewDir);
+            QApplication::exit(ok ? 0 : 1);
+        });
+    }
+
     // 動作確認用: --anaflare-test <出力PNG> で暗背景に輝点を置きアナモルフィックフレアを適用保存する
     const int anaIdx = args.indexOf("--anaflare-test");
     if (anaIdx >= 0 && anaIdx + 1 < args.size()) {
