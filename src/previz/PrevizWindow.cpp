@@ -112,7 +112,9 @@ core::PrevizHumanoidBody humanoidBodyPreset(int presetIndex) {
     switch (presetIndex) {
         case 1:  // adult
             body.headScale = 0.92f;
+            body.headHeight = 1.06f;
             body.torsoLength = 1.08f;
+            body.chestHeight = 1.06f;
             body.chestWidth = 1.08f;
             body.bellyWidth = 0.98f;
             body.waistWidth = 0.92f;
@@ -123,7 +125,10 @@ core::PrevizHumanoidBody humanoidBodyPreset(int presetIndex) {
             break;
         case 2:  // child
             body.headScale = 1.28f;
+            body.headWidth = 1.05f;
+            body.headDepth = 1.06f;
             body.torsoLength = 0.86f;
+            body.bellyHeight = 1.08f;
             body.chestWidth = 0.82f;
             body.bellyWidth = 0.88f;
             body.waistWidth = 0.84f;
@@ -138,29 +143,45 @@ core::PrevizHumanoidBody humanoidBodyPreset(int presetIndex) {
             break;
         case 3:  // sturdy
             body.headScale = 1.02f;
+            body.headDepth = 1.08f;
             body.torsoLength = 1.02f;
             body.chestWidth = 1.28f;
+            body.chestDepth = 1.18f;
             body.bellyWidth = 1.22f;
+            body.bellyDepth = 1.15f;
             body.waistWidth = 1.18f;
             body.shoulderWidth = 1.18f;
             body.hipWidth = 1.16f;
             body.armLength = 0.96f;
             body.armThickness = 1.28f;
+            body.armDepth = 1.18f;
             body.legLength = 0.96f;
             body.legThickness = 1.30f;
+            body.legDepth = 1.18f;
             body.handScale = 1.16f;
             body.footScale = 1.14f;
             break;
         case 4:  // non-human
             body.headScale = 1.45f;
+            body.headWidth = 1.18f;
+            body.headHeight = 0.88f;
+            body.headDepth = 1.22f;
+            body.faceWidth = 1.30f;
+            body.faceDepth = 1.45f;
             body.torsoLength = 0.92f;
+            body.chestHeight = 0.88f;
+            body.bellyHeight = 0.82f;
             body.chestWidth = 0.78f;
+            body.chestDepth = 1.12f;
             body.bellyWidth = 0.70f;
+            body.bellyDepth = 0.90f;
             body.waistWidth = 0.66f;
             body.shoulderWidth = 0.78f;
             body.hipWidth = 0.70f;
             body.armLength = 1.38f;
             body.armThickness = 0.62f;
+            body.leftForearmLength = 1.18f;
+            body.rightForearmLength = 1.18f;
             body.legLength = 1.16f;
             body.legThickness = 0.62f;
             body.handScale = 1.28f;
@@ -500,34 +521,71 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         spin->setFocusPolicy(Qt::ClickFocus);
         return spin;
     };
-    bodyLayout->addWidget(new QLabel(tr("まとめて"), m_bodyPanel));
+    bodyLayout->addWidget(new QLabel(tr("全体"), m_bodyPanel));
     m_bodyHeadScale = makeBodySpin();
+    m_bodyHeadWidth = makeBodySpin();
+    m_bodyHeadHeight = makeBodySpin();
+    m_bodyHeadDepth = makeBodySpin();
+    m_bodyFaceWidth = makeBodySpin();
+    m_bodyFaceHeight = makeBodySpin();
+    m_bodyFaceDepth = makeBodySpin();
     m_bodyTorsoLength = makeBodySpin();
+    m_bodyChestHeight = makeBodySpin();
+    m_bodyBellyHeight = makeBodySpin();
+    m_bodyWaistHeight = makeBodySpin();
     m_bodyChestWidth = makeBodySpin();
     m_bodyBellyWidth = makeBodySpin();
     m_bodyWaistWidth = makeBodySpin();
+    m_bodyChestDepth = makeBodySpin();
+    m_bodyBellyDepth = makeBodySpin();
+    m_bodyWaistDepth = makeBodySpin();
     m_bodyShoulderWidth = makeBodySpin();
     m_bodyHipWidth = makeBodySpin();
     m_bodyArmLength = makeBodySpin();
     m_bodyArmThickness = makeBodySpin();
+    m_bodyArmDepth = makeBodySpin();
     m_bodyLegLength = makeBodySpin();
     m_bodyLegThickness = makeBodySpin();
+    m_bodyLegDepth = makeBodySpin();
     m_bodyHandScale = makeBodySpin();
+    m_bodyHandDepth = makeBodySpin();
     m_bodyFootScale = makeBodySpin();
-    addPanelRow(m_bodyPanel, bodyLayout, tr("頭サイズ"), m_bodyHeadScale);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("胴長"), m_bodyTorsoLength);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("胸幅"), m_bodyChestWidth);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("腹幅"), m_bodyBellyWidth);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("腰幅"), m_bodyWaistWidth);
+    m_bodyFootDepth = makeBodySpin();
+    addPanelRow(m_bodyPanel, bodyLayout, tr("胴体 全体高さ"), m_bodyTorsoLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腕 全体長さ"), m_bodyArmLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腕 全体太さ"), m_bodyArmThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腕 全体奥行き"), m_bodyArmDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("脚 全体長さ"), m_bodyLegLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("脚 全体太さ"), m_bodyLegThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("脚 全体奥行き"), m_bodyLegDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("手 全体サイズ"), m_bodyHandScale);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("手 奥行き"), m_bodyHandDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("足 全体サイズ"), m_bodyFootScale);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("足 奥行き"), m_bodyFootDepth);
+
+    bodyLayout->addWidget(new QLabel(tr("頭・顔"), m_bodyPanel));
+    addPanelRow(m_bodyPanel, bodyLayout, tr("頭 全体サイズ"), m_bodyHeadScale);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("頭 幅"), m_bodyHeadWidth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("頭 高さ"), m_bodyHeadHeight);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("頭 奥行き"), m_bodyHeadDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("顔 幅"), m_bodyFaceWidth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("顔 高さ"), m_bodyFaceHeight);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("顔 出っ張り"), m_bodyFaceDepth);
+
+    bodyLayout->addWidget(new QLabel(tr("胴体"), m_bodyPanel));
+    addPanelRow(m_bodyPanel, bodyLayout, tr("胸 高さ"), m_bodyChestHeight);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("胸 幅"), m_bodyChestWidth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("胸 奥行き"), m_bodyChestDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腹 高さ"), m_bodyBellyHeight);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腹 幅"), m_bodyBellyWidth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腹 奥行き"), m_bodyBellyDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腰 高さ"), m_bodyWaistHeight);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腰 幅"), m_bodyWaistWidth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腰 奥行き"), m_bodyWaistDepth);
     addPanelRow(m_bodyPanel, bodyLayout, tr("肩幅"), m_bodyShoulderWidth);
     addPanelRow(m_bodyPanel, bodyLayout, tr("股幅"), m_bodyHipWidth);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("腕の長さ"), m_bodyArmLength);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("腕の太さ"), m_bodyArmThickness);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("脚の長さ"), m_bodyLegLength);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("脚の太さ"), m_bodyLegThickness);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("手サイズ"), m_bodyHandScale);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("足サイズ"), m_bodyFootScale);
-    bodyLayout->addWidget(new QLabel(tr("左右個別"), m_bodyPanel));
+
+    bodyLayout->addWidget(new QLabel(tr("腕 部位別"), m_bodyPanel));
     m_bodyLeftArmLength = makeBodySpin();
     m_bodyRightArmLength = makeBodySpin();
     m_bodyLeftArmThickness = makeBodySpin();
@@ -540,26 +598,78 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     m_bodyRightHandScale = makeBodySpin();
     m_bodyLeftFootScale = makeBodySpin();
     m_bodyRightFootScale = makeBodySpin();
-    addPanelRow(m_bodyPanel, bodyLayout, tr("左腕 長さ"), m_bodyLeftArmLength);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("右腕 長さ"), m_bodyRightArmLength);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("左腕 太さ"), m_bodyLeftArmThickness);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("右腕 太さ"), m_bodyRightArmThickness);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("左脚 長さ"), m_bodyLeftLegLength);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("右脚 長さ"), m_bodyRightLegLength);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("左脚 太さ"), m_bodyLeftLegThickness);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("右脚 太さ"), m_bodyRightLegThickness);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("左手 サイズ"), m_bodyLeftHandScale);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("右手 サイズ"), m_bodyRightHandScale);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("左足 サイズ"), m_bodyLeftFootScale);
-    addPanelRow(m_bodyPanel, bodyLayout, tr("右足 サイズ"), m_bodyRightFootScale);
-    for (QDoubleSpinBox* spin : {m_bodyHeadScale, m_bodyTorsoLength, m_bodyChestWidth, m_bodyBellyWidth,
-                                 m_bodyWaistWidth, m_bodyShoulderWidth, m_bodyHipWidth, m_bodyArmLength,
-                                 m_bodyArmThickness, m_bodyLegLength, m_bodyLegThickness, m_bodyHandScale,
-                                 m_bodyFootScale, m_bodyLeftArmLength, m_bodyRightArmLength,
+    m_bodyLeftUpperArmLength = makeBodySpin();
+    m_bodyRightUpperArmLength = makeBodySpin();
+    m_bodyLeftForearmLength = makeBodySpin();
+    m_bodyRightForearmLength = makeBodySpin();
+    m_bodyLeftUpperArmThickness = makeBodySpin();
+    m_bodyRightUpperArmThickness = makeBodySpin();
+    m_bodyLeftForearmThickness = makeBodySpin();
+    m_bodyRightForearmThickness = makeBodySpin();
+    m_bodyLeftUpperArmDepth = makeBodySpin();
+    m_bodyRightUpperArmDepth = makeBodySpin();
+    m_bodyLeftForearmDepth = makeBodySpin();
+    m_bodyRightForearmDepth = makeBodySpin();
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左二の腕 長さ"), m_bodyLeftUpperArmLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左二の腕 太さ"), m_bodyLeftUpperArmThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左二の腕 奥行き"), m_bodyLeftUpperArmDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左ひじ下 長さ"), m_bodyLeftForearmLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左ひじ下 太さ"), m_bodyLeftForearmThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左ひじ下 奥行き"), m_bodyLeftForearmDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右二の腕 長さ"), m_bodyRightUpperArmLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右二の腕 太さ"), m_bodyRightUpperArmThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右二の腕 奥行き"), m_bodyRightUpperArmDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右ひじ下 長さ"), m_bodyRightForearmLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右ひじ下 太さ"), m_bodyRightForearmThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右ひじ下 奥行き"), m_bodyRightForearmDepth);
+
+    bodyLayout->addWidget(new QLabel(tr("脚 部位別"), m_bodyPanel));
+    m_bodyLeftThighLength = makeBodySpin();
+    m_bodyRightThighLength = makeBodySpin();
+    m_bodyLeftShinLength = makeBodySpin();
+    m_bodyRightShinLength = makeBodySpin();
+    m_bodyLeftThighThickness = makeBodySpin();
+    m_bodyRightThighThickness = makeBodySpin();
+    m_bodyLeftShinThickness = makeBodySpin();
+    m_bodyRightShinThickness = makeBodySpin();
+    m_bodyLeftThighDepth = makeBodySpin();
+    m_bodyRightThighDepth = makeBodySpin();
+    m_bodyLeftShinDepth = makeBodySpin();
+    m_bodyRightShinDepth = makeBodySpin();
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左太もも 長さ"), m_bodyLeftThighLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左太もも 太さ"), m_bodyLeftThighThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左太もも 奥行き"), m_bodyLeftThighDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左ひざ下 長さ"), m_bodyLeftShinLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左ひざ下 太さ"), m_bodyLeftShinThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左ひざ下 奥行き"), m_bodyLeftShinDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右太もも 長さ"), m_bodyRightThighLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右太もも 太さ"), m_bodyRightThighThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右太もも 奥行き"), m_bodyRightThighDepth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右ひざ下 長さ"), m_bodyRightShinLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右ひざ下 太さ"), m_bodyRightShinThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右ひざ下 奥行き"), m_bodyRightShinDepth);
+
+    for (QDoubleSpinBox* spin : {m_bodyHeadScale, m_bodyHeadWidth, m_bodyHeadHeight, m_bodyHeadDepth,
+                                 m_bodyFaceWidth, m_bodyFaceHeight, m_bodyFaceDepth, m_bodyTorsoLength,
+                                 m_bodyChestHeight, m_bodyBellyHeight, m_bodyWaistHeight, m_bodyChestWidth,
+                                 m_bodyBellyWidth, m_bodyWaistWidth, m_bodyChestDepth, m_bodyBellyDepth,
+                                 m_bodyWaistDepth, m_bodyShoulderWidth, m_bodyHipWidth, m_bodyArmLength,
+                                 m_bodyArmThickness, m_bodyArmDepth, m_bodyLegLength, m_bodyLegThickness,
+                                 m_bodyLegDepth, m_bodyHandScale, m_bodyHandDepth, m_bodyFootScale,
+                                 m_bodyFootDepth, m_bodyLeftArmLength, m_bodyRightArmLength,
                                  m_bodyLeftArmThickness, m_bodyRightArmThickness, m_bodyLeftLegLength,
                                  m_bodyRightLegLength, m_bodyLeftLegThickness, m_bodyRightLegThickness,
                                  m_bodyLeftHandScale, m_bodyRightHandScale, m_bodyLeftFootScale,
-                                 m_bodyRightFootScale}) {
+                                 m_bodyRightFootScale, m_bodyLeftUpperArmLength, m_bodyRightUpperArmLength,
+                                 m_bodyLeftForearmLength, m_bodyRightForearmLength,
+                                 m_bodyLeftUpperArmThickness, m_bodyRightUpperArmThickness,
+                                 m_bodyLeftForearmThickness, m_bodyRightForearmThickness,
+                                 m_bodyLeftUpperArmDepth, m_bodyRightUpperArmDepth, m_bodyLeftForearmDepth,
+                                 m_bodyRightForearmDepth, m_bodyLeftThighLength, m_bodyRightThighLength,
+                                 m_bodyLeftShinLength, m_bodyRightShinLength, m_bodyLeftThighThickness,
+                                 m_bodyRightThighThickness, m_bodyLeftShinThickness, m_bodyRightShinThickness,
+                                 m_bodyLeftThighDepth, m_bodyRightThighDepth, m_bodyLeftShinDepth,
+                                 m_bodyRightShinDepth}) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyBodyFromUi(); });
     }
     bodyLayout->addStretch(1);
@@ -959,14 +1069,27 @@ void PrevizWindow::setBodyControlsEnabled(bool enabled) {
         if (widget) widget->setEnabled(enabled);
     }
     if (m_bodyPresetCombo) m_bodyPresetCombo->setEnabled(enabled);
-    for (QDoubleSpinBox* spin : {m_bodyHeadScale, m_bodyTorsoLength, m_bodyChestWidth, m_bodyBellyWidth,
-                                 m_bodyWaistWidth, m_bodyShoulderWidth, m_bodyHipWidth, m_bodyArmLength,
-                                 m_bodyArmThickness, m_bodyLegLength, m_bodyLegThickness, m_bodyHandScale,
-                                 m_bodyFootScale, m_bodyLeftArmLength, m_bodyRightArmLength,
+    for (QDoubleSpinBox* spin : {m_bodyHeadScale, m_bodyHeadWidth, m_bodyHeadHeight, m_bodyHeadDepth,
+                                 m_bodyFaceWidth, m_bodyFaceHeight, m_bodyFaceDepth, m_bodyTorsoLength,
+                                 m_bodyChestHeight, m_bodyBellyHeight, m_bodyWaistHeight, m_bodyChestWidth,
+                                 m_bodyBellyWidth, m_bodyWaistWidth, m_bodyChestDepth, m_bodyBellyDepth,
+                                 m_bodyWaistDepth, m_bodyShoulderWidth, m_bodyHipWidth, m_bodyArmLength,
+                                 m_bodyArmThickness, m_bodyArmDepth, m_bodyLegLength, m_bodyLegThickness,
+                                 m_bodyLegDepth, m_bodyHandScale, m_bodyHandDepth, m_bodyFootScale,
+                                 m_bodyFootDepth, m_bodyLeftArmLength, m_bodyRightArmLength,
                                  m_bodyLeftArmThickness, m_bodyRightArmThickness, m_bodyLeftLegLength,
                                  m_bodyRightLegLength, m_bodyLeftLegThickness, m_bodyRightLegThickness,
                                  m_bodyLeftHandScale, m_bodyRightHandScale, m_bodyLeftFootScale,
-                                 m_bodyRightFootScale}) {
+                                 m_bodyRightFootScale, m_bodyLeftUpperArmLength, m_bodyRightUpperArmLength,
+                                 m_bodyLeftForearmLength, m_bodyRightForearmLength,
+                                 m_bodyLeftUpperArmThickness, m_bodyRightUpperArmThickness,
+                                 m_bodyLeftForearmThickness, m_bodyRightForearmThickness,
+                                 m_bodyLeftUpperArmDepth, m_bodyRightUpperArmDepth, m_bodyLeftForearmDepth,
+                                 m_bodyRightForearmDepth, m_bodyLeftThighLength, m_bodyRightThighLength,
+                                 m_bodyLeftShinLength, m_bodyRightShinLength, m_bodyLeftThighThickness,
+                                 m_bodyRightThighThickness, m_bodyLeftShinThickness, m_bodyRightShinThickness,
+                                 m_bodyLeftThighDepth, m_bodyRightThighDepth, m_bodyLeftShinDepth,
+                                 m_bodyRightShinDepth}) {
         if (spin) spin->setEnabled(enabled);
     }
 }
@@ -980,18 +1103,34 @@ void PrevizWindow::refreshBodyUi() {
     m_updating = true;
     const core::PrevizHumanoidBody& body = model->humanoidBody;
     m_bodyHeadScale->setValue(body.headScale);
+    m_bodyHeadWidth->setValue(body.headWidth);
+    m_bodyHeadHeight->setValue(body.headHeight);
+    m_bodyHeadDepth->setValue(body.headDepth);
+    m_bodyFaceWidth->setValue(body.faceWidth);
+    m_bodyFaceHeight->setValue(body.faceHeight);
+    m_bodyFaceDepth->setValue(body.faceDepth);
     m_bodyTorsoLength->setValue(body.torsoLength);
+    m_bodyChestHeight->setValue(body.chestHeight);
+    m_bodyBellyHeight->setValue(body.bellyHeight);
+    m_bodyWaistHeight->setValue(body.waistHeight);
     m_bodyChestWidth->setValue(body.chestWidth);
     m_bodyBellyWidth->setValue(body.bellyWidth);
     m_bodyWaistWidth->setValue(body.waistWidth);
+    m_bodyChestDepth->setValue(body.chestDepth);
+    m_bodyBellyDepth->setValue(body.bellyDepth);
+    m_bodyWaistDepth->setValue(body.waistDepth);
     m_bodyShoulderWidth->setValue(body.shoulderWidth);
     m_bodyHipWidth->setValue(body.hipWidth);
     m_bodyArmLength->setValue(body.armLength);
     m_bodyArmThickness->setValue(body.armThickness);
+    m_bodyArmDepth->setValue(body.armDepth);
     m_bodyLegLength->setValue(body.legLength);
     m_bodyLegThickness->setValue(body.legThickness);
+    m_bodyLegDepth->setValue(body.legDepth);
     m_bodyHandScale->setValue(body.handScale);
+    m_bodyHandDepth->setValue(body.handDepth);
     m_bodyFootScale->setValue(body.footScale);
+    m_bodyFootDepth->setValue(body.footDepth);
     m_bodyLeftArmLength->setValue(body.leftArmLength);
     m_bodyRightArmLength->setValue(body.rightArmLength);
     m_bodyLeftArmThickness->setValue(body.leftArmThickness);
@@ -1004,6 +1143,30 @@ void PrevizWindow::refreshBodyUi() {
     m_bodyRightHandScale->setValue(body.rightHandScale);
     m_bodyLeftFootScale->setValue(body.leftFootScale);
     m_bodyRightFootScale->setValue(body.rightFootScale);
+    m_bodyLeftUpperArmLength->setValue(body.leftUpperArmLength);
+    m_bodyRightUpperArmLength->setValue(body.rightUpperArmLength);
+    m_bodyLeftForearmLength->setValue(body.leftForearmLength);
+    m_bodyRightForearmLength->setValue(body.rightForearmLength);
+    m_bodyLeftUpperArmThickness->setValue(body.leftUpperArmThickness);
+    m_bodyRightUpperArmThickness->setValue(body.rightUpperArmThickness);
+    m_bodyLeftForearmThickness->setValue(body.leftForearmThickness);
+    m_bodyRightForearmThickness->setValue(body.rightForearmThickness);
+    m_bodyLeftUpperArmDepth->setValue(body.leftUpperArmDepth);
+    m_bodyRightUpperArmDepth->setValue(body.rightUpperArmDepth);
+    m_bodyLeftForearmDepth->setValue(body.leftForearmDepth);
+    m_bodyRightForearmDepth->setValue(body.rightForearmDepth);
+    m_bodyLeftThighLength->setValue(body.leftThighLength);
+    m_bodyRightThighLength->setValue(body.rightThighLength);
+    m_bodyLeftShinLength->setValue(body.leftShinLength);
+    m_bodyRightShinLength->setValue(body.rightShinLength);
+    m_bodyLeftThighThickness->setValue(body.leftThighThickness);
+    m_bodyRightThighThickness->setValue(body.rightThighThickness);
+    m_bodyLeftShinThickness->setValue(body.leftShinThickness);
+    m_bodyRightShinThickness->setValue(body.rightShinThickness);
+    m_bodyLeftThighDepth->setValue(body.leftThighDepth);
+    m_bodyRightThighDepth->setValue(body.rightThighDepth);
+    m_bodyLeftShinDepth->setValue(body.leftShinDepth);
+    m_bodyRightShinDepth->setValue(body.rightShinDepth);
     m_updating = false;
 }
 
@@ -1014,18 +1177,34 @@ void PrevizWindow::applyBodyFromUi() {
 
     core::PrevizHumanoidBody& body = model->humanoidBody;
     body.headScale = static_cast<float>(m_bodyHeadScale->value());
+    body.headWidth = static_cast<float>(m_bodyHeadWidth->value());
+    body.headHeight = static_cast<float>(m_bodyHeadHeight->value());
+    body.headDepth = static_cast<float>(m_bodyHeadDepth->value());
+    body.faceWidth = static_cast<float>(m_bodyFaceWidth->value());
+    body.faceHeight = static_cast<float>(m_bodyFaceHeight->value());
+    body.faceDepth = static_cast<float>(m_bodyFaceDepth->value());
     body.torsoLength = static_cast<float>(m_bodyTorsoLength->value());
+    body.chestHeight = static_cast<float>(m_bodyChestHeight->value());
+    body.bellyHeight = static_cast<float>(m_bodyBellyHeight->value());
+    body.waistHeight = static_cast<float>(m_bodyWaistHeight->value());
     body.chestWidth = static_cast<float>(m_bodyChestWidth->value());
     body.bellyWidth = static_cast<float>(m_bodyBellyWidth->value());
     body.waistWidth = static_cast<float>(m_bodyWaistWidth->value());
+    body.chestDepth = static_cast<float>(m_bodyChestDepth->value());
+    body.bellyDepth = static_cast<float>(m_bodyBellyDepth->value());
+    body.waistDepth = static_cast<float>(m_bodyWaistDepth->value());
     body.shoulderWidth = static_cast<float>(m_bodyShoulderWidth->value());
     body.hipWidth = static_cast<float>(m_bodyHipWidth->value());
     body.armLength = static_cast<float>(m_bodyArmLength->value());
     body.armThickness = static_cast<float>(m_bodyArmThickness->value());
+    body.armDepth = static_cast<float>(m_bodyArmDepth->value());
     body.legLength = static_cast<float>(m_bodyLegLength->value());
     body.legThickness = static_cast<float>(m_bodyLegThickness->value());
+    body.legDepth = static_cast<float>(m_bodyLegDepth->value());
     body.handScale = static_cast<float>(m_bodyHandScale->value());
+    body.handDepth = static_cast<float>(m_bodyHandDepth->value());
     body.footScale = static_cast<float>(m_bodyFootScale->value());
+    body.footDepth = static_cast<float>(m_bodyFootDepth->value());
     body.leftArmLength = static_cast<float>(m_bodyLeftArmLength->value());
     body.rightArmLength = static_cast<float>(m_bodyRightArmLength->value());
     body.leftArmThickness = static_cast<float>(m_bodyLeftArmThickness->value());
@@ -1038,6 +1217,30 @@ void PrevizWindow::applyBodyFromUi() {
     body.rightHandScale = static_cast<float>(m_bodyRightHandScale->value());
     body.leftFootScale = static_cast<float>(m_bodyLeftFootScale->value());
     body.rightFootScale = static_cast<float>(m_bodyRightFootScale->value());
+    body.leftUpperArmLength = static_cast<float>(m_bodyLeftUpperArmLength->value());
+    body.rightUpperArmLength = static_cast<float>(m_bodyRightUpperArmLength->value());
+    body.leftForearmLength = static_cast<float>(m_bodyLeftForearmLength->value());
+    body.rightForearmLength = static_cast<float>(m_bodyRightForearmLength->value());
+    body.leftUpperArmThickness = static_cast<float>(m_bodyLeftUpperArmThickness->value());
+    body.rightUpperArmThickness = static_cast<float>(m_bodyRightUpperArmThickness->value());
+    body.leftForearmThickness = static_cast<float>(m_bodyLeftForearmThickness->value());
+    body.rightForearmThickness = static_cast<float>(m_bodyRightForearmThickness->value());
+    body.leftUpperArmDepth = static_cast<float>(m_bodyLeftUpperArmDepth->value());
+    body.rightUpperArmDepth = static_cast<float>(m_bodyRightUpperArmDepth->value());
+    body.leftForearmDepth = static_cast<float>(m_bodyLeftForearmDepth->value());
+    body.rightForearmDepth = static_cast<float>(m_bodyRightForearmDepth->value());
+    body.leftThighLength = static_cast<float>(m_bodyLeftThighLength->value());
+    body.rightThighLength = static_cast<float>(m_bodyRightThighLength->value());
+    body.leftShinLength = static_cast<float>(m_bodyLeftShinLength->value());
+    body.rightShinLength = static_cast<float>(m_bodyRightShinLength->value());
+    body.leftThighThickness = static_cast<float>(m_bodyLeftThighThickness->value());
+    body.rightThighThickness = static_cast<float>(m_bodyRightThighThickness->value());
+    body.leftShinThickness = static_cast<float>(m_bodyLeftShinThickness->value());
+    body.rightShinThickness = static_cast<float>(m_bodyRightShinThickness->value());
+    body.leftThighDepth = static_cast<float>(m_bodyLeftThighDepth->value());
+    body.rightThighDepth = static_cast<float>(m_bodyRightThighDepth->value());
+    body.leftShinDepth = static_cast<float>(m_bodyLeftShinDepth->value());
+    body.rightShinDepth = static_cast<float>(m_bodyRightShinDepth->value());
 
     m_viewport->update();
     emit sceneEdited();

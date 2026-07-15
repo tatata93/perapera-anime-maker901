@@ -42,18 +42,34 @@ struct PrevizHumanoidPose {
 
 struct PrevizHumanoidBody {
     float headScale = 1.0f;
+    float headWidth = 1.0f;
+    float headHeight = 1.0f;
+    float headDepth = 1.0f;
+    float faceWidth = 1.0f;
+    float faceHeight = 1.0f;
+    float faceDepth = 1.0f;
     float torsoLength = 1.0f;
+    float chestHeight = 1.0f;
+    float bellyHeight = 1.0f;
+    float waistHeight = 1.0f;
     float chestWidth = 1.0f;
     float bellyWidth = 1.0f;
     float waistWidth = 1.0f;
+    float chestDepth = 1.0f;
+    float bellyDepth = 1.0f;
+    float waistDepth = 1.0f;
     float shoulderWidth = 1.0f;
     float hipWidth = 1.0f;
     float armLength = 1.0f;
     float armThickness = 1.0f;
+    float armDepth = 1.0f;
     float legLength = 1.0f;
     float legThickness = 1.0f;
+    float legDepth = 1.0f;
     float handScale = 1.0f;
+    float handDepth = 1.0f;
     float footScale = 1.0f;
+    float footDepth = 1.0f;
     float leftArmLength = 1.0f;
     float rightArmLength = 1.0f;
     float leftArmThickness = 1.0f;
@@ -66,6 +82,30 @@ struct PrevizHumanoidBody {
     float rightHandScale = 1.0f;
     float leftFootScale = 1.0f;
     float rightFootScale = 1.0f;
+    float leftUpperArmLength = 1.0f;
+    float rightUpperArmLength = 1.0f;
+    float leftForearmLength = 1.0f;
+    float rightForearmLength = 1.0f;
+    float leftUpperArmThickness = 1.0f;
+    float rightUpperArmThickness = 1.0f;
+    float leftForearmThickness = 1.0f;
+    float rightForearmThickness = 1.0f;
+    float leftUpperArmDepth = 1.0f;
+    float rightUpperArmDepth = 1.0f;
+    float leftForearmDepth = 1.0f;
+    float rightForearmDepth = 1.0f;
+    float leftThighLength = 1.0f;
+    float rightThighLength = 1.0f;
+    float leftShinLength = 1.0f;
+    float rightShinLength = 1.0f;
+    float leftThighThickness = 1.0f;
+    float rightThighThickness = 1.0f;
+    float leftShinThickness = 1.0f;
+    float rightShinThickness = 1.0f;
+    float leftThighDepth = 1.0f;
+    float rightThighDepth = 1.0f;
+    float leftShinDepth = 1.0f;
+    float rightShinDepth = 1.0f;
 };
 
 namespace previz_detail {

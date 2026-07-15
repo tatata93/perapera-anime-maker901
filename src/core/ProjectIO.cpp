@@ -117,18 +117,34 @@ PrevizHumanoidPose humanoidPoseFromJson(const json& j) {
 
 json humanoidBodyToJson(const PrevizHumanoidBody& b) {
     return {{"headScale", b.headScale},
+            {"headWidth", b.headWidth},
+            {"headHeight", b.headHeight},
+            {"headDepth", b.headDepth},
+            {"faceWidth", b.faceWidth},
+            {"faceHeight", b.faceHeight},
+            {"faceDepth", b.faceDepth},
             {"torsoLength", b.torsoLength},
+            {"chestHeight", b.chestHeight},
+            {"bellyHeight", b.bellyHeight},
+            {"waistHeight", b.waistHeight},
             {"chestWidth", b.chestWidth},
             {"bellyWidth", b.bellyWidth},
             {"waistWidth", b.waistWidth},
+            {"chestDepth", b.chestDepth},
+            {"bellyDepth", b.bellyDepth},
+            {"waistDepth", b.waistDepth},
             {"shoulderWidth", b.shoulderWidth},
             {"hipWidth", b.hipWidth},
             {"armLength", b.armLength},
             {"armThickness", b.armThickness},
+            {"armDepth", b.armDepth},
             {"legLength", b.legLength},
             {"legThickness", b.legThickness},
+            {"legDepth", b.legDepth},
             {"handScale", b.handScale},
+            {"handDepth", b.handDepth},
             {"footScale", b.footScale},
+            {"footDepth", b.footDepth},
             {"leftArmLength", b.leftArmLength},
             {"rightArmLength", b.rightArmLength},
             {"leftArmThickness", b.leftArmThickness},
@@ -140,23 +156,63 @@ json humanoidBodyToJson(const PrevizHumanoidBody& b) {
             {"leftHandScale", b.leftHandScale},
             {"rightHandScale", b.rightHandScale},
             {"leftFootScale", b.leftFootScale},
-            {"rightFootScale", b.rightFootScale}};
+            {"rightFootScale", b.rightFootScale},
+            {"leftUpperArmLength", b.leftUpperArmLength},
+            {"rightUpperArmLength", b.rightUpperArmLength},
+            {"leftForearmLength", b.leftForearmLength},
+            {"rightForearmLength", b.rightForearmLength},
+            {"leftUpperArmThickness", b.leftUpperArmThickness},
+            {"rightUpperArmThickness", b.rightUpperArmThickness},
+            {"leftForearmThickness", b.leftForearmThickness},
+            {"rightForearmThickness", b.rightForearmThickness},
+            {"leftUpperArmDepth", b.leftUpperArmDepth},
+            {"rightUpperArmDepth", b.rightUpperArmDepth},
+            {"leftForearmDepth", b.leftForearmDepth},
+            {"rightForearmDepth", b.rightForearmDepth},
+            {"leftThighLength", b.leftThighLength},
+            {"rightThighLength", b.rightThighLength},
+            {"leftShinLength", b.leftShinLength},
+            {"rightShinLength", b.rightShinLength},
+            {"leftThighThickness", b.leftThighThickness},
+            {"rightThighThickness", b.rightThighThickness},
+            {"leftShinThickness", b.leftShinThickness},
+            {"rightShinThickness", b.rightShinThickness},
+            {"leftThighDepth", b.leftThighDepth},
+            {"rightThighDepth", b.rightThighDepth},
+            {"leftShinDepth", b.leftShinDepth},
+            {"rightShinDepth", b.rightShinDepth}};
 }
 PrevizHumanoidBody humanoidBodyFromJson(const json& j) {
     PrevizHumanoidBody b;
     b.headScale = j.value("headScale", 1.0f);
+    b.headWidth = j.value("headWidth", 1.0f);
+    b.headHeight = j.value("headHeight", 1.0f);
+    b.headDepth = j.value("headDepth", 1.0f);
+    b.faceWidth = j.value("faceWidth", 1.0f);
+    b.faceHeight = j.value("faceHeight", 1.0f);
+    b.faceDepth = j.value("faceDepth", 1.0f);
     b.torsoLength = j.value("torsoLength", 1.0f);
+    b.chestHeight = j.value("chestHeight", 1.0f);
+    b.bellyHeight = j.value("bellyHeight", 1.0f);
+    b.waistHeight = j.value("waistHeight", 1.0f);
     b.chestWidth = j.value("chestWidth", 1.0f);
     b.bellyWidth = j.value("bellyWidth", 1.0f);
     b.waistWidth = j.value("waistWidth", 1.0f);
+    b.chestDepth = j.value("chestDepth", 1.0f);
+    b.bellyDepth = j.value("bellyDepth", 1.0f);
+    b.waistDepth = j.value("waistDepth", 1.0f);
     b.shoulderWidth = j.value("shoulderWidth", 1.0f);
     b.hipWidth = j.value("hipWidth", 1.0f);
     b.armLength = j.value("armLength", 1.0f);
     b.armThickness = j.value("armThickness", 1.0f);
+    b.armDepth = j.value("armDepth", 1.0f);
     b.legLength = j.value("legLength", 1.0f);
     b.legThickness = j.value("legThickness", 1.0f);
+    b.legDepth = j.value("legDepth", 1.0f);
     b.handScale = j.value("handScale", 1.0f);
+    b.handDepth = j.value("handDepth", 1.0f);
     b.footScale = j.value("footScale", 1.0f);
+    b.footDepth = j.value("footDepth", 1.0f);
     b.leftArmLength = j.value("leftArmLength", 1.0f);
     b.rightArmLength = j.value("rightArmLength", 1.0f);
     b.leftArmThickness = j.value("leftArmThickness", 1.0f);
@@ -169,6 +225,30 @@ PrevizHumanoidBody humanoidBodyFromJson(const json& j) {
     b.rightHandScale = j.value("rightHandScale", 1.0f);
     b.leftFootScale = j.value("leftFootScale", 1.0f);
     b.rightFootScale = j.value("rightFootScale", 1.0f);
+    b.leftUpperArmLength = j.value("leftUpperArmLength", 1.0f);
+    b.rightUpperArmLength = j.value("rightUpperArmLength", 1.0f);
+    b.leftForearmLength = j.value("leftForearmLength", 1.0f);
+    b.rightForearmLength = j.value("rightForearmLength", 1.0f);
+    b.leftUpperArmThickness = j.value("leftUpperArmThickness", 1.0f);
+    b.rightUpperArmThickness = j.value("rightUpperArmThickness", 1.0f);
+    b.leftForearmThickness = j.value("leftForearmThickness", 1.0f);
+    b.rightForearmThickness = j.value("rightForearmThickness", 1.0f);
+    b.leftUpperArmDepth = j.value("leftUpperArmDepth", 1.0f);
+    b.rightUpperArmDepth = j.value("rightUpperArmDepth", 1.0f);
+    b.leftForearmDepth = j.value("leftForearmDepth", 1.0f);
+    b.rightForearmDepth = j.value("rightForearmDepth", 1.0f);
+    b.leftThighLength = j.value("leftThighLength", 1.0f);
+    b.rightThighLength = j.value("rightThighLength", 1.0f);
+    b.leftShinLength = j.value("leftShinLength", 1.0f);
+    b.rightShinLength = j.value("rightShinLength", 1.0f);
+    b.leftThighThickness = j.value("leftThighThickness", 1.0f);
+    b.rightThighThickness = j.value("rightThighThickness", 1.0f);
+    b.leftShinThickness = j.value("leftShinThickness", 1.0f);
+    b.rightShinThickness = j.value("rightShinThickness", 1.0f);
+    b.leftThighDepth = j.value("leftThighDepth", 1.0f);
+    b.rightThighDepth = j.value("rightThighDepth", 1.0f);
+    b.leftShinDepth = j.value("leftShinDepth", 1.0f);
+    b.rightShinDepth = j.value("rightShinDepth", 1.0f);
     return b;
 }
 
