@@ -4,6 +4,9 @@
 #include <QMouseEvent>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLShaderProgram>
+#include <QOpenGLContext>
+#include <QSurfaceFormat>
+#include <QDebug>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -21,41 +24,154 @@ std::string lowerExtension(const std::string& path) {
     return ext;
 }
 
-const char* kVertexShader = R"(
+const char* kCompatVertexShader = R"(#version 120
 attribute vec3 aPos;
 attribute vec3 aNormal;
+
 uniform mat4 uMvp;
 uniform mat4 uModel;
+
 varying vec3 vNormal;
+
 void main() {
     gl_Position = uMvp * vec4(aPos, 1.0);
     vNormal = mat3(uModel) * aNormal;
 }
 )";
 
-const char* kFragmentShader = R"(
+const char* kCompatFragmentShader = R"(#version 120
 uniform vec4 uColor;
 uniform vec3 uLightDir;
 uniform float uUnlit;
+
 varying vec3 vNormal;
+
 void main() {
     if (uUnlit > 0.5) {
         gl_FragColor = uColor;
         return;
     }
-    float d = max(dot(normalize(vNormal), normalize(uLightDir)), 0.0);
-    gl_FragColor = vec4(uColor.rgb * (0.35 + 0.65 * d), uColor.a);
+
+    float d = max(
+        dot(normalize(vNormal), normalize(uLightDir)),
+        0.0
+    );
+
+    gl_FragColor = vec4(
+        uColor.rgb * (0.35 + 0.65 * d),
+        uColor.a
+    );
 }
 )";
+
+const char* kCoreVertexShader = R"(#version 150 core
+in vec3 aPos;
+in vec3 aNormal;
+
+uniform mat4 uMvp;
+uniform mat4 uModel;
+
+out vec3 vNormal;
+
+void main() {
+    gl_Position = uMvp * vec4(aPos, 1.0);
+    vNormal = mat3(uModel) * aNormal;
+}
+)";
+
+const char* kCoreFragmentShader = R"(#version 150 core
+uniform vec4 uColor;
+uniform vec3 uLightDir;
+uniform float uUnlit;
+
+in vec3 vNormal;
+out vec4 fragColor;
+
+void main() {
+    if (uUnlit > 0.5) {
+        fragColor = uColor;
+        return;
+    }
+
+    float d = max(
+        dot(normalize(vNormal), normalize(uLightDir)),
+        0.0
+    );
+
+    fragColor = vec4(
+        uColor.rgb * (0.35 + 0.65 * d),
+        uColor.a
+    );
+}
+)";
+
+const char* kEsVertexShader = R"(#version 100
+attribute highp vec3 aPos;
+attribute highp vec3 aNormal;
+
+uniform highp mat4 uMvp;
+uniform highp mat4 uModel;
+
+varying highp vec3 vNormal;
+
+void main() {
+    gl_Position = uMvp * vec4(aPos, 1.0);
+    vNormal = mat3(uModel) * aNormal;
+}
+)";
+
+const char* kEsFragmentShader = R"(#version 100
+precision highp float;
+
+uniform vec4 uColor;
+uniform vec3 uLightDir;
+uniform float uUnlit;
+
+varying vec3 vNormal;
+
+void main() {
+    if (uUnlit > 0.5) {
+        gl_FragColor = uColor;
+        return;
+    }
+
+    float d = max(
+        dot(normalize(vNormal), normalize(uLightDir)),
+        0.0
+    );
+
+    gl_FragColor = vec4(
+        uColor.rgb * (0.35 + 0.65 * d),
+        uColor.a
+    );
+}
+)";
+
 
 const QVector4D kGizmoColor(1.0f, 0.6f, 0.2f, 1.0f);      // 本番カメラのギズモ(オレンジ)
 const QVector4D kHighlightColor(1.0f, 0.65f, 0.25f, 1.0f);  // 選択モデルの強調色
 
 }  // namespace
 
-PrevizViewport::PrevizViewport(QWidget* parent) : QOpenGLWidget(parent) {
+PrevizViewport::PrevizViewport(QWidget* parent)
+    : QOpenGLWidget(parent) {
+    /*
+     * Windows?Core Profile?OpenGL ES?????????
+     * ??GLSL?????????????????
+     *
+     * ??????????OpenGL 2.1??????????????
+     */
+    QSurfaceFormat format;
+    format.setRenderableType(QSurfaceFormat::OpenGL);
+    format.setVersion(2, 1);
+    format.setProfile(QSurfaceFormat::NoProfile);
+    format.setDepthBufferSize(24);
+    format.setStencilBufferSize(8);
+    format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
+    setFormat(format);
+
     setMinimumSize(480, 270);
-    setFocusPolicy(Qt::ClickFocus);  // クリックでフォーカスを取り、WASDキー移動を受け付ける
+    setFocusPolicy(Qt::ClickFocus);
 }
 
 PrevizViewport::~PrevizViewport() {
@@ -131,15 +247,98 @@ void PrevizViewport::clearMeshCache() {
 
 void PrevizViewport::initializeGL() {
     initializeOpenGLFunctions();
+
     glClearColor(0.16f, 0.17f, 0.20f, 1.0f);
     glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+
+    const QOpenGLContext* glContext =
+        QOpenGLContext::currentContext();
+
+    const bool isGles =
+        glContext && glContext->isOpenGLES();
+
+    const bool isCoreProfile =
+        glContext &&
+        glContext->format().profile() ==
+            QSurfaceFormat::CoreProfile;
+
+    const char* vertexSource =
+        isGles
+            ? kEsVertexShader
+            : (isCoreProfile
+                   ? kCoreVertexShader
+                   : kCompatVertexShader);
+
+    const char* fragmentSource =
+        isGles
+            ? kEsFragmentShader
+            : (isCoreProfile
+                   ? kCoreFragmentShader
+                   : kCompatFragmentShader);
 
     m_program = std::make_unique<QOpenGLShaderProgram>();
-    m_program->addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShader);
-    m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, kFragmentShader);
+
+    if (!m_program->addShaderFromSourceCode(
+            QOpenGLShader::Vertex,
+            vertexSource)) {
+        qCritical().noquote()
+            << "Previz vertex shader compile failed:"
+            << m_program->log();
+
+        m_program.reset();
+        return;
+    }
+
+    if (!m_program->addShaderFromSourceCode(
+            QOpenGLShader::Fragment,
+            fragmentSource)) {
+        qCritical().noquote()
+            << "Previz fragment shader compile failed:"
+            << m_program->log();
+
+        m_program.reset();
+        return;
+    }
+
     m_program->bindAttributeLocation("aPos", 0);
     m_program->bindAttributeLocation("aNormal", 1);
-    m_program->link();
+
+    if (!m_program->link()) {
+        qCritical().noquote()
+            << "Previz shader link failed:"
+            << m_program->log();
+
+        m_program.reset();
+        return;
+    }
+
+    if (!m_program->bind()) {
+        qCritical().noquote()
+            << "Previz shader bind failed:"
+            << m_program->log();
+
+        m_program.reset();
+        return;
+    }
+
+    m_program->release();
+
+    if (glContext) {
+        const QSurfaceFormat actualFormat =
+            glContext->format();
+
+        qInfo()
+            << "Previz OpenGL:"
+            << actualFormat.majorVersion()
+            << "."
+            << actualFormat.minorVersion()
+            << "profile="
+            << actualFormat.profile()
+            << "GLES="
+            << isGles;
+    }
 
     buildGrid();
     buildPlaceholderCube();
@@ -314,39 +513,164 @@ QMatrix4x4 PrevizViewport::currentProjection() const {
     return proj;
 }
 
-void PrevizViewport::drawPrimitive(const GpuPrimitive& prim, const QMatrix4x4& model, const QMatrix4x4& viewProj,
-                                   bool unlit, bool highlight) {
-    m_program->setUniformValue("uMvp", viewProj * model);
-    m_program->setUniformValue("uModel", model);
-    const QVector4D color = highlight ? (prim.color * 0.55f + kHighlightColor * 0.45f) : prim.color;
-    m_program->setUniformValue("uColor", color);
-    m_program->setUniformValue("uUnlit", unlit ? 1.0f : 0.0f);
+void PrevizViewport::drawPrimitive(
+    const GpuPrimitive& prim,
+    const QMatrix4x4& model,
+    const QMatrix4x4& viewProj,
+    bool unlit,
+    bool highlight) {
+    if (!m_program ||
+        !m_program->isLinked() ||
+        !prim.vbo ||
+        !prim.vbo->isCreated()) {
+        return;
+    }
 
-    prim.vbo->bind();
+    m_program->setUniformValue(
+        "uMvp",
+        viewProj * model
+    );
+
+    m_program->setUniformValue(
+        "uModel",
+        model
+    );
+
+    const QVector4D color =
+        highlight
+            ? (prim.color * 0.55f +
+               kHighlightColor * 0.45f)
+            : prim.color;
+
+    m_program->setUniformValue(
+        "uColor",
+        color
+    );
+
+    m_program->setUniformValue(
+        "uUnlit",
+        unlit ? 1.0f : 0.0f
+    );
+
+    if (!prim.vbo->bind()) {
+        return;
+    }
+
     m_program->enableAttributeArray(0);
     m_program->enableAttributeArray(1);
-    m_program->setAttributeBuffer(0, GL_FLOAT, 0, 3, 6 * sizeof(float));
-    m_program->setAttributeBuffer(1, GL_FLOAT, 3 * sizeof(float), 3, 6 * sizeof(float));
 
-    if (prim.ibo) {
-        prim.ibo->bind();
-        glDrawElements(GL_TRIANGLES, prim.indexCount, GL_UNSIGNED_INT, nullptr);
+    m_program->setAttributeBuffer(
+        0,
+        GL_FLOAT,
+        0,
+        3,
+        6 * sizeof(float)
+    );
+
+    m_program->setAttributeBuffer(
+        1,
+        GL_FLOAT,
+        3 * sizeof(float),
+        3,
+        6 * sizeof(float)
+    );
+
+    if (prim.ibo &&
+        prim.ibo->isCreated() &&
+        prim.ibo->bind()) {
+        glDrawElements(
+            GL_TRIANGLES,
+            prim.indexCount,
+            GL_UNSIGNED_INT,
+            nullptr
+        );
+
         prim.ibo->release();
     } else {
-        glDrawArrays(GL_LINES, 0, prim.lineVertexCount);
+        glDrawArrays(
+            GL_LINES,
+            0,
+            prim.lineVertexCount
+        );
     }
+
+    m_program->disableAttributeArray(0);
+    m_program->disableAttributeArray(1);
+
     prim.vbo->release();
 }
 
 void PrevizViewport::paintGL() {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    const int viewportWidth = std::max(
+        1,
+        static_cast<int>(
+            std::lround(
+                static_cast<double>(width()) *
+                devicePixelRatioF()
+            )
+        )
+    );
+
+    const int viewportHeight = std::max(
+        1,
+        static_cast<int>(
+            std::lround(
+                static_cast<double>(height()) *
+                devicePixelRatioF()
+            )
+        )
+    );
+
+    glViewport(
+        0,
+        0,
+        viewportWidth,
+        viewportHeight
+    );
+
+    glColorMask(
+        GL_TRUE,
+        GL_TRUE,
+        GL_TRUE,
+        GL_TRUE
+    );
+
+    glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
-    if (!m_program) return;
-    renderScene(currentProjection() * currentView());
+    glDepthFunc(GL_LEQUAL);
+
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
+    glClearColor(
+        0.16f,
+        0.17f,
+        0.20f,
+        1.0f
+    );
+
+    glClear(
+        GL_COLOR_BUFFER_BIT |
+        GL_DEPTH_BUFFER_BIT
+    );
+
+    if (!m_program ||
+        !m_program->isLinked()) {
+        return;
+    }
+
+    renderScene(
+        currentProjection() *
+        currentView()
+    );
 }
 
 void PrevizViewport::renderScene(const QMatrix4x4& viewProj) {
-    m_program->bind();
+    if (!m_program ||
+        !m_program->isLinked() ||
+        !m_program->bind()) {
+        return;
+    }
     m_program->setUniformValue("uLightDir", QVector3D(0.4f, 1.0f, 0.6f));
 
     // 床グリッド
