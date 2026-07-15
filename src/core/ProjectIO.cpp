@@ -376,13 +376,16 @@ bool buildCutJson(const Cut& cut, json* jCutOut, std::vector<unsigned char>* blo
         json jPlanes = json::array();
         for (const MultiplaneCelPlane& p : mp.planes) {
             json jPlane = {{"cel", p.celIndex}, {"distance", p.distanceMm}, {"width", p.widthMm}};
-            // 距離ブラシ(セル内の距離塗り分け)。空なら省略
-            if (!p.distanceMap.isEmpty()) {
+            // 距離ブラシ(セル内の色塗り分け)。色マップとスロット(色+距離)を保存。空なら省略
+            if (!p.distanceMap.isEmpty() && !p.distanceStops.empty()) {
                 json jDist;
                 if (!writeBitmapBlob(p.distanceMap, jDist, *blobsOut, errorOut)) return false;
                 jPlane["distanceMap"] = std::move(jDist);
-                jPlane["distanceNear"] = p.distanceNearMm;
-                jPlane["distanceFar"] = p.distanceFarMm;
+                json jStops = json::array();
+                for (const MultiplaneDistanceStop& stop : p.distanceStops) {
+                    jStops.push_back({{"distance", stop.distanceMm}, {"r", stop.r}, {"g", stop.g}, {"b", stop.b}});
+                }
+                jPlane["distanceStops"] = std::move(jStops);
             }
             jPlanes.push_back(std::move(jPlane));
         }
@@ -610,8 +613,16 @@ bool parseCutJson(const json& jCut, Cut& cut, const unsigned char* blobBase, uin
                 plane.celIndex = jPlane.value("cel", 0);
                 plane.distanceMm = jPlane.value("distance", 500.0);
                 plane.widthMm = jPlane.value("width", 400.0);
-                plane.distanceNearMm = jPlane.value("distanceNear", 300.0);
-                plane.distanceFarMm = jPlane.value("distanceFar", 3000.0);
+                if (jPlane.contains("distanceStops")) {
+                    for (const json& jStop : jPlane.at("distanceStops")) {
+                        MultiplaneDistanceStop stop;
+                        stop.distanceMm = jStop.value("distance", 500.0);
+                        stop.r = static_cast<uint8_t>(jStop.value("r", 255));
+                        stop.g = static_cast<uint8_t>(jStop.value("g", 0));
+                        stop.b = static_cast<uint8_t>(jStop.value("b", 0));
+                        plane.distanceStops.push_back(stop);
+                    }
+                }
                 if (jPlane.contains("distanceMap")) {
                     if (!readBitmapBlob(jPlane.at("distanceMap"), blobBase, blobTotal, &plane.distanceMap, errorOut))
                         return false;

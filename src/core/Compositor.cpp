@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <vector>
 
@@ -11,6 +12,47 @@
 #include "Parallel.h"
 
 namespace core {
+
+namespace {
+// 距離ブラシの色マップ+スロットを、レンダラが読むグレースケール距離マップ(輝度→距離)へ解決する。
+// 各画素は最も近い色のスロットの距離になり、その距離を[dmin,dmax]へ正規化した輝度で表す。
+// 未塗り(alpha<128)はalpha0のまま=段の基準距離にフォールバックする
+Bitmap resolveDistanceGray(const Bitmap& colorMap, const std::vector<MultiplaneDistanceStop>& stops, double& dmin,
+                           double& dmax) {
+    dmin = std::numeric_limits<double>::max();
+    dmax = std::numeric_limits<double>::lowest();
+    for (const MultiplaneDistanceStop& s : stops) {
+        dmin = std::min(dmin, s.distanceMm);
+        dmax = std::max(dmax, s.distanceMm);
+    }
+    if (!(dmax > dmin)) dmax = dmin + 1.0;
+    Bitmap gray(colorMap.width(), colorMap.height());
+    for (int y = 0; y < colorMap.height(); ++y) {
+        for (int x = 0; x < colorMap.width(); ++x) {
+            const Bitmap::Pixel p = colorMap.pixel(x, y);
+            if (p.a < 128) {
+                gray.setPixel(x, y, {0, 0, 0, 0});  // 未塗り
+                continue;
+            }
+            int best = 0;
+            long bestD = std::numeric_limits<long>::max();
+            for (size_t i = 0; i < stops.size(); ++i) {
+                const long dr = static_cast<long>(p.r) - stops[i].r, dg = static_cast<long>(p.g) - stops[i].g,
+                           db = static_cast<long>(p.b) - stops[i].b;
+                const long d = dr * dr + dg * dg + db * db;
+                if (d < bestD) {
+                    bestD = d;
+                    best = static_cast<int>(i);
+                }
+            }
+            const int gv = std::clamp(
+                static_cast<int>(std::lround((stops[best].distanceMm - dmin) / (dmax - dmin) * 255.0)), 0, 255);
+            gray.setPixel(x, y, {static_cast<uint8_t>(gv), static_cast<uint8_t>(gv), static_cast<uint8_t>(gv), 255});
+        }
+    }
+    return gray;
+}
+}  // namespace
 
 namespace {
 
@@ -419,6 +461,9 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
     std::vector<MultiplanePlane> mplanes;
     composites.reserve(setup.planes.size());
     mplanes.reserve(setup.planes.size());
+    // 距離ブラシの解決済みグレースケール距離マップ(renderMultiplane呼び出しまでポインタを生かす)
+    std::vector<Bitmap> distanceGrays;
+    distanceGrays.reserve(setup.planes.size());
 
     // セルindex→最初に割り付いた段の物理配置(T光セルマスクの段投影に使う、バグ修正)。
     // 「そのセルが割り付いている段(planes内でcelIndex一致する最初の段)」を採用するため、
@@ -460,11 +505,13 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
         mp.widthMm = p.widthMm;
         mp.offsetXMm = position.x * mmPerPx;
         mp.offsetYMm = position.y * mmPerPx;
-        // 距離ブラシ(セル内の距離塗り分け)。setup.planesは呼び出し中生存するのでポインタで渡してよい
-        if (!p.distanceMap.isEmpty()) {
-            mp.distanceMap = &p.distanceMap;
-            mp.distanceNearMm = p.distanceNearMm;
-            mp.distanceFarMm = p.distanceFarMm;
+        // 距離ブラシ(セル内の色塗り分け)。色マップ+スロットをグレースケール距離マップへ解決して渡す
+        if (!p.distanceMap.isEmpty() && !p.distanceStops.empty()) {
+            double dmin = 0.0, dmax = 0.0;
+            distanceGrays.push_back(resolveDistanceGray(p.distanceMap, p.distanceStops, dmin, dmax));
+            mp.distanceMap = &distanceGrays.back();
+            mp.distanceNearMm = dmin;
+            mp.distanceFarMm = dmax;
         }
         mplanes.push_back(mp);
 

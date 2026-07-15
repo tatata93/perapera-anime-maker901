@@ -33,6 +33,8 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <memory>
 #include <utility>
 
 #include "core/Compositor.h"
@@ -1011,39 +1013,140 @@ void ShootingWindow::openDistanceBrushDialog(int planeIndex) {
         plane.distanceMap = core::Bitmap(m_canvasWidth, m_canvasHeight);
         plane.distanceMap.fill({0, 0, 0, 0});
     }
+    // スロット未設定なら、基準距離を中心に手前/中/奥の3色を用意する
+    if (plane.distanceStops.empty()) {
+        const double d = plane.distanceMm;
+        plane.distanceStops.push_back({std::max(1.0, d * 0.4), 230, 60, 60});  // 手前=赤
+        plane.distanceStops.push_back({d, 60, 200, 90});                        // 中=緑
+        plane.distanceStops.push_back({d * 2.5, 60, 120, 235});                 // 奥=青
+    }
     const int celIndex = plane.celIndex;
 
     auto* dialog = new QDialog(this);
     dialog->setWindowTitle(tr("距離ブラシ - 段%1").arg(planeIndex + 1));
-    dialog->resize(960, 600);
+    dialog->resize(1000, 640);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     auto* layout = new QVBoxLayout(dialog);
 
     layout->addWidget(new QLabel(
-        tr("1枚のセル内で距離を塗り分けます。近い所と遠い所でボケ方(被写界深度)が変わります。\n"
-           "「筆の距離」を選んで塗る=その距離、消しゴム=未塗り(段の基準距離に戻る)。"),
+        tr("色ごとに違う距離を、1枚のセルの中で塗り分けられます(近い色/遠い色でボケ方が変わる)。\n"
+           "色を選んで塗る=その距離、消しゴム=未塗り(段の基準距離)。距離(mm)は各色の下で変えられます。"),
         dialog));
 
-    // 近/遠の距離レンジ
-    auto* rangeRow = new QHBoxLayout();
-    rangeRow->addWidget(new QLabel(tr("近(黒) mm"), dialog));
-    auto* nearSpin = new QDoubleSpinBox(dialog);
-    nearSpin->setRange(1.0, 100000.0);
-    nearSpin->setDecimals(0);
-    nearSpin->setValue(plane.distanceNearMm);
-    nearSpin->setKeyboardTracking(false);
-    rangeRow->addWidget(nearSpin);
-    rangeRow->addWidget(new QLabel(tr("遠(白) mm"), dialog));
-    auto* farSpin = new QDoubleSpinBox(dialog);
-    farSpin->setRange(1.0, 100000.0);
-    farSpin->setDecimals(0);
-    farSpin->setValue(plane.distanceFarMm);
-    farSpin->setKeyboardTracking(false);
-    rangeRow->addWidget(farSpin);
-    rangeRow->addStretch(1);
-    layout->addLayout(rangeRow);
+    auto* canvas = new GLCanvas(dialog);
+    canvas->setCanvasSize(m_canvasWidth, m_canvasHeight);
+    canvas->setTool(GLCanvas::Tool::Pen);
+    canvas->setPenRadius(60.0f);
+    canvas->setEraserRadius(60.0f);
+    canvas->setBitmap(&plane.distanceMap);
 
-    // ツール行: ペン/消しゴム・太さ・筆の距離
+    // 現在選択中のスロット(色)。共有ポインタでラムダ間で状態を持つ
+    auto activeStop = std::make_shared<int>(0);
+    const auto applyPen = [this, planeIndex, canvas, activeStop] {
+        core::Cut* c = currentCut();
+        if (!c || planeIndex >= static_cast<int>(c->multiplane().planes.size())) return;
+        auto& stops = c->multiplane().planes[static_cast<size_t>(planeIndex)].distanceStops;
+        if (stops.empty()) return;
+        *activeStop = std::clamp(*activeStop, 0, static_cast<int>(stops.size()) - 1);
+        const auto& s = stops[static_cast<size_t>(*activeStop)];
+        canvas->setPenColor(QColor(s.r, s.g, s.b, 255));
+    };
+
+    // 距離スロット(色+距離)の行。追加/削除のたびに作り直す
+    auto* stopContainer = new QWidget(dialog);
+    auto* stopLayout = new QHBoxLayout(stopContainer);
+    stopLayout->setContentsMargins(0, 0, 0, 0);
+    auto sharedRebuild = std::make_shared<std::function<void()>>();
+    *sharedRebuild = [this, planeIndex, stopContainer, stopLayout, activeStop, applyPen, sharedRebuild] {
+        QLayoutItem* item;
+        while ((item = stopLayout->takeAt(0)) != nullptr) {
+            if (item->widget()) item->widget()->deleteLater();
+            delete item;
+        }
+        core::Cut* c = currentCut();
+        if (!c || planeIndex >= static_cast<int>(c->multiplane().planes.size())) return;
+        auto& stops = c->multiplane().planes[static_cast<size_t>(planeIndex)].distanceStops;
+        static const QColor kPal[] = {QColor(230, 60, 60),  QColor(60, 200, 90),  QColor(60, 120, 235),
+                                      QColor(235, 200, 40),  QColor(210, 70, 200), QColor(40, 200, 210),
+                                      QColor(240, 140, 40),  QColor(150, 80, 220)};
+        for (int i = 0; i < static_cast<int>(stops.size()); ++i) {
+            auto* col = new QWidget(stopContainer);
+            auto* cl = new QVBoxLayout(col);
+            cl->setContentsMargins(2, 2, 2, 2);
+            cl->setSpacing(2);
+            auto* swatch = new QPushButton(col);
+            swatch->setFixedSize(56, 30);
+            swatch->setStyleSheet(QStringLiteral("QPushButton{background:%1;border:%2;}")
+                                      .arg(QColor(stops[i].r, stops[i].g, stops[i].b).name(),
+                                           i == *activeStop ? QStringLiteral("3px solid #ffcc00")
+                                                            : QStringLiteral("1px solid #888")));
+            connect(swatch, &QPushButton::clicked, stopContainer, [activeStop, i, applyPen, sharedRebuild] {
+                *activeStop = i;
+                applyPen();
+                (*sharedRebuild)();
+            });
+            cl->addWidget(swatch);
+            auto* dsp = new QDoubleSpinBox(col);
+            dsp->setRange(1.0, 100000.0);
+            dsp->setDecimals(0);
+            dsp->setValue(stops[i].distanceMm);
+            dsp->setKeyboardTracking(false);
+            dsp->setFixedWidth(84);
+            connect(dsp, &QDoubleSpinBox::valueChanged, this, [this, planeIndex, i](double v) {
+                core::Cut* cc = currentCut();
+                if (!cc || planeIndex >= static_cast<int>(cc->multiplane().planes.size())) return;
+                auto& st = cc->multiplane().planes[static_cast<size_t>(planeIndex)].distanceStops;
+                if (i < static_cast<int>(st.size())) {
+                    st[static_cast<size_t>(i)].distanceMm = v;
+                    markEdited();
+                }
+            });
+            cl->addWidget(dsp);
+            auto* rm = new QPushButton(tr("削除"), col);
+            rm->setFixedWidth(84);
+            rm->setEnabled(stops.size() > 1);
+            connect(rm, &QPushButton::clicked, this, [this, planeIndex, i, activeStop, applyPen, sharedRebuild] {
+                core::Cut* cc = currentCut();
+                if (!cc || planeIndex >= static_cast<int>(cc->multiplane().planes.size())) return;
+                auto& st = cc->multiplane().planes[static_cast<size_t>(planeIndex)].distanceStops;
+                if (st.size() <= 1 || i >= static_cast<int>(st.size())) return;
+                st.erase(st.begin() + i);
+                if (*activeStop >= static_cast<int>(st.size())) *activeStop = static_cast<int>(st.size()) - 1;
+                applyPen();
+                markEdited();
+                (*sharedRebuild)();
+            });
+            cl->addWidget(rm);
+            stopLayout->addWidget(col);
+        }
+        auto* addBtn = new QPushButton(tr("色を追加"), stopContainer);
+        connect(addBtn, &QPushButton::clicked, this, [this, planeIndex, activeStop, applyPen, sharedRebuild] {
+            core::Cut* cc = currentCut();
+            if (!cc || planeIndex >= static_cast<int>(cc->multiplane().planes.size())) return;
+            auto& st = cc->multiplane().planes[static_cast<size_t>(planeIndex)].distanceStops;
+            static const QColor pal[] = {QColor(230, 60, 60),  QColor(60, 200, 90),  QColor(60, 120, 235),
+                                         QColor(235, 200, 40),  QColor(210, 70, 200), QColor(40, 200, 210),
+                                         QColor(240, 140, 40),  QColor(150, 80, 220)};
+            const QColor col = pal[st.size() % 8];
+            core::MultiplaneDistanceStop s;
+            s.r = static_cast<uint8_t>(col.red());
+            s.g = static_cast<uint8_t>(col.green());
+            s.b = static_cast<uint8_t>(col.blue());
+            s.distanceMm = st.empty() ? 500.0 : st.back().distanceMm * 1.6;
+            st.push_back(s);
+            *activeStop = static_cast<int>(st.size()) - 1;
+            applyPen();
+            markEdited();
+            (*sharedRebuild)();
+        });
+        stopLayout->addWidget(addBtn);
+        stopLayout->addStretch(1);
+    };
+    (*sharedRebuild)();
+    layout->addWidget(stopContainer);
+    applyPen();
+
+    // ツール行: ペン/消しゴム・太さ・全消去
     auto* toolRow = new QHBoxLayout();
     auto* penButton = new QToolButton(dialog);
     penButton->setText(tr("ペン"));
@@ -1062,34 +1165,12 @@ void ShootingWindow::openDistanceBrushDialog(int planeIndex) {
     radiusSlider->setValue(60);
     radiusSlider->setFixedWidth(140);
     toolRow->addWidget(radiusSlider);
-    toolRow->addWidget(new QLabel(tr("筆の距離 mm"), dialog));
-    auto* penDistSpin = new QDoubleSpinBox(dialog);
-    penDistSpin->setRange(1.0, 100000.0);
-    penDistSpin->setDecimals(0);
-    penDistSpin->setValue(std::clamp(plane.distanceMm, plane.distanceNearMm, plane.distanceFarMm));
-    penDistSpin->setKeyboardTracking(false);
-    toolRow->addWidget(penDistSpin);
     auto* clearButton = new QPushButton(tr("全消去"), dialog);
     toolRow->addWidget(clearButton);
     toolRow->addStretch(1);
     layout->addLayout(toolRow);
 
-    auto* canvas = new GLCanvas(dialog);
-    canvas->setCanvasSize(m_canvasWidth, m_canvasHeight);
-    canvas->setTool(GLCanvas::Tool::Pen);
-    canvas->setPenRadius(60.0f);
-    canvas->setEraserRadius(60.0f);
-    canvas->setBitmap(&plane.distanceMap);
     layout->addWidget(canvas, 1);
-
-    // 筆の距離→ペンのグレー(近=黒/遠=白)を決める
-    const auto updatePenColor = [canvas, nearSpin, farSpin, penDistSpin] {
-        const double near = nearSpin->value(), far = farSpin->value();
-        const double t = far > near ? std::clamp((penDistSpin->value() - near) / (far - near), 0.0, 1.0) : 0.0;
-        const int g = static_cast<int>(std::lround(t * 255.0));
-        canvas->setPenColor(QColor(g, g, g, 255));
-    };
-    updatePenColor();
 
     // 下敷き: このセルの現在コマの絵(マルチプレーンを一時的に切って平面の絵をそのまま出す)
     {
@@ -1105,10 +1186,11 @@ void ShootingWindow::openDistanceBrushDialog(int planeIndex) {
         canvas->setUnderlayOpacity(0.55f);
     }
 
-    connect(penButton, &QToolButton::toggled, canvas, [canvas, radiusSlider](bool checked) {
+    connect(penButton, &QToolButton::toggled, canvas, [canvas, radiusSlider, applyPen](bool checked) {
         if (!checked) return;
         canvas->setTool(GLCanvas::Tool::Pen);
         canvas->setPenRadius(static_cast<float>(radiusSlider->value()));
+        applyPen();  // ペンの色を選択スロットへ戻す
     });
     connect(eraserButton, &QToolButton::toggled, canvas, [canvas, radiusSlider](bool checked) {
         if (!checked) return;
@@ -1118,22 +1200,6 @@ void ShootingWindow::openDistanceBrushDialog(int planeIndex) {
     connect(radiusSlider, &QSlider::valueChanged, dialog, [canvas, penButton](int value) {
         if (penButton->isChecked()) canvas->setPenRadius(static_cast<float>(value));
         else canvas->setEraserRadius(static_cast<float>(value));
-    });
-    connect(penDistSpin, &QDoubleSpinBox::valueChanged, dialog, [updatePenColor] { updatePenColor(); });
-    connect(nearSpin, &QDoubleSpinBox::valueChanged, this, [this, planeIndex, nearSpin, penDistSpin, updatePenColor](double v) {
-        core::Cut* c = currentCut();
-        if (c && planeIndex < static_cast<int>(c->multiplane().planes.size()))
-            c->multiplane().planes[static_cast<size_t>(planeIndex)].distanceNearMm = v;
-        penDistSpin->setMinimum(1.0);
-        updatePenColor();
-        markEdited();
-    });
-    connect(farSpin, &QDoubleSpinBox::valueChanged, this, [this, planeIndex, updatePenColor](double v) {
-        core::Cut* c = currentCut();
-        if (c && planeIndex < static_cast<int>(c->multiplane().planes.size()))
-            c->multiplane().planes[static_cast<size_t>(planeIndex)].distanceFarMm = v;
-        updatePenColor();
-        markEdited();
     });
     connect(clearButton, &QPushButton::clicked, this, [this, planeIndex, canvas] {
         core::Cut* c = currentCut();

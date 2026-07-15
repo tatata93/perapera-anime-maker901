@@ -9,6 +9,13 @@
 
 namespace core {
 
+// 距離ブラシの1スロット(塗り分ける距離)。表示色rgbで塗り、その色の画素はdistanceMmの距離になる。
+// 1枚のセル内に複数スロットを作れば、色ごとに違う距離(=違うボケ)を塗り分けられる
+struct MultiplaneDistanceStop {
+    double distanceMm = 500.0;
+    uint8_t r = 255, g = 0, b = 0;  // 塗り分け表示色(はっきり見分けられる色)
+};
+
 // 撮影台の1段(セル/背景を置く平面)。カメラは原点でZ+方向(下)を向く
 struct MultiplanePlane {
     const Bitmap* artwork = nullptr;  // 透明ビットマップ(straight-alpha)

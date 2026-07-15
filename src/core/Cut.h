@@ -27,12 +27,11 @@ struct MultiplaneCelPlane {
     double distanceMm = 500.0;  // レンズから平面までの距離(距離マップ未塗り部・並べ替えの基準)
     double widthMm = 400.0;     // アートワークの物理幅
 
-    // 距離ブラシ: 1枚のセル内で距離を塗り分けるグレースケールマップ(空=一様distanceMm)。
-    // 塗られた画素(alpha>0)は輝度0..1を distanceNearMm..distanceFarMm へ線形写像した距離になり、
-    // その画素だけ違う距離としてレンズ(被写界深度)計算される。未塗り(alpha=0)は distanceMm を使う
+    // 距離ブラシ: 1枚のセル内で距離を色で塗り分けるマップ(空=一様distanceMm)。
+    // 各画素にはdistanceStopsのどれかの色が塗られ、その色のスロットの距離で被写界深度が計算される。
+    // 未塗り(alpha=0)は distanceMm を使う。色ごとに違う距離=違うボケを1枚のセル内に作れる
     Bitmap distanceMap;
-    double distanceNearMm = 300.0;   // 距離マップの黒(0)が表す距離
-    double distanceFarMm = 3000.0;   // 距離マップの白(255)が表す距離
+    std::vector<MultiplaneDistanceStop> distanceStops;  // 塗り分ける距離(色+距離mm)の一覧
 };
 
 // カット単位のクラシック撮影設定。enabled=falseなら従来のデジタル合成
