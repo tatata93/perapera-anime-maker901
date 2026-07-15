@@ -64,40 +64,6 @@ void main() {
 }
 )";
 
-<<<<<<< HEAD
-// レンズ歪曲ポスト処理: 全画面クアッド(pos.xy + uv)をそのまま出す頂点シェーダ
-const char* kPostVertexShader = R"(
-attribute vec2 aPos;
-attribute vec2 aUv;
-varying vec2 vUv;
-void main() {
-    vUv = aUv;
-    gl_Position = vec4(aPos, 0.0, 1.0);
-}
-)";
-
-// 放射状のレンズ歪曲。uDistort>0=樽型/魚眼(中心が拡大・周辺が圧縮)、<0=糸巻き型。
-// アスペクト補正して円形の歪みにする。標準レンズ相当の直線→直線は uDistort=0
-const char* kPostFragmentShader = R"(
-uniform sampler2D uTex;
-uniform float uDistort;
-uniform float uAspect;
-varying vec2 vUv;
-void main() {
-    vec2 d = vUv - 0.5;
-    vec2 dc = vec2(d.x * uAspect, d.y);   // アスペクト補正した中心からのベクトル
-    float r2 = dot(dc, dc);
-    float f = 1.0 - uDistort * r2;         // 樽型は周辺ほど内側をサンプル(中心拡大)
-    vec2 uv = 0.5 + d * f;
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-        gl_FragColor = vec4(0.16, 0.17, 0.20, 1.0);  // 画面外は背景色で埋める(糸巻き時)
-        return;
-    }
-    gl_FragColor = texture2D(uTex, uv);
-}
-)";
-
-=======
 const char* kCoreVertexShader = R"(#version 150 core
 in vec3 aPos;
 in vec3 aNormal;
@@ -182,7 +148,161 @@ void main() {
 )";
 
 
->>>>>>> 4df5f5b52297183a298189d3b3f2eb0f93c92538
+// レンズ歪曲ポスト処理: 全画面クアッド(pos.xy + uv)をそのまま出す頂点シェーダ
+const char* kPostCompatVertexShader = R"(#version 120
+attribute vec2 aPos;
+attribute vec2 aUv;
+varying vec2 vUv;
+void main() {
+    vUv = aUv;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)";
+
+// 放射状のレンズ歪曲。uDistort>0=樽型/魚眼(中心が拡大・周辺が圧縮)、<0=糸巻き型。
+// アスペクト補正して円形の歪みにする。標準レンズ相当の直線→直線は uDistort=0
+const char* kPostCompatFragmentShader = R"(#version 120
+uniform sampler2D uTex;
+uniform float uDistort;
+uniform float uAspect;
+varying vec2 vUv;
+void main() {
+    vec2 d = vUv - 0.5;
+    vec2 dc = vec2(d.x * uAspect, d.y);
+    float r2 = dot(dc, dc);
+    float f = 1.0 - uDistort * r2;
+    vec2 uv = 0.5 + d * f;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        gl_FragColor = vec4(0.16, 0.17, 0.20, 1.0);
+        return;
+    }
+    gl_FragColor = texture2D(uTex, uv);
+}
+)";
+
+const char* kPostCoreVertexShader = R"(#version 150 core
+in vec2 aPos;
+in vec2 aUv;
+out vec2 vUv;
+void main() {
+    vUv = aUv;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)";
+
+const char* kPostCoreFragmentShader = R"(#version 150 core
+uniform sampler2D uTex;
+uniform float uDistort;
+uniform float uAspect;
+in vec2 vUv;
+out vec4 fragColor;
+void main() {
+    vec2 d = vUv - 0.5;
+    vec2 dc = vec2(d.x * uAspect, d.y);
+    float r2 = dot(dc, dc);
+    float f = 1.0 - uDistort * r2;
+    vec2 uv = 0.5 + d * f;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        fragColor = vec4(0.16, 0.17, 0.20, 1.0);
+        return;
+    }
+    fragColor = texture(uTex, uv);
+}
+)";
+
+const char* kPostEsVertexShader = R"(#version 100
+attribute highp vec2 aPos;
+attribute highp vec2 aUv;
+varying highp vec2 vUv;
+void main() {
+    vUv = aUv;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)";
+
+const char* kPostEsFragmentShader = R"(#version 100
+precision highp float;
+uniform sampler2D uTex;
+uniform float uDistort;
+uniform float uAspect;
+varying highp vec2 vUv;
+void main() {
+    vec2 d = vUv - 0.5;
+    vec2 dc = vec2(d.x * uAspect, d.y);
+    float r2 = dot(dc, dc);
+    float f = 1.0 - uDistort * r2;
+    vec2 uv = 0.5 + d * f;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        gl_FragColor = vec4(0.16, 0.17, 0.20, 1.0);
+        return;
+    }
+    gl_FragColor = texture2D(uTex, uv);
+}
+)";
+
+enum class ShaderFlavor {
+    Compatibility,
+    Core,
+    Es,
+};
+
+ShaderFlavor currentShaderFlavor() {
+    const QOpenGLContext* glContext = QOpenGLContext::currentContext();
+    if (glContext && glContext->isOpenGLES()) return ShaderFlavor::Es;
+    if (glContext && glContext->format().profile() == QSurfaceFormat::CoreProfile) {
+        return ShaderFlavor::Core;
+    }
+    return ShaderFlavor::Compatibility;
+}
+
+const char* meshVertexShader(ShaderFlavor flavor) {
+    switch (flavor) {
+        case ShaderFlavor::Es:
+            return kEsVertexShader;
+        case ShaderFlavor::Core:
+            return kCoreVertexShader;
+        case ShaderFlavor::Compatibility:
+        default:
+            return kCompatVertexShader;
+    }
+}
+
+const char* meshFragmentShader(ShaderFlavor flavor) {
+    switch (flavor) {
+        case ShaderFlavor::Es:
+            return kEsFragmentShader;
+        case ShaderFlavor::Core:
+            return kCoreFragmentShader;
+        case ShaderFlavor::Compatibility:
+        default:
+            return kCompatFragmentShader;
+    }
+}
+
+const char* postVertexShader(ShaderFlavor flavor) {
+    switch (flavor) {
+        case ShaderFlavor::Es:
+            return kPostEsVertexShader;
+        case ShaderFlavor::Core:
+            return kPostCoreVertexShader;
+        case ShaderFlavor::Compatibility:
+        default:
+            return kPostCompatVertexShader;
+    }
+}
+
+const char* postFragmentShader(ShaderFlavor flavor) {
+    switch (flavor) {
+        case ShaderFlavor::Es:
+            return kPostEsFragmentShader;
+        case ShaderFlavor::Core:
+            return kPostCoreFragmentShader;
+        case ShaderFlavor::Compatibility:
+        default:
+            return kPostCompatFragmentShader;
+    }
+}
+
 const QVector4D kGizmoColor(1.0f, 0.6f, 0.2f, 1.0f);      // 本番カメラのギズモ(オレンジ)
 const QVector4D kHighlightColor(1.0f, 0.65f, 0.25f, 1.0f);  // 選択モデルの強調色
 
@@ -294,28 +414,9 @@ void PrevizViewport::initializeGL() {
 
     const QOpenGLContext* glContext =
         QOpenGLContext::currentContext();
-
-    const bool isGles =
-        glContext && glContext->isOpenGLES();
-
-    const bool isCoreProfile =
-        glContext &&
-        glContext->format().profile() ==
-            QSurfaceFormat::CoreProfile;
-
-    const char* vertexSource =
-        isGles
-            ? kEsVertexShader
-            : (isCoreProfile
-                   ? kCoreVertexShader
-                   : kCompatVertexShader);
-
-    const char* fragmentSource =
-        isGles
-            ? kEsFragmentShader
-            : (isCoreProfile
-                   ? kCoreFragmentShader
-                   : kCompatFragmentShader);
+    const ShaderFlavor shaderFlavor = currentShaderFlavor();
+    const char* vertexSource = meshVertexShader(shaderFlavor);
+    const char* fragmentSource = meshFragmentShader(shaderFlavor);
 
     m_program = std::make_unique<QOpenGLShaderProgram>();
 
@@ -376,7 +477,7 @@ void PrevizViewport::initializeGL() {
             << "profile="
             << actualFormat.profile()
             << "GLES="
-            << isGles;
+            << glContext->isOpenGLES();
     }
 
     buildGrid();
@@ -647,12 +748,35 @@ float PrevizViewport::currentLensDistortion() const {
 
 void PrevizViewport::ensurePostResources() {
     if (!m_postProgram) {
+        const ShaderFlavor shaderFlavor = currentShaderFlavor();
         m_postProgram = std::make_unique<QOpenGLShaderProgram>();
-        m_postProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, kPostVertexShader);
-        m_postProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, kPostFragmentShader);
+
+        if (!m_postProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, postVertexShader(shaderFlavor))) {
+            qCritical().noquote()
+                << "Previz post vertex shader compile failed:"
+                << m_postProgram->log();
+            m_postProgram.reset();
+            return;
+        }
+
+        if (!m_postProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, postFragmentShader(shaderFlavor))) {
+            qCritical().noquote()
+                << "Previz post fragment shader compile failed:"
+                << m_postProgram->log();
+            m_postProgram.reset();
+            return;
+        }
+
         m_postProgram->bindAttributeLocation("aPos", 0);
         m_postProgram->bindAttributeLocation("aUv", 1);
-        m_postProgram->link();
+
+        if (!m_postProgram->link()) {
+            qCritical().noquote()
+                << "Previz post shader link failed:"
+                << m_postProgram->log();
+            m_postProgram.reset();
+            return;
+        }
     }
     if (!m_postQuad) {
         // 2三角形の全画面クアッド: 各頂点 pos.xy, uv.xy
@@ -674,6 +798,10 @@ void PrevizViewport::renderSceneWithLens(const QMatrix4x4& viewProj, int w, int 
         return;
     }
     ensurePostResources();
+    if (!m_postProgram || !m_postProgram->isLinked() || !m_postQuad || !m_postQuad->isCreated()) {
+        renderScene(viewProj);
+        return;
+    }
 
     // 現在の描画先FBO/ビューポートを退避(paintGLは既定FBO、renderCameraViewImageは外側FBO)
     GLint prevFbo = 0;
@@ -756,13 +884,6 @@ void PrevizViewport::paintGL() {
 
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
-<<<<<<< HEAD
-    if (!m_program) return;
-    // QOpenGLWidgetの実ピクセルサイズ(devicePixelRatio込み)は現在のGLビューポートから取得する
-    GLint vp[4];
-    glGetIntegerv(GL_VIEWPORT, vp);
-    renderSceneWithLens(currentProjection() * currentView(), vp[2], vp[3], currentLensDistortion());
-=======
     glDepthFunc(GL_LEQUAL);
 
     glDisable(GL_BLEND);
@@ -785,11 +906,10 @@ void PrevizViewport::paintGL() {
         return;
     }
 
-    renderScene(
-        currentProjection() *
-        currentView()
-    );
->>>>>>> 4df5f5b52297183a298189d3b3f2eb0f93c92538
+    // QOpenGLWidgetの実ピクセルサイズ(devicePixelRatio込み)は現在のGLビューポートから取得する
+    GLint vp[4];
+    glGetIntegerv(GL_VIEWPORT, vp);
+    renderSceneWithLens(currentProjection() * currentView(), vp[2], vp[3], currentLensDistortion());
 }
 
 void PrevizViewport::renderScene(const QMatrix4x4& viewProj) {

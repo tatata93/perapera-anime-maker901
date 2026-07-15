@@ -234,7 +234,7 @@ TEST_CASE("renderCutFrame crops and resamples the camera frame", "[core][composi
     REQUIRE(zoomed.pixel(4, 4).g == 0);
 }
 
-TEST_CASE("renderCutFrame supports oversized paper cels panned via position keys (引きセル)",
+TEST_CASE("renderCutFrame supports oversized paper cels panned via position keys",
           "[core][compositor][paper]") {
     // 引きセル: キャンバス幅Wの2倍(横パン用)の背景セルを作り、左半分と右半分に色違いの目印を置く。
     // コマ0=オフセット0(セル左端がキャンバス左端、右半分の目印が画面内)、
