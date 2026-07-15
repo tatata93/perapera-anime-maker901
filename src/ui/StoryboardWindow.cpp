@@ -27,6 +27,7 @@
 #include "core/Project.h"
 #include "core/StrokeCommand.h"
 #include "render/GLCanvas.h"
+#include "ui/FloatingCanvasWindow.h"
 
 namespace {
 // 「よくあるコンテ用紙テンプレート」を模した1枚の紙のサイズ。全カット共通。
@@ -399,13 +400,17 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     auto* toolRow = new QHBoxLayout();
     m_penButton = new QPushButton(tr("ペン"), rightContainer);
     m_eraserButton = new QPushButton(tr("消しゴム"), rightContainer);
+    m_eyedropperButton = new QPushButton(tr("スポイト"), rightContainer);
     m_penButton->setCheckable(true);
     m_eraserButton->setCheckable(true);
+    m_eyedropperButton->setCheckable(true);
     m_penButton->setAutoExclusive(true);
     m_eraserButton->setAutoExclusive(true);
+    m_eyedropperButton->setAutoExclusive(true);
     m_penButton->setChecked(true);
     toolRow->addWidget(m_penButton);
     toolRow->addWidget(m_eraserButton);
+    toolRow->addWidget(m_eyedropperButton);
 
     // 太さ(選択中ツールの半径。ペン/消しゴムそれぞれの値をメンバで記憶し、トグル切替時に表示も切替)
     toolRow->addWidget(new QLabel(tr("太さ"), rightContainer));
@@ -428,6 +433,8 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_zoomButton = new QPushButton(tr("絵を拡大"), rightContainer);
     m_zoomButton->setCheckable(true);
     toolRow->addWidget(m_zoomButton);
+    auto* detachButton = new QPushButton(tr("別窓"), rightContainer);
+    toolRow->addWidget(detachButton);
 
     toolRow->addStretch();
     rightLayout->addLayout(toolRow);
@@ -437,7 +444,11 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_canvas = new GLCanvas(rightContainer);
     m_canvas->setCanvasSize(kSheetWidth, kSheetHeight);
     m_canvas->setTool(GLCanvas::Tool::Pen);
-    rightLayout->addWidget(m_canvas, 2);
+    m_canvasHost = new QWidget(rightContainer);
+    m_canvasLayout = new QVBoxLayout(m_canvasHost);
+    m_canvasLayout->setContentsMargins(0, 0, 0, 0);
+    m_canvasLayout->addWidget(m_canvas);
+    rightLayout->addWidget(m_canvasHost, 2);
 
     // 内容/セリフ(複数行対応のテキスト欄。表の該当列は表示専用にする)。上の手書き欄と横並びにする
     auto* textRow = new QHBoxLayout();
@@ -495,8 +506,19 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
         m_radiusSlider->setValue(static_cast<int>(m_eraserRadius));
         m_radiusValueLabel->setText(QString::number(static_cast<int>(m_eraserRadius)));
     });
+    connect(m_eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (!checked) return;
+        m_canvas->setTool(GLCanvas::Tool::Eyedropper);
+    });
+    connect(m_canvas, &GLCanvas::colorPicked, this, [this](QColor color) {
+        m_penColor = color;
+        m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+        applyToolSettingsToCanvases();
+        m_penButton->setChecked(true);
+    });
     connect(m_radiusSlider, &QSlider::valueChanged, this, &StoryboardWindow::onRadiusSliderChanged);
     connect(m_colorButton, &QPushButton::clicked, this, &StoryboardWindow::chooseColor);
+    connect(detachButton, &QPushButton::clicked, this, &StoryboardWindow::detachCanvas);
 
     connect(m_table, &QTableWidget::itemChanged, this, &StoryboardWindow::onItemChanged);
     connect(m_table, &QTableWidget::itemSelectionChanged, this, &StoryboardWindow::onSelectionChanged);
@@ -772,10 +794,10 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
 }
 
 void StoryboardWindow::onRadiusSliderChanged(int value) {
-    if (m_penButton->isChecked()) {
-        m_penRadius = static_cast<float>(value);
-    } else {
+    if (m_eraserButton->isChecked()) {
         m_eraserRadius = static_cast<float>(value);
+    } else {
+        m_penRadius = static_cast<float>(value);
     }
     m_radiusValueLabel->setText(QString::number(value));
     applyToolSettingsToCanvases();
@@ -876,6 +898,29 @@ void StoryboardWindow::openPreview() {
     m_previewDialog = dialog;
     connect(dialog, &QObject::destroyed, this, [this] { m_previewDialog = nullptr; });
     dialog->show();
+}
+
+void StoryboardWindow::detachCanvas() {
+    if (m_floatingCanvasWindow || !m_canvas || !m_canvasLayout) return;
+    m_canvasLayout->removeWidget(m_canvas);
+    auto* window = new FloatingCanvasWindow(tr("絵コンテ キャンバス"), this);
+    m_floatingCanvasWindow = window;
+    window->setCentralWidget(m_canvas);
+    connect(window, &FloatingCanvasWindow::restoreRequested, this, &StoryboardWindow::restoreCanvas);
+    connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
+    window->show();
+}
+
+void StoryboardWindow::restoreCanvas() {
+    if (!m_floatingCanvasWindow || !m_canvasLayout) return;
+    FloatingCanvasWindow* window = m_floatingCanvasWindow;
+    QWidget* canvas = window->takeCentralWidget();
+    if (canvas) {
+        m_canvasLayout->addWidget(canvas);
+        canvas->show();
+    }
+    m_floatingCanvasWindow = nullptr;
+    window->deleteLater();
 }
 
 void StoryboardWindow::debugZoomToFrame() {

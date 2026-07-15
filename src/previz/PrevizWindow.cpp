@@ -332,8 +332,10 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     }
 
     auto* poseLabel = new QLabel(tr("人型ポーズ"), container);
+    m_poseLabelWidget = poseLabel;
     layout->addWidget(poseLabel);
     auto* posePresetRow = new QWidget(container);
+    m_posePresetRow = posePresetRow;
     auto* posePresetLayout = new QHBoxLayout(posePresetRow);
     posePresetLayout->setContentsMargins(4, 0, 4, 0);
     m_posePresetCombo = new QComboBox(posePresetRow);
@@ -381,6 +383,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyPoseFromUi(); });
     }
     auto* poseKeyButton = new QPushButton(tr("現在コマにポーズキー"), container);
+    m_poseKeyButton = poseKeyButton;
     layout->addWidget(poseKeyButton);
     connect(poseKeyButton, &QPushButton::clicked, this, [this] {
         core::PrevizModel* model = selectedModel();
@@ -391,6 +394,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         emit sceneEdited();
     });
     auto* poseKeyClearButton = new QPushButton(tr("ポーズキー削除"), container);
+    m_poseKeyClearButton = poseKeyClearButton;
     layout->addWidget(poseKeyClearButton);
     connect(poseKeyClearButton, &QPushButton::clicked, this, [this] {
         core::PrevizModel* model = selectedModel();
@@ -402,12 +406,15 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         emit sceneEdited();
     });
     auto* walkCycleButton = new QPushButton(tr("歩きループキー作成"), container);
+    m_walkCycleButton = walkCycleButton;
     layout->addWidget(walkCycleButton);
     connect(walkCycleButton, &QPushButton::clicked, this, &PrevizWindow::addHumanoidWalkCycleKeys);
 
     auto* bodyLabel = new QLabel(tr("人型体型"), container);
+    m_bodyLabelWidget = bodyLabel;
     layout->addWidget(bodyLabel);
     auto* bodyPresetRow = new QWidget(container);
+    m_bodyPresetRow = bodyPresetRow;
     auto* bodyPresetLayout = new QHBoxLayout(bodyPresetRow);
     bodyPresetLayout->setContentsMargins(4, 0, 4, 0);
     m_bodyPresetCombo = new QComboBox(bodyPresetRow);
@@ -463,6 +470,9 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     }
 
     // モーションキー(カメラ/選択モデル): 現在コマにキーを打つ・消す
+    setPoseControlsEnabled(false);
+    setBodyControlsEnabled(false);
+
     auto* cameraKeyButton = new QPushButton(tr("現在コマにカメラキー"), container);
     layout->addWidget(cameraKeyButton);
     connect(cameraKeyButton, &QPushButton::clicked, this, [this] {
@@ -715,11 +725,18 @@ void PrevizWindow::applyTransformFromUi() {
 }
 
 void PrevizWindow::setPoseControlsEnabled(bool enabled) {
+    for (QWidget* widget : {m_poseLabelWidget, m_posePresetRow, m_poseKeyButton, m_poseKeyClearButton,
+                            m_walkCycleButton}) {
+        if (widget) widget->setVisible(enabled);
+    }
     if (m_posePresetCombo) m_posePresetCombo->setEnabled(enabled);
     for (QDoubleSpinBox* spin : {m_poseTorsoPitch, m_poseHeadYaw, m_poseLeftShoulder, m_poseLeftElbow,
                                  m_poseRightShoulder, m_poseRightElbow, m_poseLeftHip, m_poseLeftKnee,
                                  m_poseRightHip, m_poseRightKnee}) {
-        if (spin) spin->setEnabled(enabled);
+        if (spin) {
+            spin->setEnabled(enabled);
+            if (spin->parentWidget()) spin->parentWidget()->setVisible(enabled);
+        }
     }
 }
 
@@ -773,12 +790,18 @@ void PrevizWindow::applyPoseFromUi() {
 }
 
 void PrevizWindow::setBodyControlsEnabled(bool enabled) {
+    for (QWidget* widget : {m_bodyLabelWidget, m_bodyPresetRow}) {
+        if (widget) widget->setVisible(enabled);
+    }
     if (m_bodyPresetCombo) m_bodyPresetCombo->setEnabled(enabled);
     for (QDoubleSpinBox* spin : {m_bodyHeadScale, m_bodyTorsoLength, m_bodyChestWidth, m_bodyBellyWidth,
                                  m_bodyWaistWidth, m_bodyShoulderWidth, m_bodyHipWidth, m_bodyArmLength,
                                  m_bodyArmThickness, m_bodyLegLength, m_bodyLegThickness, m_bodyHandScale,
                                  m_bodyFootScale}) {
-        if (spin) spin->setEnabled(enabled);
+        if (spin) {
+            spin->setEnabled(enabled);
+            if (spin->parentWidget()) spin->parentWidget()->setVisible(enabled);
+        }
     }
 }
 

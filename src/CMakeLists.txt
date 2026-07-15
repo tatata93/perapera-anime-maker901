@@ -42,6 +42,8 @@ add_executable(perapera-anime-maker901
     ui/CelSizeDialog.h
     ui/CanvasSizeDialog.cpp
     ui/CanvasSizeDialog.h
+    ui/FloatingCanvasWindow.cpp
+    ui/FloatingCanvasWindow.h
     render/GLCanvas.cpp
     render/GLCanvas.h
     previz/GltfLoader.cpp

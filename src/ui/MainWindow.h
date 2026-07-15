@@ -15,6 +15,7 @@ class CameraPanel;
 class CelPanel;
 class EditWindow;
 class FramePanel;
+class FloatingCanvasWindow;
 class GLCanvas;
 class LayerPanel;
 class PalettePanel;
@@ -36,6 +37,7 @@ class QSlider;
 class QSpinBox;
 class QTimer;
 class QToolButton;
+class QWidget;
 
 namespace core {
 struct RenderOptions;
@@ -327,6 +329,8 @@ private:
     // ブラシ設定UI
     void choosePenColor();
     void updatePenColorButton();
+    void detachMainCanvas();
+    void restoreMainCanvas();
 
     // 自動保存・クラッシュリカバリ
     QString autosavePath() const;
@@ -377,6 +381,8 @@ private:
     std::unique_ptr<core::Project> m_project;
     core::CommandStack m_commands;
     GLCanvas* m_canvas = nullptr;
+    FloatingCanvasWindow* m_floatingCanvasWindow = nullptr;
+    QWidget* m_canvasPlaceholder = nullptr;
 
     size_t m_currentFrame = 0;
     size_t m_activeCut = 0;    // 編集対象のカットインデックス

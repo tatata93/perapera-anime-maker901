@@ -2,7 +2,9 @@
 
 #include <QAction>
 #include <QColorDialog>
+#include <QDialog>
 #include <QFileDialog>
+#include <QFont>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QImage>
@@ -12,17 +14,23 @@
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPen>
 #include <QPixmap>
 #include <QPushButton>
 #include <QSize>
 #include <QSlider>
+#include <QSignalBlocker>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "core/Project.h"
 #include "render/GLCanvas.h"
+#include "ui/CanvasSizeDialog.h"
+#include "ui/FloatingCanvasWindow.h"
 
 namespace {
 // 設定ボード1枚のサイズ(作画キャンバスと同じ1920x1080)
@@ -78,6 +86,52 @@ void pasteImageOntoBoard(core::Bitmap& board, const QImage& source) {
     }
 }
 
+void resizeBitmapCentered(core::Bitmap& bitmap, int width, int height) {
+    core::Bitmap resized(width, height);
+    resized.fill({0, 0, 0, 0});
+    if (!bitmap.isEmpty()) {
+        const int copyW = std::min(bitmap.width(), width);
+        const int copyH = std::min(bitmap.height(), height);
+        const int srcX = std::max(0, (bitmap.width() - width) / 2);
+        const int srcY = std::max(0, (bitmap.height() - height) / 2);
+        const int dstX = std::max(0, (width - bitmap.width()) / 2);
+        const int dstY = std::max(0, (height - bitmap.height()) / 2);
+        for (int y = 0; y < copyH; ++y) {
+            for (int x = 0; x < copyW; ++x) {
+                resized.setPixel(dstX + x, dstY + y, bitmap.pixel(srcX + x, srcY + y));
+            }
+        }
+    }
+    bitmap = std::move(resized);
+}
+
+QImage makeFinalStampOverlay(int width, int height) {
+    QImage overlay(width, height, QImage::Format_RGBA8888);
+    overlay.fill(Qt::transparent);
+    if (width <= 0 || height <= 0) return overlay;
+
+    QPainter painter(&overlay);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const int shortSide = std::min(width, height);
+    const int stampW = std::clamp(width / 5, 180, 620);
+    const int stampH = std::clamp(height / 10, 70, 220);
+    const int margin = std::clamp(shortSide / 28, 28, 160);
+    const QRectF rect(width - stampW - margin, height - stampH - margin, stampW, stampH);
+
+    QPen pen(QColor(190, 24, 24, 230), std::max(4, shortSide / 260));
+    painter.setPen(pen);
+    painter.setBrush(QColor(255, 255, 255, 28));
+    painter.drawRoundedRect(rect, 6, 6);
+
+    QFont font = painter.font();
+    font.setBold(true);
+    font.setPixelSize(std::clamp(stampH / 2, 30, 96));
+    painter.setFont(font);
+    painter.setPen(QColor(190, 24, 24, 235));
+    painter.drawText(rect, Qt::AlignCenter, QStringLiteral("決定稿"));
+    return overlay;
+}
+
 }  // namespace
 
 SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
@@ -113,13 +167,17 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     auto* toolRow = new QHBoxLayout();
     m_penButton = new QPushButton(tr("ペン"), rightContainer);
     m_eraserButton = new QPushButton(tr("消しゴム"), rightContainer);
+    m_eyedropperButton = new QPushButton(tr("スポイト"), rightContainer);
     m_penButton->setCheckable(true);
     m_eraserButton->setCheckable(true);
+    m_eyedropperButton->setCheckable(true);
     m_penButton->setAutoExclusive(true);
     m_eraserButton->setAutoExclusive(true);
+    m_eyedropperButton->setAutoExclusive(true);
     m_penButton->setChecked(true);
     toolRow->addWidget(m_penButton);
     toolRow->addWidget(m_eraserButton);
+    toolRow->addWidget(m_eyedropperButton);
 
     toolRow->addWidget(new QLabel(tr("太さ"), rightContainer));
     m_radiusSlider = new QSlider(Qt::Horizontal, rightContainer);
@@ -138,6 +196,13 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* pasteButton = new QPushButton(tr("画像を貼る"), rightContainer);
     toolRow->addWidget(pasteButton);
+    auto* resizeButton = new QPushButton(tr("サイズ"), rightContainer);
+    toolRow->addWidget(resizeButton);
+    m_finalStampButton = new QPushButton(tr("決定稿"), rightContainer);
+    m_finalStampButton->setCheckable(true);
+    toolRow->addWidget(m_finalStampButton);
+    auto* detachButton = new QPushButton(tr("別窓"), rightContainer);
+    toolRow->addWidget(detachButton);
 
     toolRow->addStretch();
     rightLayout->addLayout(toolRow);
@@ -145,7 +210,11 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     m_canvas = new GLCanvas(rightContainer);
     m_canvas->setCanvasSize(kBoardWidth, kBoardHeight);
     m_canvas->setTool(GLCanvas::Tool::Pen);
-    rightLayout->addWidget(m_canvas, 1);
+    m_canvasHost = new QWidget(rightContainer);
+    m_canvasLayout = new QVBoxLayout(m_canvasHost);
+    m_canvasLayout->setContentsMargins(0, 0, 0, 0);
+    m_canvasLayout->addWidget(m_canvas);
+    rightLayout->addWidget(m_canvasHost, 1);
 
     // 色指定(色指定書): キャンバスの下に「肌」「髪 影」などの名前付き色見本を並べる
     rightLayout->addWidget(new QLabel(tr("色指定"), rightContainer));
@@ -184,9 +253,22 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
         m_radiusSlider->setValue(static_cast<int>(m_eraserRadius));
         m_radiusValueLabel->setText(QString::number(static_cast<int>(m_eraserRadius)));
     });
+    connect(m_eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (!checked) return;
+        m_canvas->setTool(GLCanvas::Tool::Eyedropper);
+    });
+    connect(m_canvas, &GLCanvas::colorPicked, this, [this](QColor color) {
+        m_penColor = color;
+        m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+        applyToolSettingsToCanvas();
+        m_penButton->setChecked(true);
+    });
     connect(m_radiusSlider, &QSlider::valueChanged, this, &SettingBoardWindow::onRadiusSliderChanged);
     connect(m_colorButton, &QPushButton::clicked, this, &SettingBoardWindow::chooseColor);
     connect(pasteButton, &QPushButton::clicked, this, &SettingBoardWindow::pasteImage);
+    connect(resizeButton, &QPushButton::clicked, this, &SettingBoardWindow::resizeBoardCanvas);
+    connect(m_finalStampButton, &QPushButton::toggled, this, &SettingBoardWindow::toggleFinalStamp);
+    connect(detachButton, &QPushButton::clicked, this, &SettingBoardWindow::detachCanvas);
 
     connect(m_list, &QListWidget::itemSelectionChanged, this, &SettingBoardWindow::onSelectionChanged);
     connect(addButton, &QPushButton::clicked, this, &SettingBoardWindow::addBoard);
@@ -327,6 +409,10 @@ void SettingBoardWindow::pasteImage() {
     }
 
     core::SettingBoard& board = boards[static_cast<size_t>(row)];
+    if (board.image.isEmpty()) {
+        board.image = core::Bitmap(source.width(), source.height());
+        board.image.fill({0, 0, 0, 0});
+    }
     pasteImageOntoBoard(board.image, source);
 
     m_canvas->clearTextureCache();
@@ -334,32 +420,125 @@ void SettingBoardWindow::pasteImage() {
     emit edited();
 }
 
+void SettingBoardWindow::resizeBoardCanvas() {
+    if (!m_project) return;
+    auto& boards = m_project->settingBoards();
+    const int row = selectedBoardIndex();
+    if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
+
+    core::SettingBoard& board = boards[static_cast<size_t>(row)];
+    const int currentW = board.image.isEmpty() ? kBoardWidth : board.image.width();
+    const int currentH = board.image.isEmpty() ? kBoardHeight : board.image.height();
+    CanvasSizeDialog dialog(currentW, currentH, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const int newW = dialog.canvasWidth();
+    const int newH = dialog.canvasHeight();
+    if (newW == currentW && newH == currentH) return;
+
+    resizeBitmapCentered(board.image, newW, newH);
+    m_canvas->clearTextureCache();
+    bindCanvasToSelectedBoard();
+    emit edited();
+}
+
+void SettingBoardWindow::toggleFinalStamp(bool checked) {
+    if (m_updating || !m_project) return;
+    auto& boards = m_project->settingBoards();
+    const int row = selectedBoardIndex();
+    if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
+
+    boards[static_cast<size_t>(row)].finalStamp = checked;
+    updateFinalStampOverlay();
+    emit edited();
+}
+
+void SettingBoardWindow::updateFinalStampOverlay() {
+    if (!m_project || m_selectedRow < 0) {
+        m_canvas->clearOverlay();
+        return;
+    }
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) {
+        m_canvas->clearOverlay();
+        return;
+    }
+    const core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+    if (board.finalStamp && !board.image.isEmpty()) {
+        m_canvas->setOverlayImage(makeFinalStampOverlay(board.image.width(), board.image.height()));
+    } else {
+        m_canvas->clearOverlay();
+    }
+}
+
+void SettingBoardWindow::detachCanvas() {
+    if (m_floatingCanvasWindow || !m_canvas || !m_canvasLayout) return;
+    m_canvasLayout->removeWidget(m_canvas);
+    auto* window = new FloatingCanvasWindow(tr("設定ボード キャンバス"), this);
+    m_floatingCanvasWindow = window;
+    window->setCentralWidget(m_canvas);
+    connect(window, &FloatingCanvasWindow::restoreRequested, this, &SettingBoardWindow::restoreCanvas);
+    connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
+    window->show();
+}
+
+void SettingBoardWindow::restoreCanvas() {
+    if (!m_floatingCanvasWindow || !m_canvasLayout) return;
+    FloatingCanvasWindow* window = m_floatingCanvasWindow;
+    QWidget* canvas = window->takeCentralWidget();
+    if (canvas) {
+        m_canvasLayout->addWidget(canvas);
+        canvas->show();
+    }
+    m_floatingCanvasWindow = nullptr;
+    window->deleteLater();
+}
+
 void SettingBoardWindow::bindCanvasToSelectedBoard() {
     if (!m_project) {
         m_canvas->setBitmap(nullptr);
+        m_canvas->clearOverlay();
+        if (m_finalStampButton) {
+            const QSignalBlocker blocker(m_finalStampButton);
+            m_finalStampButton->setChecked(false);
+            m_finalStampButton->setEnabled(false);
+        }
         return;
     }
     auto& boards = m_project->settingBoards();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) {
         m_canvas->setBitmap(nullptr);
+        m_canvas->clearOverlay();
+        if (m_finalStampButton) {
+            const QSignalBlocker blocker(m_finalStampButton);
+            m_finalStampButton->setChecked(false);
+            m_finalStampButton->setEnabled(false);
+        }
         return;
     }
 
     core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
     // imageはボード全体(kBoardWidth x kBoardHeight)を覆う1枚のビットマップ。
     // 未確保またはサイズ不一致なら確保し直す(開発中につき旧サイズのデータは破棄してよい)
-    if (board.image.isEmpty() || board.image.width() != kBoardWidth || board.image.height() != kBoardHeight) {
+    if (board.image.isEmpty()) {
         board.image = core::Bitmap(kBoardWidth, kBoardHeight);
         board.image.fill({0, 0, 0, 0});
     }
+    m_canvas->setCanvasSize(board.image.width(), board.image.height());
     m_canvas->setBitmap(&board.image);
+    if (m_finalStampButton) {
+        const QSignalBlocker blocker(m_finalStampButton);
+        m_finalStampButton->setEnabled(true);
+        m_finalStampButton->setChecked(board.finalStamp);
+    }
+    updateFinalStampOverlay();
 }
 
 void SettingBoardWindow::onRadiusSliderChanged(int value) {
-    if (m_penButton->isChecked()) {
-        m_penRadius = static_cast<float>(value);
-    } else {
+    if (m_eraserButton->isChecked()) {
         m_eraserRadius = static_cast<float>(value);
+    } else {
+        m_penRadius = static_cast<float>(value);
     }
     m_radiusValueLabel->setText(QString::number(value));
     applyToolSettingsToCanvas();

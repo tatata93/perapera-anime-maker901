@@ -90,6 +90,7 @@ GLCanvas::GLCanvas(QWidget* parent) : QOpenGLWidget(parent) {
 GLCanvas::~GLCanvas() {
     makeCurrent();
     m_textures.clear();
+    m_overlayTexture.reset();
     m_underlayTexture.reset();  // GLリソースの解放にはカレントなコンテキストが必要
     m_program.reset();
     if (m_vbo.isCreated()) m_vbo.destroy();
@@ -171,9 +172,33 @@ void GLCanvas::setUnderlayOpacity(float opacity01) {
     update();
 }
 
+void GLCanvas::setOverlayImage(const QImage& image) {
+    if (image.isNull()) {
+        clearOverlay();
+        return;
+    }
+    m_pendingOverlayImage = image.convertToFormat(QImage::Format_RGBA8888);
+    m_overlayImageDirty = true;
+    m_overlayClearRequested = false;
+    update();
+}
+
+void GLCanvas::clearOverlay() {
+    if (!m_overlayTexture && !m_overlayImageDirty) return;
+    m_pendingOverlayImage = QImage();
+    m_overlayImageDirty = true;
+    m_overlayClearRequested = true;
+    update();
+}
+
 void GLCanvas::setTool(Tool tool) {
     m_tool = tool;
     applyToolSettings();
+    if (m_tool == Tool::Eyedropper) {
+        setCursor(Qt::CrossCursor);
+    } else if (!m_panning) {
+        unsetCursor();
+    }
 }
 
 void GLCanvas::applySettingsFor(Tool tool) {
@@ -385,6 +410,22 @@ void GLCanvas::paintGL() {
         m_underlayClearRequested = false;
         m_pendingUnderlayImage = QImage();
     }
+    if (m_overlayImageDirty) {
+        if (m_overlayClearRequested || m_pendingOverlayImage.isNull()) {
+            m_overlayTexture.reset();
+        } else {
+            m_overlayTexture = std::make_unique<QOpenGLTexture>(QOpenGLTexture::Target2D);
+            m_overlayTexture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+            m_overlayTexture->setSize(m_pendingOverlayImage.width(), m_pendingOverlayImage.height());
+            m_overlayTexture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
+            m_overlayTexture->setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Linear);
+            m_overlayTexture->setWrapMode(QOpenGLTexture::ClampToEdge);
+            m_overlayTexture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, m_pendingOverlayImage.constBits());
+        }
+        m_overlayImageDirty = false;
+        m_overlayClearRequested = false;
+        m_pendingOverlayImage = QImage();
+    }
 
     glDisable(GL_BLEND);  // Qt側がブレンド有効のまま呼ぶことがあるため明示的に無効化
     glClear(GL_COLOR_BUFFER_BIT);
@@ -522,6 +563,21 @@ void GLCanvas::paintGL() {
     // レイアウト用フレーム枠ガイド: 作画フレーム(100%)/TVセーフ(約90%)/タイトルセーフ(約80%)を
     // 半透明の線で重ね表示する。全レイヤー・オニオン・下敷き等の最後(一番上)に描く。
     // ビュー変換に乗せるため、線はキャンバス座標(画像座標)で定義する
+    if (m_overlayTexture) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        m_program->setUniformValue("uOnionStrength", 0.0f);
+        m_program->setUniformValue("uUnderlayMix", 0.0f);
+        m_program->setUniformValue("uUseSolidColor", 0.0f);
+        m_program->setUniformValue("uOpacity", 1.0f);
+        m_overlayTexture->bind();
+        drawQuad(canvasRect);
+        m_overlayTexture->release();
+
+        glDisable(GL_BLEND);
+    }
+
     if (m_frameGuidesEnabled) {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -618,8 +674,43 @@ void GLCanvas::performFill(QPointF widgetPos) {
     update();
 }
 
+bool GLCanvas::pickColor(QPointF widgetPos) {
+    const QPointF imagePos = widgetToImage(widgetPos);
+    const auto sampleBitmap = [imagePos](const core::Bitmap* bitmap, QPointF offset, double opacity, QColor* out) {
+        if (!bitmap || bitmap->isEmpty() || opacity <= 0.0) return false;
+        const QPointF local = imagePos - offset;
+        const int x = static_cast<int>(std::floor(local.x()));
+        const int y = static_cast<int>(std::floor(local.y()));
+        if (x < 0 || y < 0 || x >= bitmap->width() || y >= bitmap->height()) return false;
+
+        const core::Bitmap::Pixel px = bitmap->pixel(x, y);
+        const int alpha = static_cast<int>(std::lround(px.a * std::clamp(opacity, 0.0, 1.0)));
+        if (alpha <= 0) return false;
+        *out = QColor(px.r, px.g, px.b, std::clamp(alpha, 0, 255));
+        return true;
+    };
+
+    QColor picked;
+    for (auto it = m_layerStack.rbegin(); it != m_layerStack.rend(); ++it) {
+        if (sampleBitmap(it->bitmap, it->offset, it->opacity, &picked)) {
+            emit colorPicked(picked);
+            return true;
+        }
+    }
+    if (sampleBitmap(m_bitmap, m_activeOffset, 1.0, &picked)) {
+        emit colorPicked(picked);
+        return true;
+    }
+    return false;
+}
+
 void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
-    if (!m_bitmap || !m_inputEnabled) return;
+    if (!m_inputEnabled) return;
+    if (m_tool == Tool::Eyedropper) {
+        pickColor(widgetPos);
+        return;
+    }
+    if (!m_bitmap) return;
     if (m_tool == Tool::Fill) {
         performFill(widgetPos);
         return;
@@ -734,7 +825,11 @@ void GLCanvas::mouseMoveEvent(QMouseEvent* event) {
 void GLCanvas::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::MiddleButton) {
         m_panning = false;
-        unsetCursor();
+        if (m_tool == Tool::Eyedropper) {
+            setCursor(Qt::CrossCursor);
+        } else {
+            unsetCursor();
+        }
         return;
     }
     if (event->source() != Qt::MouseEventNotSynthesized) return;

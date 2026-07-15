@@ -23,6 +23,7 @@ struct SettingBoard {
     std::string name;  // 例「キャラ: 主人公」「美術: 教室」
     Bitmap image;       // ボードの中身(1920x1080、透明下地)
     std::vector<ColorSpec> colorSpecs;  // 色指定書(肌/髪/影など名前付きの色見本)。既定は空
+    bool finalStamp = false;
 };
 
 // アニメーション制作プロジェクト全体。シーンを順序付きで保持する。

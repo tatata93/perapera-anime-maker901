@@ -364,6 +364,7 @@ TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]"
 
     core::SettingBoard board1;
     board1.name = "キャラ: 主人公";
+    board1.finalStamp = true;
     board1.image = core::Bitmap(16, 9);
     board1.image.fill({0, 0, 0, 0});
     board1.image.setPixel(5, 2, {10, 200, 40, 255});  // 目印ピクセル
@@ -392,6 +393,7 @@ TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]"
     const auto& boards = loaded->settingBoards();
     REQUIRE(boards.size() == 2);
     REQUIRE(boards[0].name == "キャラ: 主人公");
+    REQUIRE(boards[0].finalStamp);
     REQUIRE(boards[0].image.width() == 16);
     REQUIRE(boards[0].image.height() == 9);
     const auto marked = boards[0].image.pixel(5, 2);
@@ -399,6 +401,7 @@ TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]"
     REQUIRE(marked.g == 200);
     REQUIRE(marked.b == 40);
     REQUIRE(boards[1].name == "美術: 教室");
+    REQUIRE_FALSE(boards[1].finalStamp);
     REQUIRE(boards[1].image.isEmpty());
 
     // 色指定の往復確認

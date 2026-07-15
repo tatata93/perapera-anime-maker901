@@ -13,6 +13,9 @@ class QPushButton;
 class QSlider;
 class QPlainTextEdit;
 class QDialog;
+class QVBoxLayout;
+class QWidget;
+class FloatingCanvasWindow;
 class GLCanvas;
 
 namespace core {
@@ -80,13 +83,18 @@ private:
     void onCanvasDoubleClicked(QPointF imagePos);
     // プレビュー(ビデオコンテ)ダイアログを開く(既に開いていれば前面へ)
     void openPreview();
+    void detachCanvas();
+    void restoreCanvas();
 
     core::Project* m_project = nullptr;
     QTableWidget* m_table = nullptr;
     GLCanvas* m_canvas = nullptr;  // コンテ用紙1枚(下敷き+手書きインク)を表示・編集するキャンバス
+    QWidget* m_canvasHost = nullptr;
+    QVBoxLayout* m_canvasLayout = nullptr;
     QLabel* m_totalLabel = nullptr;
     QPushButton* m_penButton = nullptr;
     QPushButton* m_eraserButton = nullptr;
+    QPushButton* m_eyedropperButton = nullptr;
     QSlider* m_radiusSlider = nullptr;
     QLabel* m_radiusValueLabel = nullptr;
     QPushButton* m_colorButton = nullptr;
@@ -109,4 +117,5 @@ private:
     QElapsedTimer m_lastStrokeTimer;
 
     QDialog* m_previewDialog = nullptr;  // プレビュー(ビデオコンテ再生)ダイアログ(未使用時はnullptr)
+    FloatingCanvasWindow* m_floatingCanvasWindow = nullptr;
 };

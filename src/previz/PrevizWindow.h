@@ -14,6 +14,7 @@ class QListWidget;
 class QSpinBox;
 class QTimer;
 class QToolButton;
+class QWidget;
 
 // プリビズウィンドウ(別ウィンドウ)。3Dモデルの配置とカメラ(焦点距離/画角)の設定を行い、
 // 作画ウィンドウとはコマ番号で連動する。
@@ -101,6 +102,11 @@ private:
     QDoubleSpinBox* m_scaleY = nullptr;
     QDoubleSpinBox* m_scaleZ = nullptr;
     QComboBox* m_posePresetCombo = nullptr;
+    QWidget* m_poseLabelWidget = nullptr;
+    QWidget* m_posePresetRow = nullptr;
+    QWidget* m_poseKeyButton = nullptr;
+    QWidget* m_poseKeyClearButton = nullptr;
+    QWidget* m_walkCycleButton = nullptr;
     QDoubleSpinBox* m_poseTorsoPitch = nullptr;
     QDoubleSpinBox* m_poseHeadYaw = nullptr;
     QDoubleSpinBox* m_poseLeftShoulder = nullptr;
@@ -112,6 +118,8 @@ private:
     QDoubleSpinBox* m_poseRightHip = nullptr;
     QDoubleSpinBox* m_poseRightKnee = nullptr;
     QComboBox* m_bodyPresetCombo = nullptr;
+    QWidget* m_bodyLabelWidget = nullptr;
+    QWidget* m_bodyPresetRow = nullptr;
     QDoubleSpinBox* m_bodyHeadScale = nullptr;
     QDoubleSpinBox* m_bodyTorsoLength = nullptr;
     QDoubleSpinBox* m_bodyChestWidth = nullptr;

@@ -25,7 +25,7 @@ class GLCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 
 public:
-    enum class Tool { Pen, Eraser, Fill, Move };
+    enum class Tool { Pen, Eraser, Fill, Move, Eyedropper };
 
     explicit GLCanvas(QWidget* parent = nullptr);
     ~GLCanvas() override;
@@ -78,6 +78,8 @@ public:
     void setUnderlayImage(const QImage& image);
     void clearUnderlay();
     void setUnderlayOpacity(float opacity01);
+    void setOverlayImage(const QImage& image);
+    void clearOverlay();
 
     void setTool(Tool tool);
     Tool tool() const { return m_tool; }
@@ -160,6 +162,7 @@ signals:
     void celMoveStarted();
     void celMoveDelta(QPointF totalDeltaImage);  // ドラッグ開始点からの累積差分(画像座標px)
     void celMoveFinished();
+    void colorPicked(QColor color);
     // ペン/消しゴムツール時にキャンバス上でダブルクリックされた(imagePosは画像座標)。
     // 絵コンテの絵の枠拡大表示トグルなどに使う。ダブルクリックはストロークを開始しない
     void doubleClickedOnCanvas(QPointF imagePos);
@@ -181,6 +184,7 @@ private:
     void pointerMove(QPointF widgetPos, float pressure);
     void pointerEnd();
     void performFill(QPointF widgetPos);
+    bool pickColor(QPointF widgetPos);
 
     // 画像座標→ウィジェット座標の変換(フィット×ズーム×回転×パン)
     QTransform viewTransform() const;
@@ -256,9 +260,13 @@ private:
 
     // 下敷き(参照画像/連番シーケンス)用のテクスチャ。存在すれば現在フレームに薄く重ねる
     std::unique_ptr<QOpenGLTexture> m_underlayTexture;
+    std::unique_ptr<QOpenGLTexture> m_overlayTexture;
     float m_underlayOpacity = 0.5f;
     // 下敷き画像の反映待ち状態(実アップロードはpaintGL冒頭で1回だけ行う)
     QImage m_pendingUnderlayImage;    // 反映待ちの画像(nullなら変更なし)
     bool m_underlayImageDirty = false;
+    QImage m_pendingOverlayImage;
+    bool m_overlayImageDirty = false;
+    bool m_overlayClearRequested = false;
     bool m_underlayClearRequested = false;  // trueならpaintGL冒頭でテクスチャを破棄する
 };

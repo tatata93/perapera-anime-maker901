@@ -838,6 +838,7 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& folder
         for (const SettingBoard& board : project.settingBoards()) {
             json jBoard;
             jBoard["name"] = board.name;
+            jBoard["finalStamp"] = board.finalStamp;
             if (!writeBitmapBlob(board.image, jBoard, blobs, errorOut)) return false;
             // 色指定(名前付き色見本)。空なら省略する
             if (!board.colorSpecs.empty()) {
@@ -961,6 +962,7 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                 for (const json& jBoard : boardsContainer.root.at("boards")) {
                     SettingBoard board;
                     board.name = jBoard.value("name", std::string());
+                    board.finalStamp = jBoard.value("finalStamp", false);
                     if (!readBitmapBlob(jBoard, boardsContainer.blobBase(), boardsContainer.blobTotal(), &board.image,
                                         errorOut)) {
                         return nullptr;

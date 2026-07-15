@@ -50,6 +50,7 @@
 #include "ui/ProjectManagerWindow.h"
 #include "ui/ExportDialog.h"
 #include "ui/FramePanel.h"
+#include "ui/FloatingCanvasWindow.h"
 #include "ui/LayerPanel.h"
 #include "ui/PalettePanel.h"
 #include "ui/ReferencePanel.h"
@@ -355,6 +356,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         m_commands.push(std::move(command));  // pushは冪等なexecute(after画素の再書き込み)を伴う
         markCutDirty(activeCut());
         updateWindowTitle();
+    });
+
+    connect(m_canvas, &GLCanvas::colorPicked, this, [this](QColor color) {
+        m_penColor = color;
+        m_canvas->setPenColor(m_penColor);
+        updatePenColorButton();
     });
 
     m_playTimer = new QTimer(this);
@@ -787,6 +794,50 @@ void MainWindow::updatePenColorButton() {
     if (!m_penColorButton) return;
     m_penColorButton->setStyleSheet(
         QStringLiteral("background-color: %1; border: 1px solid #444;").arg(m_penColor.name()));
+}
+
+void MainWindow::detachMainCanvas() {
+    if (m_floatingCanvasWindow) {
+        m_floatingCanvasWindow->raise();
+        m_floatingCanvasWindow->activateWindow();
+        return;
+    }
+    if (!m_canvas) return;
+
+    QWidget* current = takeCentralWidget();
+    if (current != m_canvas) {
+        if (current) setCentralWidget(current);
+        return;
+    }
+
+    auto* placeholder = new QLabel(tr("キャンバスは別窓で表示中"), this);
+    placeholder->setAlignment(Qt::AlignCenter);
+    m_canvasPlaceholder = placeholder;
+    setCentralWidget(placeholder);
+
+    auto* window = new FloatingCanvasWindow(tr("メインキャンバス"), this);
+    m_floatingCanvasWindow = window;
+    window->setCentralWidget(m_canvas);
+    connect(window, &FloatingCanvasWindow::restoreRequested, this, &MainWindow::restoreMainCanvas);
+    connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
+    window->show();
+}
+
+void MainWindow::restoreMainCanvas() {
+    if (!m_floatingCanvasWindow || !m_canvas) return;
+    FloatingCanvasWindow* window = m_floatingCanvasWindow;
+    QWidget* canvas = window->takeCentralWidget();
+    if (canvas) {
+        if (m_canvasPlaceholder && centralWidget() == m_canvasPlaceholder) {
+            QWidget* placeholder = takeCentralWidget();
+            placeholder->deleteLater();
+            m_canvasPlaceholder = nullptr;
+        }
+        setCentralWidget(canvas);
+        canvas->show();
+    }
+    m_floatingCanvasWindow = nullptr;
+    window->deleteLater();
 }
 
 void MainWindow::setupCutBar() {
@@ -2088,7 +2139,15 @@ void MainWindow::setupToolBar() {
     group->addAction(moveAction);
     connect(moveAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Move); });
 
+    QAction* eyedropperAction = toolBar->addAction(tr("スポイト"));
+    eyedropperAction->setCheckable(true);
+    eyedropperAction->setShortcut(QKeySequence(Qt::Key_I));
+    group->addAction(eyedropperAction);
+    connect(eyedropperAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Eyedropper); });
+
     toolBar->addSeparator();
+    QAction* detachCanvasAction = toolBar->addAction(tr("キャンバス別窓"));
+    connect(detachCanvasAction, &QAction::triggered, this, &MainWindow::detachMainCanvas);
 
     // --- ブラシ設定(太さ・色) ---
     toolBar->addWidget(new QLabel(tr(" 太さ: "), this));

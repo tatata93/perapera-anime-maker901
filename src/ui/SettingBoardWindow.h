@@ -8,6 +8,9 @@ class QListWidgetItem;
 class QPushButton;
 class QSlider;
 class QLabel;
+class QVBoxLayout;
+class QWidget;
+class FloatingCanvasWindow;
 class GLCanvas;
 
 namespace core {
@@ -42,6 +45,11 @@ private:
     // 「画像を貼る」ボタン: 画像ファイルを選び、選択中ボードへアスペクト維持で最大フィット
     // 縮小・中央配置してsrc-over合成する
     void pasteImage();
+    void resizeBoardCanvas();
+    void toggleFinalStamp(bool checked);
+    void updateFinalStampOverlay();
+    void detachCanvas();
+    void restoreCanvas();
     // 選択中ボードのimage(ボード全体のビットマップ)へ描画エリアを再設定する(vectorの
     // 再配置でポインタが無効になるため、ボード追加/削除/並べ替えの後は必ず呼ぶこと)
     void bindCanvasToSelectedBoard();
@@ -67,12 +75,17 @@ private:
     core::Project* m_project = nullptr;
     QListWidget* m_list = nullptr;
     GLCanvas* m_canvas = nullptr;  // 選択中ボード1枚(1920x1080)を表示・編集するキャンバス
+    QWidget* m_canvasHost = nullptr;
+    QVBoxLayout* m_canvasLayout = nullptr;
     QPushButton* m_penButton = nullptr;
     QPushButton* m_eraserButton = nullptr;
+    QPushButton* m_eyedropperButton = nullptr;
+    QPushButton* m_finalStampButton = nullptr;
     QSlider* m_radiusSlider = nullptr;
     QLabel* m_radiusValueLabel = nullptr;
     QPushButton* m_colorButton = nullptr;
     QListWidget* m_colorSpecList = nullptr;  // 色指定(色指定書)一覧: スウォッチ+名前
+    FloatingCanvasWindow* m_floatingCanvasWindow = nullptr;
     bool m_updating = false;
     int m_selectedRow = -1;  // 現在選択中のボード行(ボードが1枚もなければ-1)
 
