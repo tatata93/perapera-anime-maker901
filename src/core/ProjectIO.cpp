@@ -76,6 +76,45 @@ PrevizTransform transformFromJson(const json& j) {
     return {vec3FromJson(j.at("position")), vec3FromJson(j.at("rotation")), vec3FromJson(j.at("scale"))};
 }
 
+json humanoidPoseToJson(const PrevizHumanoidPose& p) {
+    return {{"torsoPitch", p.torsoPitchDeg},
+            {"torsoRoll", p.torsoRollDeg},
+            {"headPitch", p.headPitchDeg},
+            {"headYaw", p.headYawDeg},
+            {"leftShoulderPitch", p.leftShoulderPitchDeg},
+            {"leftShoulderRoll", p.leftShoulderRollDeg},
+            {"leftElbow", p.leftElbowDeg},
+            {"rightShoulderPitch", p.rightShoulderPitchDeg},
+            {"rightShoulderRoll", p.rightShoulderRollDeg},
+            {"rightElbow", p.rightElbowDeg},
+            {"leftHipPitch", p.leftHipPitchDeg},
+            {"leftHipRoll", p.leftHipRollDeg},
+            {"leftKnee", p.leftKneeDeg},
+            {"rightHipPitch", p.rightHipPitchDeg},
+            {"rightHipRoll", p.rightHipRollDeg},
+            {"rightKnee", p.rightKneeDeg}};
+}
+PrevizHumanoidPose humanoidPoseFromJson(const json& j) {
+    PrevizHumanoidPose p;
+    p.torsoPitchDeg = j.value("torsoPitch", 0.0f);
+    p.torsoRollDeg = j.value("torsoRoll", 0.0f);
+    p.headPitchDeg = j.value("headPitch", 0.0f);
+    p.headYawDeg = j.value("headYaw", 0.0f);
+    p.leftShoulderPitchDeg = j.value("leftShoulderPitch", 0.0f);
+    p.leftShoulderRollDeg = j.value("leftShoulderRoll", 0.0f);
+    p.leftElbowDeg = j.value("leftElbow", 0.0f);
+    p.rightShoulderPitchDeg = j.value("rightShoulderPitch", 0.0f);
+    p.rightShoulderRollDeg = j.value("rightShoulderRoll", 0.0f);
+    p.rightElbowDeg = j.value("rightElbow", 0.0f);
+    p.leftHipPitchDeg = j.value("leftHipPitch", 0.0f);
+    p.leftHipRollDeg = j.value("leftHipRoll", 0.0f);
+    p.leftKneeDeg = j.value("leftKnee", 0.0f);
+    p.rightHipPitchDeg = j.value("rightHipPitch", 0.0f);
+    p.rightHipRollDeg = j.value("rightHipRoll", 0.0f);
+    p.rightKneeDeg = j.value("rightKnee", 0.0f);
+    return p;
+}
+
 json cameraStateToJson(const PrevizCameraState& s) {
     return {{"position", vec3ToJson(s.position)}, {"rotation", vec3ToJson(s.rotationDeg)}, {"focal", s.focalLengthMm}};
 }
@@ -90,10 +129,19 @@ json previzToJson(const PrevizScene& scene) {
         for (const auto& [frame, transform] : model.transformKeys) {
             jKeys.push_back({{"frame", frame}, {"transform", transformToJson(transform)}});
         }
-        jModels.push_back({{"name", model.name},
-                           {"filePath", model.filePath},
-                           {"transform", transformToJson(model.transform)},
-                           {"keys", std::move(jKeys)}});
+        json jModel = {{"name", model.name},
+                       {"filePath", model.filePath},
+                       {"transform", transformToJson(model.transform)},
+                       {"keys", std::move(jKeys)}};
+        if (model.filePath == ":humanoid" || !model.poseKeys.empty()) {
+            json jPoseKeys = json::array();
+            for (const auto& [frame, pose] : model.poseKeys) {
+                jPoseKeys.push_back({{"frame", frame}, {"pose", humanoidPoseToJson(pose)}});
+            }
+            jModel["humanoidPose"] = humanoidPoseToJson(model.humanoidPose);
+            jModel["poseKeys"] = std::move(jPoseKeys);
+        }
+        jModels.push_back(std::move(jModel));
     }
     json jCameraKeys = json::array();
     for (const auto& [frame, state] : scene.camera.keys) {
@@ -115,6 +163,14 @@ void previzFromJson(const json& j, PrevizScene& scene) {
         model.transform = transformFromJson(jModel.at("transform"));
         for (const json& jKey : jModel.at("keys")) {
             model.transformKeys[jKey.at("frame").get<size_t>()] = transformFromJson(jKey.at("transform"));
+        }
+        if (jModel.contains("humanoidPose")) {
+            model.humanoidPose = humanoidPoseFromJson(jModel.at("humanoidPose"));
+        }
+        if (jModel.contains("poseKeys")) {
+            for (const json& jKey : jModel.at("poseKeys")) {
+                model.poseKeys[jKey.at("frame").get<size_t>()] = humanoidPoseFromJson(jKey.at("pose"));
+            }
         }
         scene.models.push_back(std::move(model));
     }

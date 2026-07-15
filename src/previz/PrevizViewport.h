@@ -98,7 +98,11 @@ private:
     // コンテキストがカレントな状態で呼ぶこと
     GpuMesh* getOrLoadMesh(const std::string& filePath);
     void drawPrimitive(const GpuPrimitive& prim, const QMatrix4x4& model, const QMatrix4x4& viewProj, bool unlit,
-                       bool highlight = false);
+                       bool highlight = false, const QVector4D* colorOverride = nullptr);
+    bool drawMesh(const std::string& filePath, const QMatrix4x4& model, const QMatrix4x4& viewProj, bool unlit,
+                  bool highlight = false, const QVector4D* colorOverride = nullptr);
+    void drawHumanoid(const core::PrevizModel& model, const QMatrix4x4& modelMatrix, const QMatrix4x4& viewProj,
+                      bool highlight);
     void buildGrid();
     void buildPlaceholderCube();
     void buildCameraGizmo();

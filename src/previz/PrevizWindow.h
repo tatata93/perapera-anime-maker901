@@ -41,6 +41,8 @@ public:
     void debugSetSelectedPosition(double x, double y, double z);
     // 動作確認用: レンズ歪曲量を設定する(魚眼/樽/糸巻きの確認用)
     void debugSetLensDistortion(double d);
+    void debugSetHumanoidPosePreset(int presetIndex);
+    void debugAddHumanoidWalkCycleKeys();
 
 signals:
     void sceneEdited();          // シーンが変更された(MainWindowが未保存フラグを立てる)
@@ -54,8 +56,10 @@ private:
     void refreshModelList();
     void refreshCameraUi();
     void refreshTransformUi();
+    void refreshPoseUi();
     core::PrevizModel* selectedModel();
     void applyTransformFromUi();
+    void applyPoseFromUi();
 
     // プリビズシート(カメラ列+モデル列)の内容を組み立てて反映する
     void rebuildSheet();
@@ -66,6 +70,10 @@ private:
     // あれば現在コマのキーを編集する(PrevizViewportの操作と同じ規則)
     core::PrevizCameraState& editableCamera();
     core::PrevizTransform& editableModelTransform(core::PrevizModel& model);
+    core::PrevizHumanoidPose& editableHumanoidPose(core::PrevizModel& model);
+    void applyHumanoidPosePreset(int presetIndex);
+    void addHumanoidWalkCycleKeys();
+    void setPoseControlsEnabled(bool enabled);
     // 対象(カメラ/選択モデル)に応じてcameraFn/modelFnのどちらかを適用し、UI・シートを更新する
     void applyNudge(const std::function<void(core::PrevizCameraState&)>& cameraFn,
                     const std::function<void(core::PrevizTransform&)>& modelFn);
@@ -87,6 +95,17 @@ private:
     QDoubleSpinBox* m_scaleX = nullptr;
     QDoubleSpinBox* m_scaleY = nullptr;
     QDoubleSpinBox* m_scaleZ = nullptr;
+    QComboBox* m_posePresetCombo = nullptr;
+    QDoubleSpinBox* m_poseTorsoPitch = nullptr;
+    QDoubleSpinBox* m_poseHeadYaw = nullptr;
+    QDoubleSpinBox* m_poseLeftShoulder = nullptr;
+    QDoubleSpinBox* m_poseLeftElbow = nullptr;
+    QDoubleSpinBox* m_poseRightShoulder = nullptr;
+    QDoubleSpinBox* m_poseRightElbow = nullptr;
+    QDoubleSpinBox* m_poseLeftHip = nullptr;
+    QDoubleSpinBox* m_poseLeftKnee = nullptr;
+    QDoubleSpinBox* m_poseRightHip = nullptr;
+    QDoubleSpinBox* m_poseRightKnee = nullptr;
     // 十字リモコン(ナッジ操作)
     QComboBox* m_nudgeTargetCombo = nullptr;  // 0=カメラ、1=選択モデル
     QDoubleSpinBox* m_moveStepSpin = nullptr;

@@ -360,6 +360,14 @@ TEST_CASE("Previz model and camera keys interpolate", "[core][previz]") {
     REQUIRE(mid.position.z == -10.0f);
     REQUIRE(mid.rotationDeg.y == 45.0f);
 
+    model.filePath = ":humanoid";
+    model.poseKeys[0].leftShoulderPitchDeg = -30.0f;
+    model.poseKeys[10].leftShoulderPitchDeg = 30.0f;
+    model.poseKeys[0].rightKneeDeg = 10.0f;
+    model.poseKeys[10].rightKneeDeg = 50.0f;
+    REQUIRE(model.poseAt(5).leftShoulderPitchDeg == 0.0f);
+    REQUIRE(model.poseAt(5).rightKneeDeg == 30.0f);
+
     core::PrevizCamera camera;
     camera.state.focalLengthMm = 50.0f;
     // 50mm/フルサイズ36mm → 水平画角約39.6度
@@ -384,6 +392,10 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     model.transform.position = {1, 2, 3};
     model.transformKeys[0] = {{0, 0, 0}, {0, 0, 0}, {1, 1, 1}};
     model.transformKeys[8] = {{5, 0, 0}, {0, 180, 0}, {2, 2, 2}};
+    model.filePath = ":humanoid";
+    model.humanoidPose.headYawDeg = 12.0f;
+    model.poseKeys[0].leftHipPitchDeg = -20.0f;
+    model.poseKeys[8].leftHipPitchDeg = 20.0f;
     cut.previz().models.push_back(model);
     cut.previz().camera.state.focalLengthMm = 85.0f;
     cut.previz().camera.sensorWidthMm = 36.0f;
@@ -398,9 +410,12 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     const core::PrevizScene& previz = loaded->scene(0).cut(0).previz();
     REQUIRE(previz.models.size() == 1);
     REQUIRE(previz.models[0].name == "キャラA");
-    REQUIRE(previz.models[0].filePath == "C:/models/chara.glb");
+    REQUIRE(previz.models[0].filePath == ":humanoid");
     REQUIRE(previz.models[0].transformKeys.size() == 2);
     REQUIRE(previz.models[0].transformAt(4).position.x == 2.5f);
+    REQUIRE(previz.models[0].humanoidPose.headYawDeg == 12.0f);
+    REQUIRE(previz.models[0].poseKeys.size() == 2);
+    REQUIRE(previz.models[0].poseAt(4).leftHipPitchDeg == 0.0f);
     REQUIRE(previz.camera.state.focalLengthMm == 85.0f);
     REQUIRE(previz.camera.keys.size() == 1);
     REQUIRE(previz.camera.keys.at(3).rotationDeg.x == 10.0f);

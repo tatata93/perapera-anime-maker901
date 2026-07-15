@@ -841,6 +841,24 @@ int main(int argc, char* argv[]) {
     // 「STLを読み込んでも表示されない」報告の再現・検証用。
     // 空シーンには既定で組み込みの箱(":box")が原点に自動配置される(見た目・色ともSTL読込直後の
     // 自動フィット結果と酷似する)ため、判定を曖昧にしないよう既定の箱は先に原点から遠ざけておく
+    const int previzHumanoidIndex = args.indexOf("--previz-humanoid-test");
+    if (previzHumanoidIndex >= 0 && previzHumanoidIndex + 1 < args.size()) {
+        const QString outputPath = args.at(previzHumanoidIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugOpenPreviz();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                window.previzWindow()->debugSetSelectedPosition(50.0, 0.0, 50.0);
+                window.previzWindow()->debugAddPrimitive(":humanoid");
+                window.previzWindow()->debugAddHumanoidWalkCycleKeys();
+                window.previzWindow()->setTimeline(12, 24);
+                QTimer::singleShot(400, &window, [&window, outputPath] {
+                    window.previzWindow()->viewport()->grabFramebuffer().save(outputPath);
+                    QApplication::exit(0);
+                });
+            });
+        });
+    }
+
     const int previzStlIndex = args.indexOf("--previz-stl-test");
     if (previzStlIndex >= 0 && previzStlIndex + 1 < args.size()) {
         const QString outputPath = args.at(previzStlIndex + 1);

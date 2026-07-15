@@ -21,10 +21,47 @@ struct PrevizTransform {
     Vec3 scale{1.0f, 1.0f, 1.0f};
 };
 
+struct PrevizHumanoidPose {
+    float torsoPitchDeg = 0.0f;
+    float torsoRollDeg = 0.0f;
+    float headPitchDeg = 0.0f;
+    float headYawDeg = 0.0f;
+    float leftShoulderPitchDeg = 0.0f;
+    float leftShoulderRollDeg = 0.0f;
+    float leftElbowDeg = 0.0f;
+    float rightShoulderPitchDeg = 0.0f;
+    float rightShoulderRollDeg = 0.0f;
+    float rightElbowDeg = 0.0f;
+    float leftHipPitchDeg = 0.0f;
+    float leftHipRollDeg = 0.0f;
+    float leftKneeDeg = 0.0f;
+    float rightHipPitchDeg = 0.0f;
+    float rightHipRollDeg = 0.0f;
+    float rightKneeDeg = 0.0f;
+};
+
 namespace previz_detail {
 inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
 inline Vec3 lerp(const Vec3& a, const Vec3& b, float t) {
     return {lerp(a.x, b.x, t), lerp(a.y, b.y, t), lerp(a.z, b.z, t)};
+}
+inline PrevizHumanoidPose lerp(const PrevizHumanoidPose& a, const PrevizHumanoidPose& b, float t) {
+    return {lerp(a.torsoPitchDeg, b.torsoPitchDeg, t),
+            lerp(a.torsoRollDeg, b.torsoRollDeg, t),
+            lerp(a.headPitchDeg, b.headPitchDeg, t),
+            lerp(a.headYawDeg, b.headYawDeg, t),
+            lerp(a.leftShoulderPitchDeg, b.leftShoulderPitchDeg, t),
+            lerp(a.leftShoulderRollDeg, b.leftShoulderRollDeg, t),
+            lerp(a.leftElbowDeg, b.leftElbowDeg, t),
+            lerp(a.rightShoulderPitchDeg, b.rightShoulderPitchDeg, t),
+            lerp(a.rightShoulderRollDeg, b.rightShoulderRollDeg, t),
+            lerp(a.rightElbowDeg, b.rightElbowDeg, t),
+            lerp(a.leftHipPitchDeg, b.leftHipPitchDeg, t),
+            lerp(a.leftHipRollDeg, b.leftHipRollDeg, t),
+            lerp(a.leftKneeDeg, b.leftKneeDeg, t),
+            lerp(a.rightHipPitchDeg, b.rightHipPitchDeg, t),
+            lerp(a.rightHipRollDeg, b.rightHipRollDeg, t),
+            lerp(a.rightKneeDeg, b.rightKneeDeg, t)};
 }
 
 // std::map<size_t, T>のコマキーを線形補間する共通処理(セルの位置キーと同じ規則)
@@ -47,6 +84,8 @@ struct PrevizModel {
     std::string filePath;  // glTF/glbファイルパス
     PrevizTransform transform;                       // キーが無いときの基本配置
     std::map<size_t, PrevizTransform> transformKeys;  // コマ→トランスフォーム(モーション)
+    PrevizHumanoidPose humanoidPose;
+    std::map<size_t, PrevizHumanoidPose> poseKeys;
 
     PrevizTransform transformAt(size_t frame) const {
         return previz_detail::interpolateKeys(transformKeys, frame, transform,
@@ -56,6 +95,14 @@ struct PrevizModel {
                                                       previz_detail::lerp(a.rotationDeg, b.rotationDeg, t),
                                                       previz_detail::lerp(a.scale, b.scale, t)};
                                               });
+    }
+
+    PrevizHumanoidPose poseAt(size_t frame) const {
+        return previz_detail::interpolateKeys(
+            poseKeys, frame, humanoidPose,
+            [](const PrevizHumanoidPose& a, const PrevizHumanoidPose& b, float t) {
+                return previz_detail::lerp(a, b, t);
+            });
     }
 };
 

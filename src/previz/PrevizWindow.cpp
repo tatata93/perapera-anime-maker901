@@ -22,6 +22,70 @@
 #include "previz/PrevizSheetPanel.h"
 #include "previz/PrevizViewport.h"
 
+namespace {
+
+bool isHumanoidKind(const std::string& filePath) {
+    return filePath == ":humanoid";
+}
+
+core::PrevizHumanoidPose humanoidPosePreset(int presetIndex) {
+    core::PrevizHumanoidPose pose;
+    switch (presetIndex) {
+        case 1:  // walk A
+            pose.torsoPitchDeg = 4.0f;
+            pose.headYawDeg = -4.0f;
+            pose.leftShoulderPitchDeg = 28.0f;
+            pose.leftElbowDeg = 12.0f;
+            pose.rightShoulderPitchDeg = -32.0f;
+            pose.rightElbowDeg = 18.0f;
+            pose.leftHipPitchDeg = -28.0f;
+            pose.leftKneeDeg = 18.0f;
+            pose.rightHipPitchDeg = 32.0f;
+            pose.rightKneeDeg = 34.0f;
+            break;
+        case 2:  // walk B
+            pose.torsoPitchDeg = 4.0f;
+            pose.headYawDeg = 4.0f;
+            pose.leftShoulderPitchDeg = -32.0f;
+            pose.leftElbowDeg = 18.0f;
+            pose.rightShoulderPitchDeg = 28.0f;
+            pose.rightElbowDeg = 12.0f;
+            pose.leftHipPitchDeg = 32.0f;
+            pose.leftKneeDeg = 34.0f;
+            pose.rightHipPitchDeg = -28.0f;
+            pose.rightKneeDeg = 18.0f;
+            break;
+        case 3:  // right arm up
+            pose.torsoPitchDeg = 6.0f;
+            pose.headYawDeg = 12.0f;
+            pose.leftShoulderPitchDeg = 12.0f;
+            pose.leftElbowDeg = 18.0f;
+            pose.rightShoulderPitchDeg = -145.0f;
+            pose.rightShoulderRollDeg = -12.0f;
+            pose.rightElbowDeg = -18.0f;
+            pose.leftHipPitchDeg = 6.0f;
+            pose.rightHipPitchDeg = -8.0f;
+            break;
+        case 4:  // crouch
+            pose.torsoPitchDeg = 20.0f;
+            pose.leftShoulderPitchDeg = 18.0f;
+            pose.leftElbowDeg = 32.0f;
+            pose.rightShoulderPitchDeg = 18.0f;
+            pose.rightElbowDeg = 32.0f;
+            pose.leftHipPitchDeg = 42.0f;
+            pose.leftKneeDeg = 68.0f;
+            pose.rightHipPitchDeg = 42.0f;
+            pose.rightKneeDeg = 68.0f;
+            break;
+        case 0:
+        default:
+            break;
+    }
+    return pose;
+}
+
+}  // namespace
+
 PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(tr("プリビズ - perapera-anime-maker901"));
     resize(960, 600);
@@ -106,6 +170,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         m_viewport->setFrame(next);
         refreshCameraUi();
         refreshTransformUi();
+        refreshPoseUi();
         // シートの再構築は重いので再生中は行わない(停止時にまとめて更新)
     });
 
@@ -128,11 +193,13 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     QAction* addBoxAction = primitiveMenu->addAction(tr("箱"));
     QAction* addCylinderAction = primitiveMenu->addAction(tr("円柱"));
     QAction* addSphereAction = primitiveMenu->addAction(tr("球"));
+    QAction* addHumanoidAction = primitiveMenu->addAction(tr("人型"));
     addPrimitiveButton->setMenu(primitiveMenu);
     layout->addWidget(addPrimitiveButton);
     connect(addBoxAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":box"), true); });
     connect(addCylinderAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":cylinder"), true); });
     connect(addSphereAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":sphere"), true); });
+    connect(addHumanoidAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":humanoid"), true); });
 
     auto* removeButton = new QPushButton(tr("モデル削除"), container);
     layout->addWidget(removeButton);
@@ -144,6 +211,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_modelList, &QListWidget::currentRowChanged, this, [this](int row) {
         m_viewport->setSelectedModel(row);  // 作業視点の左ドラッグ移動対象
         refreshTransformUi();
+        refreshPoseUi();
         rebuildSheet();  // アクティブ列(選択モデル)の表示を追従させる
     });
 
@@ -189,6 +257,80 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyTransformFromUi(); });
     }
 
+    auto* poseLabel = new QLabel(tr("人型ポーズ"), container);
+    layout->addWidget(poseLabel);
+    auto* posePresetRow = new QWidget(container);
+    auto* posePresetLayout = new QHBoxLayout(posePresetRow);
+    posePresetLayout->setContentsMargins(4, 0, 4, 0);
+    m_posePresetCombo = new QComboBox(posePresetRow);
+    m_posePresetCombo->addItems({tr("ニュートラル"), tr("歩きA"), tr("歩きB"), tr("右腕上げ"), tr("しゃがみ")});
+    auto* applyPosePresetButton = new QPushButton(tr("適用"), posePresetRow);
+    posePresetLayout->addWidget(m_posePresetCombo, 1);
+    posePresetLayout->addWidget(applyPosePresetButton);
+    layout->addWidget(posePresetRow);
+    connect(applyPosePresetButton, &QPushButton::clicked, this, [this] {
+        applyHumanoidPosePreset(m_posePresetCombo ? m_posePresetCombo->currentIndex() : 0);
+    });
+
+    const auto makePoseSpin = [container]() {
+        auto* spin = new QDoubleSpinBox(container);
+        spin->setRange(-180.0, 180.0);
+        spin->setSingleStep(5.0);
+        spin->setDecimals(1);
+        spin->setSuffix(QObject::tr("°"));
+        spin->setFocusPolicy(Qt::ClickFocus);
+        return spin;
+    };
+    m_poseTorsoPitch = makePoseSpin();
+    m_poseHeadYaw = makePoseSpin();
+    m_poseLeftShoulder = makePoseSpin();
+    m_poseLeftElbow = makePoseSpin();
+    m_poseRightShoulder = makePoseSpin();
+    m_poseRightElbow = makePoseSpin();
+    m_poseLeftHip = makePoseSpin();
+    m_poseLeftKnee = makePoseSpin();
+    m_poseRightHip = makePoseSpin();
+    m_poseRightKnee = makePoseSpin();
+    addRow(tr("胴 前後"), m_poseTorsoPitch);
+    addRow(tr("頭 左右"), m_poseHeadYaw);
+    addRow(tr("左肩 前後"), m_poseLeftShoulder);
+    addRow(tr("左肘"), m_poseLeftElbow);
+    addRow(tr("右肩 前後"), m_poseRightShoulder);
+    addRow(tr("右肘"), m_poseRightElbow);
+    addRow(tr("左脚 前後"), m_poseLeftHip);
+    addRow(tr("左膝"), m_poseLeftKnee);
+    addRow(tr("右脚 前後"), m_poseRightHip);
+    addRow(tr("右膝"), m_poseRightKnee);
+    for (QDoubleSpinBox* spin : {m_poseTorsoPitch, m_poseHeadYaw, m_poseLeftShoulder, m_poseLeftElbow,
+                                 m_poseRightShoulder, m_poseRightElbow, m_poseLeftHip, m_poseLeftKnee,
+                                 m_poseRightHip, m_poseRightKnee}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyPoseFromUi(); });
+    }
+    auto* poseKeyButton = new QPushButton(tr("現在コマにポーズキー"), container);
+    layout->addWidget(poseKeyButton);
+    connect(poseKeyButton, &QPushButton::clicked, this, [this] {
+        core::PrevizModel* model = selectedModel();
+        if (!model || !isHumanoidKind(model->filePath)) return;
+        model->poseKeys[m_viewport->frame()] = model->poseAt(m_viewport->frame());
+        rebuildSheet();
+        m_viewport->update();
+        emit sceneEdited();
+    });
+    auto* poseKeyClearButton = new QPushButton(tr("ポーズキー削除"), container);
+    layout->addWidget(poseKeyClearButton);
+    connect(poseKeyClearButton, &QPushButton::clicked, this, [this] {
+        core::PrevizModel* model = selectedModel();
+        if (!model || !isHumanoidKind(model->filePath)) return;
+        model->poseKeys.erase(m_viewport->frame());
+        refreshPoseUi();
+        rebuildSheet();
+        m_viewport->update();
+        emit sceneEdited();
+    });
+    auto* walkCycleButton = new QPushButton(tr("歩きループキー作成"), container);
+    layout->addWidget(walkCycleButton);
+    connect(walkCycleButton, &QPushButton::clicked, this, &PrevizWindow::addHumanoidWalkCycleKeys);
+
     // モーションキー(カメラ/選択モデル): 現在コマにキーを打つ・消す
     auto* cameraKeyButton = new QPushButton(tr("現在コマにカメラキー"), container);
     layout->addWidget(cameraKeyButton);
@@ -215,15 +357,20 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         core::PrevizModel* model = selectedModel();
         if (!model) return;
         model->transformKeys.erase(m_viewport->frame());
+        if (isHumanoidKind(model->filePath)) model->poseKeys.erase(m_viewport->frame());
         rebuildSheet();
         m_viewport->update();
         refreshTransformUi();
+        refreshPoseUi();
         emit sceneEdited();
     });
     connect(modelKeyButton, &QPushButton::clicked, this, [this] {
         core::PrevizModel* model = selectedModel();
         if (!model) return;
         model->transformKeys[m_viewport->frame()] = model->transformAt(m_viewport->frame());
+        if (isHumanoidKind(model->filePath)) {
+            model->poseKeys[m_viewport->frame()] = model->poseAt(m_viewport->frame());
+        }
         rebuildSheet();
         emit sceneEdited();
     });
@@ -436,6 +583,92 @@ void PrevizWindow::applyTransformFromUi() {
     emit sceneEdited();
 }
 
+void PrevizWindow::setPoseControlsEnabled(bool enabled) {
+    if (m_posePresetCombo) m_posePresetCombo->setEnabled(enabled);
+    for (QDoubleSpinBox* spin : {m_poseTorsoPitch, m_poseHeadYaw, m_poseLeftShoulder, m_poseLeftElbow,
+                                 m_poseRightShoulder, m_poseRightElbow, m_poseLeftHip, m_poseLeftKnee,
+                                 m_poseRightHip, m_poseRightKnee}) {
+        if (spin) spin->setEnabled(enabled);
+    }
+}
+
+void PrevizWindow::refreshPoseUi() {
+    core::PrevizModel* model = selectedModel();
+    const bool isHumanoid = model && isHumanoidKind(model->filePath);
+    setPoseControlsEnabled(isHumanoid);
+    if (!isHumanoid) return;
+
+    m_updating = true;
+    const core::PrevizHumanoidPose pose = model->poseAt(m_viewport->frame());
+    m_poseTorsoPitch->setValue(pose.torsoPitchDeg);
+    m_poseHeadYaw->setValue(pose.headYawDeg);
+    m_poseLeftShoulder->setValue(pose.leftShoulderPitchDeg);
+    m_poseLeftElbow->setValue(pose.leftElbowDeg);
+    m_poseRightShoulder->setValue(pose.rightShoulderPitchDeg);
+    m_poseRightElbow->setValue(pose.rightElbowDeg);
+    m_poseLeftHip->setValue(pose.leftHipPitchDeg);
+    m_poseLeftKnee->setValue(pose.leftKneeDeg);
+    m_poseRightHip->setValue(pose.rightHipPitchDeg);
+    m_poseRightKnee->setValue(pose.rightKneeDeg);
+    m_updating = false;
+}
+
+core::PrevizHumanoidPose& PrevizWindow::editableHumanoidPose(core::PrevizModel& model) {
+    if (model.poseKeys.empty()) return model.humanoidPose;
+    model.poseKeys[m_viewport->frame()] = model.poseAt(m_viewport->frame());
+    return model.poseKeys[m_viewport->frame()];
+}
+
+void PrevizWindow::applyPoseFromUi() {
+    if (m_updating) return;
+    core::PrevizModel* model = selectedModel();
+    if (!model || !isHumanoidKind(model->filePath)) return;
+
+    core::PrevizHumanoidPose& pose = editableHumanoidPose(*model);
+    pose.torsoPitchDeg = static_cast<float>(m_poseTorsoPitch->value());
+    pose.headYawDeg = static_cast<float>(m_poseHeadYaw->value());
+    pose.leftShoulderPitchDeg = static_cast<float>(m_poseLeftShoulder->value());
+    pose.leftElbowDeg = static_cast<float>(m_poseLeftElbow->value());
+    pose.rightShoulderPitchDeg = static_cast<float>(m_poseRightShoulder->value());
+    pose.rightElbowDeg = static_cast<float>(m_poseRightElbow->value());
+    pose.leftHipPitchDeg = static_cast<float>(m_poseLeftHip->value());
+    pose.leftKneeDeg = static_cast<float>(m_poseLeftKnee->value());
+    pose.rightHipPitchDeg = static_cast<float>(m_poseRightHip->value());
+    pose.rightKneeDeg = static_cast<float>(m_poseRightKnee->value());
+
+    m_viewport->update();
+    rebuildSheet();
+    emit sceneEdited();
+}
+
+void PrevizWindow::applyHumanoidPosePreset(int presetIndex) {
+    core::PrevizModel* model = selectedModel();
+    if (!model || !isHumanoidKind(model->filePath)) return;
+
+    editableHumanoidPose(*model) = humanoidPosePreset(presetIndex);
+    refreshPoseUi();
+    rebuildSheet();
+    m_viewport->update();
+    emit sceneEdited();
+}
+
+void PrevizWindow::addHumanoidWalkCycleKeys() {
+    core::PrevizModel* model = selectedModel();
+    if (!model || !isHumanoidKind(model->filePath)) return;
+
+    const size_t start = m_viewport->frame();
+    const size_t lastFrame = m_frameCount > 0 ? m_frameCount - 1 : start;
+    const size_t mid = std::min(lastFrame, start + 12);
+    const size_t end = std::min(lastFrame, start + 24);
+    model->poseKeys[start] = humanoidPosePreset(1);
+    model->poseKeys[mid] = humanoidPosePreset(2);
+    model->poseKeys[end] = humanoidPosePreset(1);
+    refreshPoseUi();
+    rebuildSheet();
+    m_viewport->update();
+    emit sceneEdited();
+}
+
 void PrevizWindow::debugSetSelectedScale(double sx, double sy, double sz) {
     if (!selectedModel()) return;
     // UIのスピンボックス経由で設定する(valueChangedシグナルでapplyTransformFromUiが走り、
@@ -456,12 +689,21 @@ void PrevizWindow::debugSetLensDistortion(double d) {
     if (m_distortSpin) m_distortSpin->setValue(d);
 }
 
+void PrevizWindow::debugSetHumanoidPosePreset(int presetIndex) {
+    applyHumanoidPosePreset(presetIndex);
+}
+
+void PrevizWindow::debugAddHumanoidWalkCycleKeys() {
+    addHumanoidWalkCycleKeys();
+}
+
 void PrevizWindow::addPrimitive(const QString& kind, bool select) {
     if (!m_scene) return;
     // kind(":box"/":cylinder"/":sphere")に応じた表示名を決める
     QString label = tr("箱");
     if (kind == QStringLiteral(":cylinder")) label = tr("円柱");
     else if (kind == QStringLiteral(":sphere")) label = tr("球");
+    else if (kind == QStringLiteral(":humanoid")) label = tr("人型");
 
     core::PrevizModel primitive;
     int number = 1;
@@ -487,6 +729,7 @@ void PrevizWindow::setScene(core::PrevizScene* scene) {
     }
     refreshModelList();
     refreshCameraUi();
+    refreshPoseUi();
     rebuildSheet();
 }
 
@@ -499,6 +742,7 @@ void PrevizWindow::setTimeline(size_t currentFrame, size_t frameCount) {
     m_viewport->setFrame(currentFrame);
     refreshCameraUi();
     refreshTransformUi();  // モーションキーがあるとコマごとに配置が変わる
+    refreshPoseUi();
     rebuildSheet();
 }
 
@@ -588,7 +832,8 @@ void PrevizWindow::rebuildSheet() {
             QList<bool> flags;
             flags.reserve(frameCount);
             for (int f = 0; f < frameCount; ++f) {
-                flags << (model.transformKeys.count(static_cast<size_t>(f)) > 0);
+                const size_t frame = static_cast<size_t>(f);
+                flags << (model.transformKeys.count(frame) > 0 || model.poseKeys.count(frame) > 0);
             }
             keyFlags << flags;
         }
@@ -622,16 +867,20 @@ void PrevizWindow::onSheetKeyToggleRequested(int column, int frame) {
         const int row = column - 1;
         if (row < 0 || row >= static_cast<int>(m_scene->models.size())) return;
         core::PrevizModel& model = m_scene->models[static_cast<size_t>(row)];
-        if (model.transformKeys.count(f) > 0) {
+        const bool hasKey = model.transformKeys.count(f) > 0 || model.poseKeys.count(f) > 0;
+        if (hasKey) {
             model.transformKeys.erase(f);
+            model.poseKeys.erase(f);
         } else {
             model.transformKeys[f] = model.transformAt(f);
+            if (isHumanoidKind(model.filePath)) model.poseKeys[f] = model.poseAt(f);
         }
     }
     rebuildSheet();
     m_viewport->update();
     refreshCameraUi();
     refreshTransformUi();
+    refreshPoseUi();
     emit sceneEdited();
 }
 

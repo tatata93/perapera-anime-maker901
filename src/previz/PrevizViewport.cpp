@@ -24,6 +24,20 @@ std::string lowerExtension(const std::string& path) {
     return ext;
 }
 
+bool isHumanoidModelPath(const std::string& filePath) {
+    return filePath == ":humanoid";
+}
+
+QMatrix4x4 modelMatrixFromTransform(const core::PrevizTransform& tf) {
+    QMatrix4x4 m;
+    m.translate(tf.position.x, tf.position.y, tf.position.z);
+    m.rotate(tf.rotationDeg.y, 0, 1, 0);
+    m.rotate(tf.rotationDeg.x, 1, 0, 0);
+    m.rotate(tf.rotationDeg.z, 0, 0, 1);
+    m.scale(tf.scale.x, tf.scale.y, tf.scale.z);
+    return m;
+}
+
 const char* kCompatVertexShader = R"(#version 120
 attribute vec3 aPos;
 attribute vec3 aNormal;
@@ -658,7 +672,8 @@ void PrevizViewport::drawPrimitive(
     const QMatrix4x4& model,
     const QMatrix4x4& viewProj,
     bool unlit,
-    bool highlight) {
+    bool highlight,
+    const QVector4D* colorOverride) {
     if (!m_program ||
         !m_program->isLinked() ||
         !prim.vbo ||
@@ -676,11 +691,12 @@ void PrevizViewport::drawPrimitive(
         model
     );
 
+    const QVector4D baseColor = colorOverride ? *colorOverride : prim.color;
     const QVector4D color =
         highlight
-            ? (prim.color * 0.55f +
+            ? (baseColor * 0.55f +
                kHighlightColor * 0.45f)
-            : prim.color;
+            : baseColor;
 
     m_program->setUniformValue(
         "uColor",
@@ -738,6 +754,143 @@ void PrevizViewport::drawPrimitive(
     m_program->disableAttributeArray(1);
 
     prim.vbo->release();
+}
+
+bool PrevizViewport::drawMesh(
+    const std::string& filePath,
+    const QMatrix4x4& model,
+    const QMatrix4x4& viewProj,
+    bool unlit,
+    bool highlight,
+    const QVector4D* colorOverride) {
+    GpuMesh* mesh = getOrLoadMesh(filePath);
+    if (!mesh || mesh->loadFailed) return false;
+
+    bool drew = false;
+    for (const GpuPrimitive& prim : mesh->primitives) {
+        drawPrimitive(prim, model, viewProj, unlit, highlight, colorOverride);
+        drew = true;
+    }
+    return drew;
+}
+
+void PrevizViewport::drawHumanoid(
+    const core::PrevizModel& model,
+    const QMatrix4x4& modelMatrix,
+    const QMatrix4x4& viewProj,
+    bool highlight) {
+    const core::PrevizHumanoidPose pose = model.poseAt(m_frame);
+
+    const QVector4D skinColor(0.78f, 0.62f, 0.48f, 1.0f);
+    const QVector4D torsoColor(0.33f, 0.46f, 0.72f, 1.0f);
+    const QVector4D limbColor(0.46f, 0.56f, 0.74f, 1.0f);
+    const QVector4D jointColor(0.24f, 0.28f, 0.36f, 1.0f);
+    const QVector4D footColor(0.18f, 0.18f, 0.20f, 1.0f);
+
+    const auto drawLocal = [&](const std::string& filePath, const QMatrix4x4& local, const QVector4D& color) {
+        drawMesh(filePath, modelMatrix * local, viewProj, /*unlit=*/false, highlight, &color);
+    };
+
+    const auto sphereAt = [&](const QVector3D& center, float radius, const QVector4D& color) {
+        QMatrix4x4 local;
+        local.translate(center.x(), center.y() - radius, center.z());
+        local.scale(radius * 2.0f, radius * 2.0f, radius * 2.0f);
+        drawLocal(":sphere", local, color);
+    };
+
+    const auto segmentMatrix = [](const QVector3D& anchor, const QMatrix4x4& rot, float length, float radius) {
+        QMatrix4x4 local;
+        local.translate(anchor.x(), anchor.y(), anchor.z());
+        local = local * rot;
+        local.scale(radius * 2.0f, length, radius * 2.0f);
+        return local;
+    };
+
+    const auto segmentEnd = [](const QVector3D& anchor, const QMatrix4x4& rot, float length) {
+        return anchor + rot.mapVector(QVector3D(0.0f, length, 0.0f));
+    };
+
+    const auto downwardRot = [](float pitchDeg, float rollDeg) {
+        QMatrix4x4 rot;
+        rot.rotate(rollDeg, 0, 0, 1);
+        rot.rotate(pitchDeg, 1, 0, 0);
+        rot.rotate(180.0f, 1, 0, 0);
+        return rot;
+    };
+
+    QMatrix4x4 torsoRot;
+    torsoRot.rotate(pose.torsoRollDeg, 0, 0, 1);
+    torsoRot.rotate(pose.torsoPitchDeg, 1, 0, 0);
+
+    const QVector3D pelvis(0.0f, 1.02f, 0.0f);
+    const auto torsoPoint = [&](const QVector3D& p) {
+        return pelvis + torsoRot.mapVector(p);
+    };
+
+    QMatrix4x4 torso;
+    torso.translate(pelvis.x(), pelvis.y(), pelvis.z());
+    torso = torso * torsoRot;
+    torso.scale(0.58f, 0.78f, 0.30f);
+    drawLocal(":cylinder", torso, torsoColor);
+
+    const QVector3D chest = torsoPoint(QVector3D(0.0f, 0.78f, 0.0f));
+    const QVector3D leftShoulder = torsoPoint(QVector3D(-0.43f, 0.68f, 0.0f));
+    const QVector3D rightShoulder = torsoPoint(QVector3D(0.43f, 0.68f, 0.0f));
+    const QVector3D leftHip = QVector3D(-0.22f, 1.0f, 0.0f);
+    const QVector3D rightHip = QVector3D(0.22f, 1.0f, 0.0f);
+
+    sphereAt(chest + torsoRot.mapVector(QVector3D(0.0f, 0.12f, 0.0f)), 0.11f, jointColor);
+    sphereAt(leftShoulder, 0.105f, jointColor);
+    sphereAt(rightShoulder, 0.105f, jointColor);
+    sphereAt(leftHip, 0.105f, jointColor);
+    sphereAt(rightHip, 0.105f, jointColor);
+
+    QMatrix4x4 headRot = torsoRot;
+    headRot.rotate(pose.headYawDeg, 0, 1, 0);
+    headRot.rotate(pose.headPitchDeg, 1, 0, 0);
+    const QVector3D headCenter = torsoPoint(QVector3D(0.0f, 1.06f, 0.0f));
+    sphereAt(headCenter, 0.22f, skinColor);
+    QMatrix4x4 face;
+    face.translate(headCenter.x(), headCenter.y() - 0.05f, headCenter.z() - 0.21f);
+    face = face * headRot;
+    face.scale(0.12f, 0.08f, 0.08f);
+    drawLocal(":box", face, skinColor);
+
+    const float upperArm = 0.52f;
+    const float forearm = 0.48f;
+    const float upperLeg = 0.62f;
+    const float lowerLeg = 0.58f;
+
+    auto drawArm = [&](const QVector3D& shoulder, float shoulderPitch, float shoulderRoll, float elbowDeg) {
+        QMatrix4x4 upperRot = torsoRot * downwardRot(shoulderPitch, shoulderRoll);
+        drawLocal(":cylinder", segmentMatrix(shoulder, upperRot, upperArm, 0.075f), limbColor);
+        const QVector3D elbow = segmentEnd(shoulder, upperRot, upperArm);
+        sphereAt(elbow, 0.085f, jointColor);
+        QMatrix4x4 lowerRot = upperRot;
+        lowerRot.rotate(elbowDeg, 1, 0, 0);
+        drawLocal(":cylinder", segmentMatrix(elbow, lowerRot, forearm, 0.065f), limbColor);
+        sphereAt(segmentEnd(elbow, lowerRot, forearm), 0.075f, skinColor);
+    };
+
+    auto drawLeg = [&](const QVector3D& hip, float hipPitch, float hipRoll, float kneeDeg) {
+        QMatrix4x4 upperRot = downwardRot(hipPitch, hipRoll);
+        drawLocal(":cylinder", segmentMatrix(hip, upperRot, upperLeg, 0.095f), limbColor);
+        const QVector3D knee = segmentEnd(hip, upperRot, upperLeg);
+        sphereAt(knee, 0.095f, jointColor);
+        QMatrix4x4 lowerRot = upperRot;
+        lowerRot.rotate(kneeDeg, 1, 0, 0);
+        drawLocal(":cylinder", segmentMatrix(knee, lowerRot, lowerLeg, 0.08f), limbColor);
+        const QVector3D ankle = segmentEnd(knee, lowerRot, lowerLeg);
+        QMatrix4x4 foot;
+        foot.translate(ankle.x(), ankle.y() - 0.05f, ankle.z() - 0.12f);
+        foot.scale(0.22f, 0.08f, 0.38f);
+        drawLocal(":box", foot, footColor);
+    };
+
+    drawArm(leftShoulder, pose.leftShoulderPitchDeg, pose.leftShoulderRollDeg, pose.leftElbowDeg);
+    drawArm(rightShoulder, pose.rightShoulderPitchDeg, pose.rightShoulderRollDeg, pose.rightElbowDeg);
+    drawLeg(leftHip, pose.leftHipPitchDeg, pose.leftHipRollDeg, pose.leftKneeDeg);
+    drawLeg(rightHip, pose.rightHipPitchDeg, pose.rightHipRollDeg, pose.rightKneeDeg);
 }
 
 float PrevizViewport::currentLensDistortion() const {
@@ -928,22 +1081,17 @@ void PrevizViewport::renderScene(const QMatrix4x4& viewProj) {
     if (m_scene) {
         for (size_t mi = 0; mi < m_scene->models.size(); ++mi) {
             const core::PrevizModel& model = m_scene->models[mi];
-            GpuMesh* mesh = getOrLoadMesh(model.filePath);
-            if (!mesh || mesh->loadFailed) continue;
-
             const core::PrevizTransform tf = model.transformAt(m_frame);
-            QMatrix4x4 m;
-            m.translate(tf.position.x, tf.position.y, tf.position.z);
-            m.rotate(tf.rotationDeg.y, 0, 1, 0);
-            m.rotate(tf.rotationDeg.x, 1, 0, 0);
-            m.rotate(tf.rotationDeg.z, 0, 0, 1);
-            m.scale(tf.scale.x, tf.scale.y, tf.scale.z);
-
+            const QMatrix4x4 m = modelMatrixFromTransform(tf);
             const bool highlight = !usingCameraView() && static_cast<int>(mi) == m_selectedModel;
-            for (const GpuPrimitive& prim : mesh->primitives) {
-                drawPrimitive(prim, m, viewProj, /*unlit=*/false, highlight);
+
+            if (isHumanoidModelPath(model.filePath)) {
+                drawHumanoid(model, m, viewProj, highlight);
                 drewAny = true;
+                continue;
             }
+
+            if (drawMesh(model.filePath, m, viewProj, /*unlit=*/false, highlight)) drewAny = true;
         }
     }
     if (!drewAny) {
