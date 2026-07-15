@@ -38,13 +38,14 @@ void Cel::setExposure(size_t frame, int drawing) {
     m_exposure[frame] = drawing;
 }
 
-void Cel::applyStepPattern(int step, size_t frameCount) {
+void Cel::applyStepPattern(int step, size_t frameCount, size_t startFrame) {
     if (step < 1) step = 1;
     m_exposure.assign(frameCount, -1);
     const int drawings = static_cast<int>(drawingCount());
     if (drawings == 0) return;
-    for (size_t t = 0; t < frameCount; ++t) {
-        const int drawing = static_cast<int>(t) / step;
+    if (startFrame >= frameCount) return;
+    for (size_t t = startFrame; t < frameCount; ++t) {
+        const int drawing = static_cast<int>(t - startFrame) / step;
         if (drawing >= drawings) break;  // 動画が尽きたら以降は空欄のまま
         m_exposure[t] = drawing;
     }

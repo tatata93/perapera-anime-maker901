@@ -51,8 +51,8 @@ public:
     const std::vector<int>& exposures() const { return m_exposure; }
 
     // 一括コマ打ち: 動画0,1,2...をstepコマずつ順番に割り当てる(frameCountまで)。
-    // 動画が尽きたら残りは最後の動画を維持する(標準的な止め)
-    void applyStepPattern(int step, size_t frameCount);
+    // 動画が尽きたら残りは空欄にする。
+    void applyStepPattern(int step, size_t frameCount, size_t startFrame = 0);
 
     // --- 位置キー(タップ/ペグ移動) ---
     // コマ→セルの移動量(px)。キー間は線形補間(等速)、キーの外側は端のキーの値を維持。

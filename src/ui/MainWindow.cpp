@@ -91,6 +91,20 @@ void initializeCut(core::Cut& cut, int canvasW, int canvasH) {
     cel.setExposure(0, 0);
 }
 
+size_t stepPatternStartFrame(const core::Cel& cel, size_t frameCount, size_t currentFrame) {
+    for (size_t f = 0; f < frameCount; ++f) {
+        if (cel.exposure(f) >= 0) return f;
+    }
+    return std::min(currentFrame, frameCount);
+}
+
+template <typename Window>
+Window* createSecondaryWindow() {
+    auto* window = new Window(nullptr);
+    window->setAttribute(Qt::WA_QuitOnClose, false);
+    return window;
+}
+
 // プリビズなぞり作画用: 筆圧ペンで点列(ポリライン)をBitmapへ描く。debugSimulateStroke
 // (GLCanvas)の筆圧の付け方に倣い、ストローク全体の弧長を媒介変数化して両端が細く・
 // 中央が太くなる筆圧プロファイル(sinカーブ)にすることで、コードの均一な図形ではなく
@@ -374,7 +388,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     perfTimer->start(500);
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+    delete m_previzWindow;
+    delete m_storyboardWindow;
+    delete m_settingBoardWindow;
+    delete m_editWindow;
+    delete m_projectManagerWindow;
+    delete m_shootingWindow;
+}
 
 core::Cut& MainWindow::activeCut() {
     // シーンはMVPでは1つ固定。カットは複数対応(カットバーで切替)
@@ -557,8 +578,11 @@ void MainWindow::deleteCurrentFrame() {
 // コマ打ちパターン適用(1/2/3コマ打ち)。XsheetPanelのボタンと「操作」メニューの数字キーで共有する
 void MainWindow::applyStepPattern(int step) {
     if (m_playing) return;
-    activeCel().applyStepPattern(step, activeCut().frameCount());
-    markCutDirty(activeCut());
+    core::Cut& cut = activeCut();
+    core::Cel& cel = activeCel();
+    const size_t startFrame = stepPatternStartFrame(cel, cut.frameCount(), m_currentFrame);
+    cel.applyStepPattern(step, cut.frameCount(), startFrame);
+    markCutDirty(cut);
     updateCanvasLayers();
     updateOnionSkin();
     updateFrameLabel();
@@ -888,6 +912,8 @@ void MainWindow::setupPanels() {
         markCutDirty(activeCut());
         updateCanvasLayers();
         updateOnionSkin();
+        updateFrameLabel();
+        updateXsheetPanel();
         updateWindowTitle();
     });
     connect(m_framePanel, &FramePanel::addRequested, this, &MainWindow::addFrameAfterCurrent);
@@ -3648,7 +3674,7 @@ void MainWindow::setPrevizUnderlay(bool enabled) {
 
 void MainWindow::openPrevizWindow() {
     if (!m_previzWindow) {
-        m_previzWindow = new PrevizWindow(this);  // QMainWindowなので独立ウィンドウになる
+        m_previzWindow = createSecondaryWindow<PrevizWindow>();
         connect(m_previzWindow, &PrevizWindow::sceneEdited, this, [this] {
             // プリビズシーンはカット内(cut.previz())に格納される
             markCutDirty(activeCut());
@@ -3667,7 +3693,7 @@ void MainWindow::openPrevizWindow() {
 
 void MainWindow::openStoryboardWindow() {
     if (!m_storyboardWindow) {
-        m_storyboardWindow = new StoryboardWindow(this);  // QMainWindowなので独立ウィンドウになる
+        m_storyboardWindow = createSecondaryWindow<StoryboardWindow>();
         connect(m_storyboardWindow, &StoryboardWindow::edited, this, [this] {
             markStoryboardDirty();
             updateWindowTitle();
@@ -3751,7 +3777,7 @@ void MainWindow::debugSetupStoryboardDemo() {
 
 void MainWindow::openSettingBoardWindow() {
     if (!m_settingBoardWindow) {
-        m_settingBoardWindow = new SettingBoardWindow(this);  // QMainWindowなので独立ウィンドウになる
+        m_settingBoardWindow = createSecondaryWindow<SettingBoardWindow>();
         connect(m_settingBoardWindow, &SettingBoardWindow::edited, this, [this] {
             markBoardsDirty();
             updateWindowTitle();
@@ -3838,7 +3864,7 @@ void MainWindow::debugSetupSettingBoardDemo() {
 
 void MainWindow::openEditWindow() {
     if (!m_editWindow) {
-        m_editWindow = new EditWindow(this);  // QMainWindowなので独立ウィンドウになる
+        m_editWindow = createSecondaryWindow<EditWindow>();
         connect(m_editWindow, &EditWindow::edited, this, [this] {
             // 名前/尺/進捗/並べ替えのどれが変わったか信号からは分からないため、project+全カットの
             // 安全側で扱う(絵コンテ/設定ボードは対象外なのでmarkAllDirtyは使わない)
@@ -3865,7 +3891,7 @@ void MainWindow::refreshEditWindowIfOpen() {
 
 void MainWindow::openProjectManagerWindow() {
     if (!m_projectManagerWindow) {
-        m_projectManagerWindow = new ProjectManagerWindow(this);  // QMainWindowなので独立ウィンドウになる
+        m_projectManagerWindow = createSecondaryWindow<ProjectManagerWindow>();
         connect(m_projectManagerWindow, &ProjectManagerWindow::edited, this, [this] {
             // 名前/尺/進捗/内容/セリフ/並べ替えのどれが変わったか信号からは分からないため安全側で
             // project+全カットをdirty扱いにする(絵コンテ/設定ボードは対象外)
@@ -3876,8 +3902,6 @@ void MainWindow::openProjectManagerWindow() {
         });
         connect(m_projectManagerWindow, &ProjectManagerWindow::cutActivated, this, [this](int index) {
             setActiveCut(index);
-            raise();
-            activateWindow();
         });
         // カット追加: セル/レイヤー初期化が要るので既存のaddCut()に委譲し、進行管理表を作り直す
         connect(m_projectManagerWindow, &ProjectManagerWindow::addCutRequested, this, [this] {
@@ -3911,7 +3935,7 @@ void MainWindow::openProjectManagerWindow() {
 
 void MainWindow::openShootingWindow() {
     if (!m_shootingWindow) {
-        m_shootingWindow = new ShootingWindow(this);  // QMainWindowなので独立ウィンドウになる
+        m_shootingWindow = createSecondaryWindow<ShootingWindow>();
         connect(m_shootingWindow, &ShootingWindow::edited, this, [this] {
             // シグナルにカット特定が無く、メインウィンドウのアクティブカットと撮影ウィンドウの
             // 表示中カットが一致するとは限らないため安全側(全カット)で扱う
@@ -4065,7 +4089,7 @@ void MainWindow::openExportDialog() {
 // プリビズ描画はGL(PrevizViewport)に依存するため、無ければ生成し、コンテキスト初期化のため
 // 未表示なら一度表示する(ユーザーがプリビズ出力を選んでいる文脈なので表示は許容)
 QImage MainWindow::renderPrevizExportImage(core::Cut& cut, size_t frame, int outW, int outH) {
-    if (!m_previzWindow) m_previzWindow = new PrevizWindow(this);
+    if (!m_previzWindow) m_previzWindow = createSecondaryWindow<PrevizWindow>();
     if (!m_previzWindow->isVisible()) {
         m_previzWindow->show();  // QOpenGLWidgetのGLコンテキスト初期化を確実にする
     }

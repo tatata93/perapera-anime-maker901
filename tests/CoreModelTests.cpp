@@ -145,6 +145,20 @@ TEST_CASE("Cel exposure sheet maps frames to drawings", "[core][sheet]") {
         REQUIRE(cel.exposure(5) == 2);
     }
 
+    SECTION("applyStepPattern can start after blank frames") {
+        cut.setFrameCount(8);
+        cel.setExposure(3, 0);
+        cel.applyStepPattern(2, 8, 3);
+        REQUIRE(cel.exposure(0) == -1);
+        REQUIRE(cel.exposure(1) == -1);
+        REQUIRE(cel.exposure(2) == -1);
+        REQUIRE(cel.exposure(3) == 0);
+        REQUIRE(cel.exposure(4) == 0);
+        REQUIRE(cel.exposure(5) == 1);
+        REQUIRE(cel.exposure(6) == 1);
+        REQUIRE(cel.exposure(7) == 2);
+    }
+
     SECTION("applyStepPattern: 動画が尽きたら以降は空欄") {
         cut.setFrameCount(8);
         cel.applyStepPattern(2, 8);  // 動画3枚×2コマ=6コマ分だけ割付
