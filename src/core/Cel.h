@@ -1,8 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Layer.h"
@@ -29,7 +31,11 @@ public:
     bool visible() const { return m_visible; }
     void setVisible(bool visible) { m_visible = visible; }
 
+    double opacity() const { return m_opacity; }
+    void setOpacity(double opacity) { m_opacity = std::clamp(opacity, 0.0, 1.0); }
+
     Layer& addLayer(std::string name);
+    Layer& duplicateLayer(size_t index, std::string name);
     void removeLayer(size_t index);
     // レイヤーをfrom位置からto位置へ移動する(範囲外の場合は何もしない)
     void moveLayer(size_t from, size_t to);
@@ -77,6 +83,7 @@ public:
     // セル内の全レイヤー・全フレームの非空ビットマップを新サイズへ中央基準で移し替える
     // (はみ出す部分は切り捨て、余白は透明)。paperWidth/HeightもnewW/newHへ更新する
     void resizePaper(int newW, int newH);
+    std::unique_ptr<Cel> clone(std::string name) const;
 
 private:
     std::string m_name;
@@ -84,6 +91,7 @@ private:
     std::vector<int> m_exposure;
     std::map<size_t, Vec2> m_positionKeys;
     bool m_visible = true;
+    double m_opacity = 1.0;
     int m_paperWidth = 0;   // 0=キャンバスサイズに従う
     int m_paperHeight = 0;  // 0=キャンバスサイズに従う
 };

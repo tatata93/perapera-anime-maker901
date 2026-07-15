@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
+#include <utility>
 
 #include "core/Compositor.h"
 #include "core/Project.h"
@@ -79,6 +80,62 @@ TEST_CASE("Layer role defaults to Normal and can be changed", "[core]") {
 
     layer.setRole(core::LayerRole::Correction);
     REQUIRE(layer.role() == core::LayerRole::Correction);
+}
+
+TEST_CASE("Cel and Layer opacity are clamped", "[core]") {
+    core::Cel cel("A");
+    core::Layer& layer = cel.addLayer("L");
+
+    cel.setOpacity(0.25);
+    layer.setOpacity(0.5);
+    REQUIRE(cel.opacity() == 0.25);
+    REQUIRE(layer.opacity() == 0.5);
+
+    cel.setOpacity(-1.0);
+    layer.setOpacity(2.0);
+    REQUIRE(cel.opacity() == 0.0);
+    REQUIRE(layer.opacity() == 1.0);
+}
+
+TEST_CASE("Cel and Layer duplication copies editable content", "[core]") {
+    core::Cut cut("Cut 1");
+    cut.setFrameCount(3);
+    core::Cel& cel = cut.addCel("A");
+    cel.setVisible(false);
+    cel.setOpacity(0.25);
+    cel.setExposure(1, 0);
+    cel.setPositionKey(2, {3.0f, 4.0f});
+    cel.setPaperSize(16, 12);
+
+    core::Layer& layer = cel.addLayer("L");
+    layer.setVisible(false);
+    layer.setOpacity(0.5);
+    layer.setRole(core::LayerRole::Correction);
+    core::Bitmap bitmap(2, 2);
+    bitmap.fill({0, 0, 0, 0});
+    bitmap.setPixel(1, 1, {10, 20, 30, 255});
+    layer.addFrame().bitmap() = std::move(bitmap);
+
+    core::Layer& layerCopy = cel.duplicateLayer(0, "L copy");
+    REQUIRE(cel.layerCount() == 2);
+    REQUIRE(layerCopy.name() == "L copy");
+    REQUIRE_FALSE(layerCopy.visible());
+    REQUIRE(layerCopy.opacity() == 0.5);
+    REQUIRE(layerCopy.role() == core::LayerRole::Correction);
+    REQUIRE(layerCopy.frameCount() == 1);
+    REQUIRE(layerCopy.frame(0).bitmap().pixel(1, 1).g == 20);
+
+    core::Cel& celCopy = cut.duplicateCel(0, "A copy");
+    REQUIRE(cut.celCount() == 2);
+    REQUIRE(celCopy.name() == "A copy");
+    REQUIRE_FALSE(celCopy.visible());
+    REQUIRE(celCopy.opacity() == 0.25);
+    REQUIRE(celCopy.exposure(1) == 0);
+    REQUIRE(celCopy.positionAt(2).x == 3.0f);
+    REQUIRE(celCopy.paperWidth() == 16);
+    REQUIRE(celCopy.layerCount() == 2);
+    REQUIRE(celCopy.layer(0).opacity() == 0.5);
+    REQUIRE(celCopy.layer(1).frame(0).bitmap().pixel(1, 1).b == 30);
 }
 
 TEST_CASE("Cel::moveLayer reorders layers", "[core]") {

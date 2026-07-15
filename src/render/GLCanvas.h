@@ -40,6 +40,7 @@ public:
     struct StackEntry {
         const core::Bitmap* bitmap = nullptr;
         QPointF offset;
+        double opacity = 1.0;
     };
 
     // レイヤースタック(下→上の描画順)と編集対象を設定する(所有権は持たない)。

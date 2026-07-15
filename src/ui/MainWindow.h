@@ -265,8 +265,10 @@ private:
     // レイヤーパネル操作
     void updateLayerPanel();
     void addLayerToActiveCel();
+    void duplicateLayer(int layerIndex);
     void removeActiveLayer();
     void moveActiveLayer(int delta);
+    void setLayerOpacity(int layerIndex, int opacityPercent);
 
     // カラーパレットパネル操作
     void updatePalettePanel();
@@ -302,11 +304,13 @@ private:
 
     // セル(Xsheetの列)管理操作
     void addCel();
+    void duplicateCel(int celIndex);
     void removeActiveCel();
     void renameActiveCel();
     void moveActiveCel(int delta);
     // セルの可視状態を指定値に設定する(XsheetパネルのトグルとCelPanelのチェックボックス両方から使う)
     void setCelVisibility(int celIndex, bool visible);
+    void setCelOpacity(int celIndex, int opacityPercent);
     // アクティブセルを切り替える(CelPanelでのセル選択・Xsheetのセルクリックで共通利用)
     void setActiveCel(int celIndex);
     // 引きセル: アクティブセルの用紙サイズ変更ダイアログを開く(CelPanelの「セルサイズ...」ボタンから)

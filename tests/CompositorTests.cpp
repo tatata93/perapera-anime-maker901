@@ -38,6 +38,34 @@ TEST_CASE("renderCutFrame composites paper, cels and layers", "[core][compositor
     REQUIRE(out.pixel(5, 5).g == 0);
 }
 
+TEST_CASE("renderCutFrame applies cel and layer opacity", "[core][compositor]") {
+    core::Cut cut("Cut 1");
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L");
+    addDrawingWithDot(layer, 1, 1, {255, 0, 0, 255});
+
+    cut.setFrameCount(1);
+    cel.setExposure(0, 0);
+
+    layer.setOpacity(0.5);
+    const auto layerHalf = core::renderCutFrame(cut, 0, 4, 4);
+    REQUIRE(layerHalf.pixel(1, 1).r == 255);
+    REQUIRE(layerHalf.pixel(1, 1).g == 128);
+    REQUIRE(layerHalf.pixel(1, 1).b == 128);
+
+    cel.setOpacity(0.5);
+    const auto combinedQuarter = core::renderCutFrame(cut, 0, 4, 4);
+    REQUIRE(combinedQuarter.pixel(1, 1).r == 255);
+    REQUIRE(combinedQuarter.pixel(1, 1).g == 191);
+    REQUIRE(combinedQuarter.pixel(1, 1).b == 191);
+
+    layer.setOpacity(0.0);
+    const auto hidden = core::renderCutFrame(cut, 0, 4, 4);
+    REQUIRE(hidden.pixel(1, 1).r == 255);
+    REQUIRE(hidden.pixel(1, 1).g == 255);
+    REQUIRE(hidden.pixel(1, 1).b == 255);
+}
+
 TEST_CASE("renderCutFrame respects exposure and empty frames", "[core][compositor]") {
     core::Cut cut("Cut 1");
     core::Cel& cel = cut.addCel("A");

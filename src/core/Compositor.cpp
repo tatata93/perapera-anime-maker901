@@ -153,7 +153,9 @@ void applyEffectWithMask(Bitmap& image, const Effect& effect, size_t frame, int 
 
 // srcをdst(不透明前提)へ、(offsetX, offsetY)だけずらしてsrc-over合成する。
 // はみ出す部分はクリップされる(タップ/ペグ移動・引きセル対応)
-void blendOver(Bitmap& dst, const Bitmap& src, int offsetX, int offsetY) {
+void blendOver(Bitmap& dst, const Bitmap& src, int offsetX, int offsetY, double opacity = 1.0) {
+    if (opacity <= 0.0) return;
+    opacity = std::clamp(opacity, 0.0, 1.0);
     const int x0 = std::max(0, offsetX);
     const int y0 = std::max(0, offsetY);
     const int x1 = std::min(dst.width(), src.width() + offsetX);
@@ -162,11 +164,11 @@ void blendOver(Bitmap& dst, const Bitmap& src, int offsetX, int offsetY) {
         for (int x = x0; x < x1; ++x) {
             const Bitmap::Pixel s = src.pixel(x - offsetX, y - offsetY);
             if (s.a == 0) continue;
-            if (s.a == 255) {
+            if (s.a == 255 && opacity >= 0.999) {
                 dst.setPixel(x, y, {s.r, s.g, s.b, 255});
                 continue;
             }
-            const float a = s.a / 255.0f;
+            const float a = static_cast<float>((s.a / 255.0) * opacity);
             Bitmap::Pixel d = dst.pixel(x, y);
             d.r = static_cast<uint8_t>(std::lround(s.r * a + d.r * (1.0f - a)));
             d.g = static_cast<uint8_t>(std::lround(s.g * a + d.g * (1.0f - a)));
@@ -181,7 +183,9 @@ void blendOver(Bitmap& dst, const Bitmap& src, int offsetX, int offsetY) {
 // 透明キャンバスへ重ねると縁が黒へ寄って不正になる。こちらは出力アルファ
 // (oa = sa + da*(1-sa))を正しく計算し、色は非プリマルチプライドで合成する(透明PNG・
 // 別レイヤー(プリビズ等)の上への重ね合成用)。
-void blendOverTransparent(Bitmap& dst, const Bitmap& src, int offsetX, int offsetY) {
+void blendOverTransparent(Bitmap& dst, const Bitmap& src, int offsetX, int offsetY, double opacity = 1.0) {
+    if (opacity <= 0.0) return;
+    opacity = std::clamp(opacity, 0.0, 1.0);
     const int x0 = std::max(0, offsetX);
     const int y0 = std::max(0, offsetY);
     const int x1 = std::min(dst.width(), src.width() + offsetX);
@@ -191,7 +195,7 @@ void blendOverTransparent(Bitmap& dst, const Bitmap& src, int offsetX, int offse
             const Bitmap::Pixel s = src.pixel(x - offsetX, y - offsetY);
             if (s.a == 0) continue;
             const Bitmap::Pixel d = dst.pixel(x, y);
-            const float sa = s.a / 255.0f;
+            const float sa = static_cast<float>((s.a / 255.0) * opacity);
             const float da = d.a / 255.0f;
             const float oa = sa + da * (1.0f - sa);
             if (oa <= 0.0f) {
@@ -210,6 +214,19 @@ void blendOverTransparent(Bitmap& dst, const Bitmap& src, int offsetX, int offse
 // カメラフレーム(画面に写る範囲)でsrcをクロップ+バイリニア補間でリサンプルする。
 // 出力は同じwidth×height。切り出し矩形はキャンバス外にはみ出すことがあり、
 // その場合は紙(白)として扱う
+void multiplyAlpha(Bitmap& image, double opacity) {
+    if (image.isEmpty()) return;
+    opacity = std::clamp(opacity, 0.0, 1.0);
+    if (opacity >= 0.999) return;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            Bitmap::Pixel p = image.pixel(x, y);
+            p.a = static_cast<uint8_t>(std::lround(p.a * opacity));
+            image.setPixel(x, y, p);
+        }
+    }
+}
+
 Bitmap applyCameraFrame(const Bitmap& src, const CameraFrameState& cam, int width, int height) {
     const double cropW = std::max(1.0, width * cam.scale);
     const double cropH = std::max(1.0, height * cam.scale);
@@ -266,6 +283,7 @@ bool celHasVisibleColorTrace(const Cel& cel, int drawing) {
     for (size_t li = 0; li < cel.layerCount(); ++li) {
         const Layer& layer = cel.layer(li);
         if (!layer.visible()) continue;
+        if (layer.opacity() <= 0.0) continue;
         if (layer.role() != LayerRole::ColorTrace) continue;
         if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
         if (!layer.frame(static_cast<size_t>(drawing)).bitmap().isEmpty()) return true;
@@ -281,6 +299,7 @@ std::vector<bool> buildColorTraceMask(const Cel& cel, int drawing, int celW, int
     for (size_t li = 0; li < cel.layerCount(); ++li) {
         const Layer& layer = cel.layer(li);
         if (!layer.visible()) continue;  // 非表示のトレス線は同化対象にしない(buildCelCompositeの除外と揃える)
+        if (layer.opacity() <= 0.0) continue;
         if (layer.role() != LayerRole::ColorTrace) continue;
         if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
         const Bitmap& src = layer.frame(static_cast<size_t>(drawing)).bitmap();
@@ -346,19 +365,24 @@ void dissolveColorTraceLines(Bitmap& celImage, const std::vector<bool>& traceMas
 // レイヤーが1枚も無ければ空のBitmapを返す。デジタル合成(セル別エフェクト適用)と
 // クラシック撮影(マルチプレーンのアートワーク)の両方から使う共通処理
 Bitmap buildCelComposite(const Cel& cel, int drawing, const RenderOptions& options) {
-    std::vector<const Bitmap*> visibleLayers;
+    struct LayerCompositeSource {
+        const Bitmap* bitmap = nullptr;
+        double opacity = 1.0;
+    };
+    std::vector<LayerCompositeSource> visibleLayers;
     int celW = 0;
     int celH = 0;
     for (size_t li = 0; li < cel.layerCount(); ++li) {
         const Layer& layer = cel.layer(li);
         if (!layer.visible()) continue;
+        if (layer.opacity() <= 0.0) continue;
         if (layer.role() == LayerRole::ColorTrace && !options.includeColorTrace) continue;
         if (layer.role() == LayerRole::Correction && !options.includeCorrection) continue;
         if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
 
         const Bitmap& src = layer.frame(static_cast<size_t>(drawing)).bitmap();
         if (src.isEmpty()) continue;
-        visibleLayers.push_back(&src);
+        visibleLayers.push_back({&src, layer.opacity()});
         celW = std::max(celW, src.width());
         celH = std::max(celH, src.height());
     }
@@ -366,7 +390,7 @@ Bitmap buildCelComposite(const Cel& cel, int drawing, const RenderOptions& optio
 
     Bitmap celImage(celW, celH);
     celImage.fill({0, 0, 0, 0});
-    for (const Bitmap* src : visibleLayers) blendOver(celImage, *src, 0, 0);
+    for (const LayerCompositeSource& src : visibleLayers) blendOverTransparent(celImage, *src.bitmap, 0, 0, src.opacity);
 
     // 色トレス線を除外した合成で、かつこのセルに実際に色トレス線があるときだけ同化処理を行う
     // (線が無いセルは従来どおり一切変化しない)
@@ -389,11 +413,19 @@ Bitmap buildBacklightCelMaskSource(const Cut& cut, int celIndex, int layerIndex,
     const Cel& cel = cut.cel(static_cast<size_t>(celIndex));
     const int drawing = cel.exposure(frame);
     if (drawing < 0) return Bitmap();  // このコマに絵が無い
-    if (layerIndex < 0) return buildCelComposite(cel, drawing, options);  // セル全体(可視レイヤー合成)
+    if (cel.opacity() <= 0.0) return Bitmap();
+    if (layerIndex < 0) {
+        Bitmap mask = buildCelComposite(cel, drawing, options);  // セル全体(可視レイヤー合成)
+        multiplyAlpha(mask, cel.opacity());
+        return mask;
+    }
     if (static_cast<size_t>(layerIndex) >= cel.layerCount()) return Bitmap();
     const Layer& layer = cel.layer(static_cast<size_t>(layerIndex));
+    if (!layer.visible() || layer.opacity() <= 0.0) return Bitmap();
     if (static_cast<size_t>(drawing) >= layer.frameCount()) return Bitmap();
-    return layer.frame(static_cast<size_t>(drawing)).bitmap();
+    Bitmap mask = layer.frame(static_cast<size_t>(drawing)).bitmap();
+    multiplyAlpha(mask, cel.opacity() * layer.opacity());
+    return mask;
 }
 
 // 段(マルチプレーンの1つの平面)に割り付いているセルの物理配置(T光セルマスク投影に使う)
@@ -475,6 +507,7 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
         if (p.celIndex < 0 || static_cast<size_t>(p.celIndex) >= cut.celCount()) continue;
         const Cel& cel = cut.cel(static_cast<size_t>(p.celIndex));
         if (!cel.visible()) continue;
+        if (cel.opacity() <= 0.0) continue;
         const int drawing = cel.exposure(frame);
         if (drawing < 0) continue;  // このコマにセルなし
 
@@ -497,6 +530,7 @@ Bitmap renderCutFrameClassic(const Cut& cut, size_t frame, int width, int height
             if (effect.enabled && effect.activeAt(frame) && effect.targetCel == p.celIndex)
                 applyEffectWithMask(celImage, effect, frame, celOffsetX, celOffsetY, s);
         }
+        multiplyAlpha(celImage, cel.opacity());
 
         composites.push_back(std::move(celImage));
         MultiplanePlane mp;
@@ -668,6 +702,7 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
         if (options.onlyCel >= 0 && static_cast<size_t>(options.onlyCel) != ci) continue;
         const Cel& cel = cut.cel(ci);
         if (!cel.visible()) continue;
+        if (cel.opacity() <= 0.0) continue;
         const int drawing = cel.exposure(frame);
         if (drawing < 0) continue;  // このコマにセルなし
 
@@ -698,16 +733,18 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
             for (size_t li = 0; li < cel.layerCount(); ++li) {
                 const Layer& layer = cel.layer(li);
                 if (!layer.visible()) continue;
+                if (layer.opacity() <= 0.0) continue;
                 if (layer.role() == LayerRole::ColorTrace && !options.includeColorTrace) continue;
                 if (layer.role() == LayerRole::Correction && !options.includeCorrection) continue;
                 if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
 
                 const Bitmap& src = layer.frame(static_cast<size_t>(drawing)).bitmap();
                 if (src.isEmpty()) continue;
+                const double opacity = cel.opacity() * layer.opacity();
                 if (options.transparentBackground)
-                    blendOverTransparent(out, src, offsetX, offsetY);
+                    blendOverTransparent(out, src, offsetX, offsetY, opacity);
                 else
-                    blendOver(out, src, offsetX, offsetY);
+                    blendOver(out, src, offsetX, offsetY, opacity);
             }
         } else {
             // エフェクトあり(またはプロキシ): セルのレイヤーをまずセル自身の座標系(0,0起点)の
@@ -719,9 +756,9 @@ Bitmap renderCutFrame(const Cut& cut, size_t frame, int width, int height, const
                 for (const Effect* effect : celEffects)
                     applyEffectWithMask(celImage, *effect, frame, offsetX, offsetY, s);
                 if (options.transparentBackground)
-                    blendOverTransparent(out, celImage, outOffsetX, outOffsetY);
+                    blendOverTransparent(out, celImage, outOffsetX, outOffsetY, cel.opacity());
                 else
-                    blendOver(out, celImage, outOffsetX, outOffsetY);
+                    blendOver(out, celImage, outOffsetX, outOffsetY, cel.opacity());
             }
         }
     }

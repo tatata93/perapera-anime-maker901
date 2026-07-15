@@ -461,6 +461,7 @@ void MainWindow::updateCanvasLayers() {
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
         core::Cel& cel = cut.cel(ci);
         if (!cel.visible()) continue;
+        if (cel.opacity() <= 0.0) continue;
         const int drawing = cel.exposure(m_currentFrame);
         if (drawing < 0) continue;  // このコマにセルなし
         const bool isActiveCel = (ci == m_activeCel);
@@ -473,14 +474,15 @@ void MainWindow::updateCanvasLayers() {
             core::Layer& layer = cel.layer(li);
             if (static_cast<size_t>(drawing) >= layer.frameCount()) continue;
             const core::Bitmap* bitmap = &layer.frame(static_cast<size_t>(drawing)).bitmap();
+            const double opacity = cel.opacity() * layer.opacity();
 
             // 仕上げ表示中は色トレス線・作監修正レイヤーを隠す(最終画プレビュー)
             const bool hiddenByCleanView =
                 m_cleanView && (layer.role() == core::LayerRole::ColorTrace || layer.role() == core::LayerRole::Correction);
-            if (layer.visible() && !hiddenByCleanView) {
-                stack.push_back({bitmap, offset});
+            if (layer.visible() && opacity > 0.0 && !hiddenByCleanView) {
+                stack.push_back({bitmap, offset, opacity});
                 fillBoundary.push_back(bitmap);  // 境界はセルローカル座標(同一セル内で整合)
-            } else if (isActiveCel && layer.role() == core::LayerRole::ColorTrace) {
+            } else if (isActiveCel && layer.role() == core::LayerRole::ColorTrace && opacity > 0.0) {
                 // 塗分け線: アクティブセルの色トレス線は非表示でも塗りつぶし境界として効かせる
                 fillBoundary.push_back(bitmap);
             }
@@ -929,19 +931,24 @@ void MainWindow::setupPanels() {
         m_activeLayer = static_cast<size_t>(index);
         updateCanvasLayers();
         updateOnionSkin();
+        updateLayerPanel();
     });
     connect(m_layerPanel, &LayerPanel::visibilityChanged, this, [this](int index, bool visible) {
         core::Cel& cel = activeCel();
         if (static_cast<size_t>(index) >= cel.layerCount()) return;
         cel.layer(static_cast<size_t>(index)).setVisible(visible);
         updateCanvasLayers();
+        updateOnionSkin();
+        updateLayerPanel();
         markCutDirty(activeCut());
         updateWindowTitle();
     });
     connect(m_layerPanel, &LayerPanel::addRequested, this, &MainWindow::addLayerToActiveCel);
+    connect(m_layerPanel, &LayerPanel::duplicateRequested, this, &MainWindow::duplicateLayer);
     connect(m_layerPanel, &LayerPanel::removeRequested, this, &MainWindow::removeActiveLayer);
     connect(m_layerPanel, &LayerPanel::moveUpRequested, this, [this] { moveActiveLayer(+1); });
     connect(m_layerPanel, &LayerPanel::moveDownRequested, this, [this] { moveActiveLayer(-1); });
+    connect(m_layerPanel, &LayerPanel::opacityChanged, this, &MainWindow::setLayerOpacity);
     connect(m_layerPanel, &LayerPanel::renameRequested, this, [this](int index) {
         // レイヤー名のダブルクリックによる変更(現在名を初期値にし、空欄ならキャンセル扱い)
         core::Cel& cel = activeCel();
@@ -1057,6 +1064,12 @@ void MainWindow::setupPanels() {
     connect(m_celPanel, &CelPanel::visibilityChanged, this, [this](int index, bool visible) {
         setCelVisibility(index, visible);
     });
+    connect(m_celPanel, &CelPanel::opacityChanged, this, &MainWindow::setCelOpacity);
+    connect(m_celPanel, &CelPanel::addRequested, this, &MainWindow::addCel);
+    connect(m_celPanel, &CelPanel::duplicateRequested, this, &MainWindow::duplicateCel);
+    connect(m_celPanel, &CelPanel::removeRequested, this, &MainWindow::removeActiveCel);
+    connect(m_celPanel, &CelPanel::moveUpRequested, this, [this] { moveActiveCel(+1); });
+    connect(m_celPanel, &CelPanel::moveDownRequested, this, [this] { moveActiveCel(-1); });
     connect(m_celPanel, &CelPanel::celSizeRequested, this, &MainWindow::openCelSizeDialog);
 
     m_tapPanel = new TapPanel(this);
@@ -1154,6 +1167,7 @@ void MainWindow::updateLayerPanel() {
     core::Cel& cel = activeCel();
     QStringList names;
     QList<bool> visible;
+    QList<int> opacity;
     for (size_t li = 0; li < cel.layerCount(); ++li) {
         const core::Layer& layer = cel.layer(li);
         QString displayName = QString::fromStdString(layer.name());
@@ -1171,8 +1185,9 @@ void MainWindow::updateLayerPanel() {
         }
         names.append(displayName);
         visible.append(layer.visible());
+        opacity.append(static_cast<int>(std::lround(std::clamp(layer.opacity(), 0.0, 1.0) * 100.0)));
     }
-    m_layerPanel->setLayers(names, visible, static_cast<int>(m_activeLayer));
+    m_layerPanel->setLayers(names, visible, opacity, static_cast<int>(m_activeLayer));
     m_layerPanel->setWindowTitle(tr("レイヤー - セル %1").arg(QString::fromStdString(cel.name())));
 }
 
@@ -1185,6 +1200,25 @@ void MainWindow::addLayerToActiveCel() {
         layer.addFrame().bitmap() = makeTransparentCelForCel(cel, canvasWidth(), canvasHeight());  // 既存レイヤーとコマ数(・用紙サイズ)を揃える
     }
     m_activeLayer = cel.layerCount() - 1;
+    m_commands.clear();
+    m_canvas->clearTextureCache();
+    markCutDirty(activeCut());
+    updateCanvasLayers();
+    updateOnionSkin();
+    updateLayerPanel();
+    updateWindowTitle();
+}
+
+void MainWindow::duplicateLayer(int layerIndex) {
+    if (m_playing) return;
+    core::Cel& cel = activeCel();
+    if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= cel.layerCount()) return;
+
+    const core::Layer& source = cel.layer(static_cast<size_t>(layerIndex));
+    const QString name = tr("%1 コピー").arg(QString::fromStdString(source.name()));
+    cel.duplicateLayer(static_cast<size_t>(layerIndex), name.toStdString());
+    m_activeLayer = static_cast<size_t>(layerIndex + 1);
+
     m_commands.clear();
     m_canvas->clearTextureCache();
     markCutDirty(activeCut());
@@ -1219,6 +1253,20 @@ void MainWindow::moveActiveLayer(int delta) {
     m_activeLayer = static_cast<size_t>(to);
     m_commands.clear();
     m_canvas->clearTextureCache();
+    markCutDirty(activeCut());
+    updateCanvasLayers();
+    updateOnionSkin();
+    updateLayerPanel();
+    updateWindowTitle();
+}
+
+void MainWindow::setLayerOpacity(int layerIndex, int opacityPercent) {
+    if (m_playing) return;
+    core::Cel& cel = activeCel();
+    if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= cel.layerCount()) return;
+
+    cel.layer(static_cast<size_t>(layerIndex)).setOpacity(std::clamp(opacityPercent, 0, 100) / 100.0);
+
     markCutDirty(activeCut());
     updateCanvasLayers();
     updateOnionSkin();
@@ -1289,13 +1337,15 @@ void MainWindow::updateCelPanel() {
 
     QStringList celNames;
     QList<bool> celVisible;
+    QList<int> celOpacity;
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
         const core::Cel& cel = cut.cel(ci);
         celNames.append(QString::fromStdString(cel.name()));
         celVisible.append(cel.visible());
+        celOpacity.append(static_cast<int>(std::lround(std::clamp(cel.opacity(), 0.0, 1.0) * 100.0)));
     }
 
-    m_celPanel->setCels(celNames, celVisible, static_cast<int>(m_activeCel));
+    m_celPanel->setCels(celNames, celVisible, celOpacity, static_cast<int>(m_activeCel));
 }
 
 // アクティブセルの位置キー一覧(コマ昇順)をタップパネルに反映する
@@ -1362,6 +1412,27 @@ void MainWindow::addCel() {
     m_activeCel = static_cast<size_t>(index);
 
     // 新規セル・レイヤー・動画は既存のBitmapに影響しないためUndo履歴/テクスチャキャッシュの破棄は不要
+    markCutDirty(cut);
+    updateCanvasLayers();
+    updateXsheetPanel();
+    updateLayerPanel();
+    updateFrameLabel();
+    updateWindowTitle();
+}
+
+void MainWindow::duplicateCel(int celIndex) {
+    if (m_playing) return;
+    core::Cut& cut = activeCut();
+    if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount()) return;
+
+    const core::Cel& source = cut.cel(static_cast<size_t>(celIndex));
+    const QString name = tr("%1 コピー").arg(QString::fromStdString(source.name()));
+    core::Cel& copy = cut.duplicateCel(static_cast<size_t>(celIndex), name.toStdString());
+    m_activeCel = static_cast<size_t>(celIndex + 1);
+    m_activeLayer = copy.layerCount() == 0 ? 0 : std::min(m_activeLayer, copy.layerCount() - 1);
+
+    m_commands.clear();
+    m_canvas->clearTextureCache();
     markCutDirty(cut);
     updateCanvasLayers();
     updateXsheetPanel();
@@ -1562,6 +1633,22 @@ void MainWindow::setCelVisibility(int celIndex, bool visible) {
     markCutDirty(cut);
     updateCanvasLayers();
     updateXsheetPanel();  // 末尾でupdateCelPanel()も呼ばれる
+    updateLayerPanel();
+    updateFrameLabel();
+    updateWindowTitle();
+}
+
+void MainWindow::setCelOpacity(int celIndex, int opacityPercent) {
+    if (m_playing) return;
+    core::Cut& cut = activeCut();
+    if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount()) return;
+
+    cut.cel(static_cast<size_t>(celIndex)).setOpacity(std::clamp(opacityPercent, 0, 100) / 100.0);
+
+    markCutDirty(cut);
+    updateCanvasLayers();
+    updateOnionSkin();
+    updateXsheetPanel();
     updateLayerPanel();
     updateFrameLabel();
     updateWindowTitle();

@@ -43,6 +43,7 @@ uniform float uUnderlayMix;
 uniform float uSolidWhite;
 uniform float uUseSolidColor;
 uniform vec4 uSolidColor;
+uniform float uOpacity;
 void main() {
     if (uUseSolidColor > 0.5) {
         gl_FragColor = uSolidColor;
@@ -62,7 +63,7 @@ void main() {
         float coverage = tex.a * darkness * uOnionStrength;
         gl_FragColor = vec4(mix(vec3(1.0), uTint, coverage), 1.0);
     } else {
-        gl_FragColor = tex;
+        gl_FragColor = vec4(tex.rgb, tex.a * uOpacity);
     }
 }
 )";
@@ -105,7 +106,7 @@ void GLCanvas::setLayerStack(std::vector<StackEntry> stack, core::Bitmap* active
 void GLCanvas::setLayerStack(std::vector<const core::Bitmap*> stack, core::Bitmap* active) {
     std::vector<StackEntry> entries;
     entries.reserve(stack.size());
-    for (const core::Bitmap* bitmap : stack) entries.push_back({bitmap, QPointF()});
+    for (const core::Bitmap* bitmap : stack) entries.push_back({bitmap, QPointF(), 1.0});
     setLayerStack(std::move(entries), active, QPointF());
 }
 
@@ -412,6 +413,7 @@ void GLCanvas::paintGL() {
     m_program->setAttributeBuffer(1, GL_FLOAT, 2 * sizeof(float), 2, 4 * sizeof(float));
     glActiveTexture(GL_TEXTURE0);
     m_program->setUniformValue("uTex", 0);
+    m_program->setUniformValue("uOpacity", 1.0f);
 
     // 画像座標の矩形をビュー変換(ズーム/回転/パン込み)でNDCへ落とし、クアッドを描く。
     // テクスチャの行0=画像上端なので、上端頂点にv=0を割り当てる
@@ -453,10 +455,12 @@ void GLCanvas::paintGL() {
     for (const StackEntry& entry : m_layerStack) {
         QOpenGLTexture* tex = getOrCreateTexture(entry.bitmap);
         if (!tex) continue;
+        m_program->setUniformValue("uOpacity", static_cast<float>(std::clamp(entry.opacity, 0.0, 1.0)));
         tex->bind();
         drawQuad(bitmapRect(entry.bitmap, entry.offset));
         tex->release();
     }
+    m_program->setUniformValue("uOpacity", 1.0f);
     glDisable(GL_BLEND);
 
     // ライトテーブル(任意動画の透かし表示): オニオンと同じ乗算方式で青系固定色。

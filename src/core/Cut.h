@@ -95,6 +95,7 @@ public:
     void setFrameCount(size_t count);
 
     Cel& addCel(std::string name);
+    Cel& duplicateCel(size_t index, std::string name);
     void removeCel(size_t index);
     // セルをfrom位置からto位置へ移動する(範囲外の場合は何もしない)
     void moveCel(size_t from, size_t to);

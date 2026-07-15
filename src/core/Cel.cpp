@@ -1,6 +1,7 @@
 #include "Cel.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace core {
 
@@ -27,6 +28,12 @@ void copyCentered(const Bitmap& src, Bitmap& dst) {
 Layer& Cel::addLayer(std::string name) {
     m_layers.push_back(std::make_unique<Layer>(std::move(name)));
     return *m_layers.back();
+}
+
+Layer& Cel::duplicateLayer(size_t index, std::string name) {
+    auto copy = m_layers.at(index)->clone(std::move(name));
+    auto it = m_layers.insert(m_layers.begin() + static_cast<ptrdiff_t>(index + 1), std::move(copy));
+    return **it;
 }
 
 void Cel::removeLayer(size_t index) {
@@ -89,6 +96,20 @@ void Cel::resizePaper(int newW, int newH) {
     }
     m_paperWidth = newW;
     m_paperHeight = newH;
+}
+
+std::unique_ptr<Cel> Cel::clone(std::string name) const {
+    auto copy = std::make_unique<Cel>(std::move(name));
+    copy->m_visible = m_visible;
+    copy->m_opacity = m_opacity;
+    copy->m_exposure = m_exposure;
+    copy->m_positionKeys = m_positionKeys;
+    copy->m_paperWidth = m_paperWidth;
+    copy->m_paperHeight = m_paperHeight;
+    for (const auto& layer : m_layers) {
+        copy->m_layers.push_back(layer->clone(layer->name()));
+    }
+    return copy;
 }
 
 }  // namespace core

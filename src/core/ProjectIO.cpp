@@ -383,6 +383,7 @@ bool buildCutJson(const Cut& cut, json* jCutOut, std::vector<unsigned char>* blo
             }
             jLayers.push_back({{"name", layer.name()},
                                {"visible", layer.visible()},
+                               {"opacity", layer.opacity()},
                                {"role", layerRoleToString(layer.role())},
                                {"frames", std::move(jFrames)}});
         }
@@ -393,6 +394,7 @@ bool buildCutJson(const Cut& cut, json* jCutOut, std::vector<unsigned char>* blo
         }
         json jCelEntry = {{"name", cel.name()},
                           {"visible", cel.visible()},
+                          {"opacity", cel.opacity()},
                           {"exposure", cel.exposures()},
                           {"positionKeys", std::move(jPositionKeys)},
                           {"layers", std::move(jLayers)}};
@@ -555,6 +557,7 @@ bool writeCutFile(const Cut& cut, const std::filesystem::path& path, std::string
 bool loadLayerFrames(Layer& layer, const json& jLayer, const unsigned char* blobBase, uint64_t blobTotal,
                      std::string* errorOut) {
     layer.setVisible(jLayer.value("visible", true));
+    layer.setOpacity(jLayer.value("opacity", 1.0));
     layer.setRole(layerRoleFromString(jLayer.value("role", std::string("normal"))));
     for (const json& jFrame : jLayer.at("frames")) {
         Frame& frame = layer.addFrame();
@@ -571,6 +574,7 @@ bool parseCutJson(const json& jCut, Cut& cut, const unsigned char* blobBase, uin
     for (const json& jCel : jCut.at("cels")) {
         Cel& cel = cut.addCel(jCel.at("name").get<std::string>());
         cel.setVisible(jCel.value("visible", true));
+        cel.setOpacity(jCel.value("opacity", 1.0));
         // 用紙サイズ(引きセル)。欠落時は0(キャンバスサイズに従う既定)のまま
         cel.setPaperSize(jCel.value("paperWidth", 0), jCel.value("paperHeight", 0));
         for (const json& jLayer : jCel.at("layers")) {

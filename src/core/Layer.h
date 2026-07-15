@@ -1,7 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Frame.h"
@@ -26,6 +28,9 @@ public:
     bool visible() const { return m_visible; }
     void setVisible(bool visible) { m_visible = visible; }
 
+    double opacity() const { return m_opacity; }
+    void setOpacity(double opacity) { m_opacity = std::clamp(opacity, 0.0, 1.0); }
+
     // レイヤー種別(既定Normal)
     LayerRole role() const { return m_role; }
     void setRole(LayerRole role) { m_role = role; }
@@ -38,10 +43,13 @@ public:
     Frame& frame(size_t index) { return *m_frames.at(index); }
     const Frame& frame(size_t index) const { return *m_frames.at(index); }
 
+    std::unique_ptr<Layer> clone(std::string name) const;
+
 private:
     std::string m_name;
     std::vector<std::unique_ptr<Frame>> m_frames;
     bool m_visible = true;
+    double m_opacity = 1.0;
     LayerRole m_role = LayerRole::Normal;
 };
 

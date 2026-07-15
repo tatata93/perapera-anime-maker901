@@ -1,6 +1,7 @@
 #include "Cut.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace core {
 
@@ -16,6 +17,13 @@ Cel& Cut::addCel(std::string name) {
     m_cels.push_back(std::make_unique<Cel>(std::move(name)));
     m_cels.back()->resizeExposure(m_frameCount);
     return *m_cels.back();
+}
+
+Cel& Cut::duplicateCel(size_t index, std::string name) {
+    auto copy = m_cels.at(index)->clone(std::move(name));
+    copy->resizeExposure(m_frameCount);
+    auto it = m_cels.insert(m_cels.begin() + static_cast<ptrdiff_t>(index + 1), std::move(copy));
+    return **it;
 }
 
 void Cut::removeCel(size_t index) {

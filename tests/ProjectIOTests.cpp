@@ -18,8 +18,10 @@ core::Project makeSampleProject() {
     cut.setDialogue("待って!");
     core::Cel& cel = cut.addCel("Cel A");
     cel.setVisible(false);  // 属性の往復も確認する
+    cel.setOpacity(0.5);
     core::Layer& layer = cel.addLayer("Layer 1");
     layer.setVisible(false);
+    layer.setOpacity(0.25);
 
     core::Layer& colorTraceLayer = cel.addLayer("Layer 2");
     colorTraceLayer.setRole(core::LayerRole::ColorTrace);
@@ -72,11 +74,13 @@ TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
     const core::Cel& cel = loaded->scene(0).cut(0).cel(0);
     REQUIRE(cel.name() == "Cel A");
     REQUIRE_FALSE(cel.visible());
+    REQUIRE(cel.opacity() == 0.5);
 
     REQUIRE(cel.layerCount() == 3);
     const core::Layer& layer = cel.layer(0);
     REQUIRE(layer.name() == "Layer 1");
     REQUIRE_FALSE(layer.visible());
+    REQUIRE(layer.opacity() == 0.25);
     REQUIRE(layer.role() == core::LayerRole::Normal);
     REQUIRE(layer.frameCount() == 3);
 
