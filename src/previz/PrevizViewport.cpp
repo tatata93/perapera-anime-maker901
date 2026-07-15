@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 
 #include "previz/StlLoader.h"
 
@@ -36,6 +37,22 @@ QMatrix4x4 modelMatrixFromTransform(const core::PrevizTransform& tf) {
     m.rotate(tf.rotationDeg.z, 0, 0, 1);
     m.scale(tf.scale.x, tf.scale.y, tf.scale.z);
     return m;
+}
+
+std::vector<uint32_t> triangleWireIndices(const uint32_t* indices, size_t count) {
+    std::vector<uint32_t> wire;
+    wire.reserve(count * 2);
+    for (size_t i = 0; i + 2 < count; i += 3) {
+        const uint32_t a = indices[i];
+        const uint32_t b = indices[i + 1];
+        const uint32_t c = indices[i + 2];
+        wire.insert(wire.end(), {a, b, b, c, c, a});
+    }
+    return wire;
+}
+
+std::vector<uint32_t> triangleWireIndices(const std::vector<uint32_t>& indices) {
+    return triangleWireIndices(indices.data(), indices.size());
 }
 
 const char* kCompatVertexShader = R"(#version 120
@@ -371,6 +388,12 @@ void PrevizViewport::setViewMode(ViewMode mode) {
     update();
 }
 
+void PrevizViewport::setWireframeEnabled(bool enabled) {
+    if (m_wireframeEnabled == enabled) return;
+    m_wireframeEnabled = enabled;
+    update();
+}
+
 void PrevizViewport::setSelectedModel(int index) {
     m_selectedModel = index;
     update();
@@ -574,6 +597,13 @@ void PrevizViewport::buildPlaceholderCube() {
     m_placeholder.ibo->allocate(idx, sizeof(idx));
     m_placeholder.ibo->release();
     m_placeholder.indexCount = 36;
+    const std::vector<uint32_t> wireIdx = triangleWireIndices(idx, sizeof(idx) / sizeof(idx[0]));
+    m_placeholder.wireIbo = std::make_unique<QOpenGLBuffer>(QOpenGLBuffer::IndexBuffer);
+    m_placeholder.wireIbo->create();
+    m_placeholder.wireIbo->bind();
+    m_placeholder.wireIbo->allocate(wireIdx.data(), static_cast<int>(wireIdx.size() * sizeof(uint32_t)));
+    m_placeholder.wireIbo->release();
+    m_placeholder.wireIndexCount = static_cast<int>(wireIdx.size());
     m_placeholder.color = QVector4D(0.55f, 0.65f, 0.85f, 1.0f);
 }
 
@@ -612,6 +642,13 @@ PrevizViewport::GpuMesh* PrevizViewport::getOrLoadMesh(const std::string& filePa
             prim.ibo->allocate(src.indices.data(), static_cast<int>(src.indices.size() * sizeof(uint32_t)));
             prim.ibo->release();
             prim.indexCount = static_cast<int>(src.indices.size());
+            const std::vector<uint32_t> wireIndices = triangleWireIndices(src.indices);
+            prim.wireIbo = std::make_unique<QOpenGLBuffer>(QOpenGLBuffer::IndexBuffer);
+            prim.wireIbo->create();
+            prim.wireIbo->bind();
+            prim.wireIbo->allocate(wireIndices.data(), static_cast<int>(wireIndices.size() * sizeof(uint32_t)));
+            prim.wireIbo->release();
+            prim.wireIndexCount = static_cast<int>(wireIndices.size());
             prim.color = QVector4D(src.color[0], src.color[1], src.color[2], src.color[3]);
             mesh.primitives.push_back(std::move(prim));
         }
@@ -705,7 +742,7 @@ void PrevizViewport::drawPrimitive(
 
     m_program->setUniformValue(
         "uUnlit",
-        unlit ? 1.0f : 0.0f
+        (unlit || (m_wireframeEnabled && prim.wireIbo)) ? 1.0f : 0.0f
     );
 
     if (!prim.vbo->bind()) {
@@ -731,7 +768,20 @@ void PrevizViewport::drawPrimitive(
         6 * sizeof(float)
     );
 
-    if (prim.ibo &&
+    if (m_wireframeEnabled &&
+        prim.wireIbo &&
+        prim.wireIbo->isCreated() &&
+        prim.wireIbo->bind()) {
+        glLineWidth(1.35f);
+        glDrawElements(
+            GL_LINES,
+            prim.wireIndexCount,
+            GL_UNSIGNED_INT,
+            nullptr
+        );
+        glLineWidth(1.0f);
+        prim.wireIbo->release();
+    } else if (prim.ibo &&
         prim.ibo->isCreated() &&
         prim.ibo->bind()) {
         glDrawElements(

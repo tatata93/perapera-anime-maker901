@@ -45,6 +45,9 @@ public:
     void setViewMode(ViewMode mode);
     ViewMode viewMode() const { return m_viewMode; }
 
+    void setWireframeEnabled(bool enabled);
+    bool wireframeEnabled() const { return m_wireframeEnabled; }
+
     // ドラッグ移動の対象モデル(モデル一覧の選択。-1=なし)
     void setSelectedModel(int index);
 
@@ -74,7 +77,9 @@ private:
     struct GpuPrimitive {
         std::unique_ptr<QOpenGLBuffer> vbo;  // pos3+normal3
         std::unique_ptr<QOpenGLBuffer> ibo;
+        std::unique_ptr<QOpenGLBuffer> wireIbo;
         int indexCount = 0;
+        int wireIndexCount = 0;
         int lineVertexCount = 0;  // ibo無しの場合のGL_LINES頂点数
         QVector4D color;
     };
@@ -125,6 +130,7 @@ private:
     size_t m_frame = 0;
     ViewMode m_viewMode = ViewMode::Work;
     bool m_forceCameraView = false;
+    bool m_wireframeEnabled = false;
     int m_selectedModel = -1;
 
     std::unique_ptr<QOpenGLShaderProgram> m_program;

@@ -179,6 +179,12 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         statusBar()->showMessage(checked ? tr("カメラ視点: 右ドラッグ=見回し / WASD+Q/E=移動 / ホイール=前後(カメラを編集)")
                                          : tr("作業視点: 右ドラッグ=軌道 / WASD+Q/E=移動 / 左ドラッグ=選択モデル移動(Shift=上下)"));
     });
+    QAction* wireframeAction = toolBar->addAction(tr("ワイヤー"));
+    wireframeAction->setCheckable(true);
+    connect(wireframeAction, &QAction::toggled, this, [this](bool checked) {
+        m_viewport->setWireframeEnabled(checked);
+        statusBar()->showMessage(checked ? tr("ワイヤーフレーム表示") : tr("通常表示"));
+    });
     toolBar->addSeparator();
     toolBar->addWidget(new QLabel(tr(" 焦点距離: "), this));
     m_focalSpin = new QDoubleSpinBox(this);
