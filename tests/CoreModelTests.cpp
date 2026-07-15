@@ -394,6 +394,10 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     model.transformKeys[8] = {{5, 0, 0}, {0, 180, 0}, {2, 2, 2}};
     model.filePath = ":humanoid";
     model.humanoidPose.headYawDeg = 12.0f;
+    model.humanoidBody.chestWidth = 1.25f;
+    model.humanoidBody.armLength = 1.40f;
+    model.humanoidBody.legThickness = 0.70f;
+    model.humanoidBody.footScale = 1.30f;
     model.poseKeys[0].leftHipPitchDeg = -20.0f;
     model.poseKeys[8].leftHipPitchDeg = 20.0f;
     cut.previz().models.push_back(model);
@@ -414,6 +418,10 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     REQUIRE(previz.models[0].transformKeys.size() == 2);
     REQUIRE(previz.models[0].transformAt(4).position.x == 2.5f);
     REQUIRE(previz.models[0].humanoidPose.headYawDeg == 12.0f);
+    REQUIRE(previz.models[0].humanoidBody.chestWidth == 1.25f);
+    REQUIRE(previz.models[0].humanoidBody.armLength == 1.40f);
+    REQUIRE(previz.models[0].humanoidBody.legThickness == 0.70f);
+    REQUIRE(previz.models[0].humanoidBody.footScale == 1.30f);
     REQUIRE(previz.models[0].poseKeys.size() == 2);
     REQUIRE(previz.models[0].poseAt(4).leftHipPitchDeg == 0.0f);
     REQUIRE(previz.camera.state.focalLengthMm == 85.0f);

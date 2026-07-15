@@ -115,6 +115,39 @@ PrevizHumanoidPose humanoidPoseFromJson(const json& j) {
     return p;
 }
 
+json humanoidBodyToJson(const PrevizHumanoidBody& b) {
+    return {{"headScale", b.headScale},
+            {"torsoLength", b.torsoLength},
+            {"chestWidth", b.chestWidth},
+            {"bellyWidth", b.bellyWidth},
+            {"waistWidth", b.waistWidth},
+            {"shoulderWidth", b.shoulderWidth},
+            {"hipWidth", b.hipWidth},
+            {"armLength", b.armLength},
+            {"armThickness", b.armThickness},
+            {"legLength", b.legLength},
+            {"legThickness", b.legThickness},
+            {"handScale", b.handScale},
+            {"footScale", b.footScale}};
+}
+PrevizHumanoidBody humanoidBodyFromJson(const json& j) {
+    PrevizHumanoidBody b;
+    b.headScale = j.value("headScale", 1.0f);
+    b.torsoLength = j.value("torsoLength", 1.0f);
+    b.chestWidth = j.value("chestWidth", 1.0f);
+    b.bellyWidth = j.value("bellyWidth", 1.0f);
+    b.waistWidth = j.value("waistWidth", 1.0f);
+    b.shoulderWidth = j.value("shoulderWidth", 1.0f);
+    b.hipWidth = j.value("hipWidth", 1.0f);
+    b.armLength = j.value("armLength", 1.0f);
+    b.armThickness = j.value("armThickness", 1.0f);
+    b.legLength = j.value("legLength", 1.0f);
+    b.legThickness = j.value("legThickness", 1.0f);
+    b.handScale = j.value("handScale", 1.0f);
+    b.footScale = j.value("footScale", 1.0f);
+    return b;
+}
+
 json cameraStateToJson(const PrevizCameraState& s) {
     return {{"position", vec3ToJson(s.position)}, {"rotation", vec3ToJson(s.rotationDeg)}, {"focal", s.focalLengthMm}};
 }
@@ -139,6 +172,7 @@ json previzToJson(const PrevizScene& scene) {
                 jPoseKeys.push_back({{"frame", frame}, {"pose", humanoidPoseToJson(pose)}});
             }
             jModel["humanoidPose"] = humanoidPoseToJson(model.humanoidPose);
+            jModel["humanoidBody"] = humanoidBodyToJson(model.humanoidBody);
             jModel["poseKeys"] = std::move(jPoseKeys);
         }
         jModels.push_back(std::move(jModel));
@@ -166,6 +200,9 @@ void previzFromJson(const json& j, PrevizScene& scene) {
         }
         if (jModel.contains("humanoidPose")) {
             model.humanoidPose = humanoidPoseFromJson(jModel.at("humanoidPose"));
+        }
+        if (jModel.contains("humanoidBody")) {
+            model.humanoidBody = humanoidBodyFromJson(jModel.at("humanoidBody"));
         }
         if (jModel.contains("poseKeys")) {
             for (const json& jKey : jModel.at("poseKeys")) {

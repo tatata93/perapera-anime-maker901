@@ -84,6 +84,72 @@ core::PrevizHumanoidPose humanoidPosePreset(int presetIndex) {
     return pose;
 }
 
+core::PrevizHumanoidBody humanoidBodyPreset(int presetIndex) {
+    core::PrevizHumanoidBody body;
+    switch (presetIndex) {
+        case 1:  // adult
+            body.headScale = 0.92f;
+            body.torsoLength = 1.08f;
+            body.chestWidth = 1.08f;
+            body.bellyWidth = 0.98f;
+            body.waistWidth = 0.92f;
+            body.shoulderWidth = 1.12f;
+            body.hipWidth = 0.98f;
+            body.armLength = 1.08f;
+            body.legLength = 1.12f;
+            break;
+        case 2:  // child
+            body.headScale = 1.28f;
+            body.torsoLength = 0.86f;
+            body.chestWidth = 0.82f;
+            body.bellyWidth = 0.88f;
+            body.waistWidth = 0.84f;
+            body.shoulderWidth = 0.82f;
+            body.hipWidth = 0.86f;
+            body.armLength = 0.78f;
+            body.armThickness = 0.82f;
+            body.legLength = 0.76f;
+            body.legThickness = 0.84f;
+            body.handScale = 0.82f;
+            body.footScale = 0.82f;
+            break;
+        case 3:  // sturdy
+            body.headScale = 1.02f;
+            body.torsoLength = 1.02f;
+            body.chestWidth = 1.28f;
+            body.bellyWidth = 1.22f;
+            body.waistWidth = 1.18f;
+            body.shoulderWidth = 1.18f;
+            body.hipWidth = 1.16f;
+            body.armLength = 0.96f;
+            body.armThickness = 1.28f;
+            body.legLength = 0.96f;
+            body.legThickness = 1.30f;
+            body.handScale = 1.16f;
+            body.footScale = 1.14f;
+            break;
+        case 4:  // non-human
+            body.headScale = 1.45f;
+            body.torsoLength = 0.92f;
+            body.chestWidth = 0.78f;
+            body.bellyWidth = 0.70f;
+            body.waistWidth = 0.66f;
+            body.shoulderWidth = 0.78f;
+            body.hipWidth = 0.70f;
+            body.armLength = 1.38f;
+            body.armThickness = 0.62f;
+            body.legLength = 1.16f;
+            body.legThickness = 0.62f;
+            body.handScale = 1.28f;
+            body.footScale = 0.78f;
+            break;
+        case 0:
+        default:
+            break;
+    }
+    return body;
+}
+
 }  // namespace
 
 PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
@@ -170,6 +236,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         m_viewport->setFrame(next);
         refreshCameraUi();
         refreshTransformUi();
+        refreshBodyUi();
         refreshPoseUi();
         // シートの再構築は重いので再生中は行わない(停止時にまとめて更新)
     });
@@ -212,6 +279,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         m_viewport->setSelectedModel(row);  // 作業視点の左ドラッグ移動対象
         refreshTransformUi();
         refreshPoseUi();
+        refreshBodyUi();
         rebuildSheet();  // アクティブ列(選択モデル)の表示を追従させる
     });
 
@@ -330,6 +398,63 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     auto* walkCycleButton = new QPushButton(tr("歩きループキー作成"), container);
     layout->addWidget(walkCycleButton);
     connect(walkCycleButton, &QPushButton::clicked, this, &PrevizWindow::addHumanoidWalkCycleKeys);
+
+    auto* bodyLabel = new QLabel(tr("人型体型"), container);
+    layout->addWidget(bodyLabel);
+    auto* bodyPresetRow = new QWidget(container);
+    auto* bodyPresetLayout = new QHBoxLayout(bodyPresetRow);
+    bodyPresetLayout->setContentsMargins(4, 0, 4, 0);
+    m_bodyPresetCombo = new QComboBox(bodyPresetRow);
+    m_bodyPresetCombo->addItems({tr("標準"), tr("大人"), tr("子供"), tr("がっしり"), tr("人外")});
+    auto* applyBodyPresetButton = new QPushButton(tr("適用"), bodyPresetRow);
+    bodyPresetLayout->addWidget(m_bodyPresetCombo, 1);
+    bodyPresetLayout->addWidget(applyBodyPresetButton);
+    layout->addWidget(bodyPresetRow);
+    connect(applyBodyPresetButton, &QPushButton::clicked, this, [this] {
+        applyHumanoidBodyPreset(m_bodyPresetCombo ? m_bodyPresetCombo->currentIndex() : 0);
+    });
+
+    const auto makeBodySpin = [container]() {
+        auto* spin = new QDoubleSpinBox(container);
+        spin->setRange(0.20, 3.00);
+        spin->setSingleStep(0.05);
+        spin->setDecimals(2);
+        spin->setSuffix(QObject::tr(" x"));
+        spin->setFocusPolicy(Qt::ClickFocus);
+        return spin;
+    };
+    m_bodyHeadScale = makeBodySpin();
+    m_bodyTorsoLength = makeBodySpin();
+    m_bodyChestWidth = makeBodySpin();
+    m_bodyBellyWidth = makeBodySpin();
+    m_bodyWaistWidth = makeBodySpin();
+    m_bodyShoulderWidth = makeBodySpin();
+    m_bodyHipWidth = makeBodySpin();
+    m_bodyArmLength = makeBodySpin();
+    m_bodyArmThickness = makeBodySpin();
+    m_bodyLegLength = makeBodySpin();
+    m_bodyLegThickness = makeBodySpin();
+    m_bodyHandScale = makeBodySpin();
+    m_bodyFootScale = makeBodySpin();
+    addRow(tr("頭サイズ"), m_bodyHeadScale);
+    addRow(tr("胴長"), m_bodyTorsoLength);
+    addRow(tr("胸幅"), m_bodyChestWidth);
+    addRow(tr("腹幅"), m_bodyBellyWidth);
+    addRow(tr("腰幅"), m_bodyWaistWidth);
+    addRow(tr("肩幅"), m_bodyShoulderWidth);
+    addRow(tr("股幅"), m_bodyHipWidth);
+    addRow(tr("腕の長さ"), m_bodyArmLength);
+    addRow(tr("腕の太さ"), m_bodyArmThickness);
+    addRow(tr("脚の長さ"), m_bodyLegLength);
+    addRow(tr("脚の太さ"), m_bodyLegThickness);
+    addRow(tr("手サイズ"), m_bodyHandScale);
+    addRow(tr("足サイズ"), m_bodyFootScale);
+    for (QDoubleSpinBox* spin : {m_bodyHeadScale, m_bodyTorsoLength, m_bodyChestWidth, m_bodyBellyWidth,
+                                 m_bodyWaistWidth, m_bodyShoulderWidth, m_bodyHipWidth, m_bodyArmLength,
+                                 m_bodyArmThickness, m_bodyLegLength, m_bodyLegThickness, m_bodyHandScale,
+                                 m_bodyFootScale}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyBodyFromUi(); });
+    }
 
     // モーションキー(カメラ/選択モデル): 現在コマにキーを打つ・消す
     auto* cameraKeyButton = new QPushButton(tr("現在コマにカメラキー"), container);
@@ -641,6 +766,64 @@ void PrevizWindow::applyPoseFromUi() {
     emit sceneEdited();
 }
 
+void PrevizWindow::setBodyControlsEnabled(bool enabled) {
+    if (m_bodyPresetCombo) m_bodyPresetCombo->setEnabled(enabled);
+    for (QDoubleSpinBox* spin : {m_bodyHeadScale, m_bodyTorsoLength, m_bodyChestWidth, m_bodyBellyWidth,
+                                 m_bodyWaistWidth, m_bodyShoulderWidth, m_bodyHipWidth, m_bodyArmLength,
+                                 m_bodyArmThickness, m_bodyLegLength, m_bodyLegThickness, m_bodyHandScale,
+                                 m_bodyFootScale}) {
+        if (spin) spin->setEnabled(enabled);
+    }
+}
+
+void PrevizWindow::refreshBodyUi() {
+    core::PrevizModel* model = selectedModel();
+    const bool isHumanoid = model && isHumanoidKind(model->filePath);
+    setBodyControlsEnabled(isHumanoid);
+    if (!isHumanoid) return;
+
+    m_updating = true;
+    const core::PrevizHumanoidBody& body = model->humanoidBody;
+    m_bodyHeadScale->setValue(body.headScale);
+    m_bodyTorsoLength->setValue(body.torsoLength);
+    m_bodyChestWidth->setValue(body.chestWidth);
+    m_bodyBellyWidth->setValue(body.bellyWidth);
+    m_bodyWaistWidth->setValue(body.waistWidth);
+    m_bodyShoulderWidth->setValue(body.shoulderWidth);
+    m_bodyHipWidth->setValue(body.hipWidth);
+    m_bodyArmLength->setValue(body.armLength);
+    m_bodyArmThickness->setValue(body.armThickness);
+    m_bodyLegLength->setValue(body.legLength);
+    m_bodyLegThickness->setValue(body.legThickness);
+    m_bodyHandScale->setValue(body.handScale);
+    m_bodyFootScale->setValue(body.footScale);
+    m_updating = false;
+}
+
+void PrevizWindow::applyBodyFromUi() {
+    if (m_updating) return;
+    core::PrevizModel* model = selectedModel();
+    if (!model || !isHumanoidKind(model->filePath)) return;
+
+    core::PrevizHumanoidBody& body = model->humanoidBody;
+    body.headScale = static_cast<float>(m_bodyHeadScale->value());
+    body.torsoLength = static_cast<float>(m_bodyTorsoLength->value());
+    body.chestWidth = static_cast<float>(m_bodyChestWidth->value());
+    body.bellyWidth = static_cast<float>(m_bodyBellyWidth->value());
+    body.waistWidth = static_cast<float>(m_bodyWaistWidth->value());
+    body.shoulderWidth = static_cast<float>(m_bodyShoulderWidth->value());
+    body.hipWidth = static_cast<float>(m_bodyHipWidth->value());
+    body.armLength = static_cast<float>(m_bodyArmLength->value());
+    body.armThickness = static_cast<float>(m_bodyArmThickness->value());
+    body.legLength = static_cast<float>(m_bodyLegLength->value());
+    body.legThickness = static_cast<float>(m_bodyLegThickness->value());
+    body.handScale = static_cast<float>(m_bodyHandScale->value());
+    body.footScale = static_cast<float>(m_bodyFootScale->value());
+
+    m_viewport->update();
+    emit sceneEdited();
+}
+
 void PrevizWindow::applyHumanoidPosePreset(int presetIndex) {
     core::PrevizModel* model = selectedModel();
     if (!model || !isHumanoidKind(model->filePath)) return;
@@ -648,6 +831,16 @@ void PrevizWindow::applyHumanoidPosePreset(int presetIndex) {
     editableHumanoidPose(*model) = humanoidPosePreset(presetIndex);
     refreshPoseUi();
     rebuildSheet();
+    m_viewport->update();
+    emit sceneEdited();
+}
+
+void PrevizWindow::applyHumanoidBodyPreset(int presetIndex) {
+    core::PrevizModel* model = selectedModel();
+    if (!model || !isHumanoidKind(model->filePath)) return;
+
+    model->humanoidBody = humanoidBodyPreset(presetIndex);
+    refreshBodyUi();
     m_viewport->update();
     emit sceneEdited();
 }
@@ -693,6 +886,10 @@ void PrevizWindow::debugSetHumanoidPosePreset(int presetIndex) {
     applyHumanoidPosePreset(presetIndex);
 }
 
+void PrevizWindow::debugSetHumanoidBodyPreset(int presetIndex) {
+    applyHumanoidBodyPreset(presetIndex);
+}
+
 void PrevizWindow::debugAddHumanoidWalkCycleKeys() {
     addHumanoidWalkCycleKeys();
 }
@@ -730,6 +927,7 @@ void PrevizWindow::setScene(core::PrevizScene* scene) {
     refreshModelList();
     refreshCameraUi();
     refreshPoseUi();
+    refreshBodyUi();
     rebuildSheet();
 }
 

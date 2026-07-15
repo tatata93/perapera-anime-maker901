@@ -849,6 +849,7 @@ int main(int argc, char* argv[]) {
             QTimer::singleShot(300, &window, [&window, outputPath] {
                 window.previzWindow()->debugSetSelectedPosition(50.0, 0.0, 50.0);
                 window.previzWindow()->debugAddPrimitive(":humanoid");
+                window.previzWindow()->debugSetHumanoidBodyPreset(4);
                 window.previzWindow()->debugAddHumanoidWalkCycleKeys();
                 window.previzWindow()->setTimeline(12, 24);
                 QTimer::singleShot(400, &window, [&window, outputPath] {

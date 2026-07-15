@@ -40,6 +40,22 @@ struct PrevizHumanoidPose {
     float rightKneeDeg = 0.0f;
 };
 
+struct PrevizHumanoidBody {
+    float headScale = 1.0f;
+    float torsoLength = 1.0f;
+    float chestWidth = 1.0f;
+    float bellyWidth = 1.0f;
+    float waistWidth = 1.0f;
+    float shoulderWidth = 1.0f;
+    float hipWidth = 1.0f;
+    float armLength = 1.0f;
+    float armThickness = 1.0f;
+    float legLength = 1.0f;
+    float legThickness = 1.0f;
+    float handScale = 1.0f;
+    float footScale = 1.0f;
+};
+
 namespace previz_detail {
 inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
 inline Vec3 lerp(const Vec3& a, const Vec3& b, float t) {
@@ -85,6 +101,7 @@ struct PrevizModel {
     PrevizTransform transform;                       // キーが無いときの基本配置
     std::map<size_t, PrevizTransform> transformKeys;  // コマ→トランスフォーム(モーション)
     PrevizHumanoidPose humanoidPose;
+    PrevizHumanoidBody humanoidBody;
     std::map<size_t, PrevizHumanoidPose> poseKeys;
 
     PrevizTransform transformAt(size_t frame) const {
