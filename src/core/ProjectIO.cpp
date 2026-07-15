@@ -29,6 +29,10 @@ void setError(std::string* errorOut, std::string message) {
 
 std::string cutFileName(uint64_t id) { return "cut_" + std::to_string(id) + ".ppam"; }
 
+bool isHumanoidModelPath(const std::string& filePath) {
+    return filePath == ":humanoid" || filePath == ":humanoid_box";
+}
+
 // "cut_<id>.ppam" からidを取り出す。形式に一致しなければfalse(孤児ファイル判定に使う)
 bool parseCutId(const std::string& filename, uint64_t* idOut) {
     const std::string prefix = "cut_";
@@ -270,7 +274,7 @@ json previzToJson(const PrevizScene& scene) {
                        {"filePath", model.filePath},
                        {"transform", transformToJson(model.transform)},
                        {"keys", std::move(jKeys)}};
-        if (model.filePath == ":humanoid" || !model.poseKeys.empty()) {
+        if (isHumanoidModelPath(model.filePath) || !model.poseKeys.empty()) {
             json jPoseKeys = json::array();
             for (const auto& [frame, pose] : model.poseKeys) {
                 jPoseKeys.push_back({{"frame", frame}, {"pose", humanoidPoseToJson(pose)}});

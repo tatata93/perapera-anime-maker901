@@ -26,7 +26,7 @@ std::string lowerExtension(const std::string& path) {
 }
 
 bool isHumanoidModelPath(const std::string& filePath) {
-    return filePath == ":humanoid";
+    return filePath == ":humanoid" || filePath == ":humanoid_box";
 }
 
 QMatrix4x4 modelMatrixFromTransform(const core::PrevizTransform& tf) {
@@ -831,6 +831,7 @@ void PrevizViewport::drawHumanoid(
     bool highlight) {
     const core::PrevizHumanoidPose pose = model.poseAt(m_frame);
     const core::PrevizHumanoidBody body = model.humanoidBody;
+    const bool boxy = model.filePath == ":humanoid_box";
 
     const QVector4D skinColor(0.78f, 0.62f, 0.48f, 1.0f);
     const QVector4D chestColor(0.38f, 0.50f, 0.74f, 1.0f);
@@ -934,6 +935,25 @@ void PrevizViewport::drawHumanoid(
         drawLocal(":sphere", local, color);
     };
 
+    const auto boxAt = [&](const QVector3D& center, const QMatrix4x4& rot, float width, float height, float depth,
+                           const QVector4D& color) {
+        QMatrix4x4 local;
+        local.translate(center.x(), center.y(), center.z());
+        local = local * rot;
+        local.translate(0.0f, -height * 0.5f, 0.0f);
+        local.scale(width, height, depth);
+        drawLocal(":box", local, color);
+    };
+
+    const auto jointAt = [&](const QVector3D& center, float radius, const QVector4D& color) {
+        if (boxy) {
+            QMatrix4x4 rot;
+            boxAt(center, rot, radius * 1.75f, radius * 1.75f, radius * 1.75f, color);
+        } else {
+            sphereAt(center, radius, color);
+        }
+    };
+
     const auto segmentMatrix = [](const QVector3D& anchor, const QMatrix4x4& rot, float length, float radiusX,
                                   float radiusZ) {
         QMatrix4x4 local;
@@ -979,27 +999,31 @@ void PrevizViewport::drawHumanoid(
         const float visibleHeight = std::max(0.06f, height - torsoGap);
         const float centerOffset = offset + height * 0.5f;
         const float rz = 0.16f * (0.75f + width * 0.25f) * depth;
-        ellipsoidAt(torsoPoint(QVector3D(0.0f, centerOffset, 0.0f)), torsoRot, 0.30f * width,
-                    visibleHeight * 0.52f, rz, color);
+        const QVector3D center = torsoPoint(QVector3D(0.0f, centerOffset, 0.0f));
+        if (boxy) {
+            boxAt(center, torsoRot, 0.60f * width, visibleHeight, rz * 2.0f, color);
+        } else {
+            ellipsoidAt(center, torsoRot, 0.30f * width, visibleHeight * 0.52f, rz, color);
+        }
     };
 
     drawTorsoPart(0.0f, waistHeight, waistWidth, waistDepth, waistColor);
     drawTorsoPart(waistHeight, bellyHeight, bellyWidth, bellyDepth, bellyColor);
     drawTorsoPart(waistHeight + bellyHeight, chestHeight, chestWidth, chestDepth, chestColor);
 
-    const float shoulderHalf = 0.43f * shoulderWidth * std::max(0.75f, chestWidth);
-    const float hipHalf = 0.23f * hipWidth * std::max(0.75f, waistWidth);
+    const float shoulderHalf = 0.30f * chestWidth * shoulderWidth;
+    const float hipHalf = 0.30f * waistWidth * hipWidth;
     const QVector3D chestTop = torsoPoint(QVector3D(0.0f, torsoHeight + 0.02f, 0.0f));
     const QVector3D leftShoulder = torsoPoint(QVector3D(-shoulderHalf, waistHeight + bellyHeight + chestHeight * 0.70f, 0.0f));
     const QVector3D rightShoulder = torsoPoint(QVector3D(shoulderHalf, waistHeight + bellyHeight + chestHeight * 0.70f, 0.0f));
     const QVector3D leftHip = torsoPoint(QVector3D(-hipHalf, 0.03f, 0.0f));
     const QVector3D rightHip = torsoPoint(QVector3D(hipHalf, 0.03f, 0.0f));
 
-    sphereAt(chestTop, 0.095f * std::max(0.85f, chestWidth), jointColor);
-    sphereAt(leftShoulder, 0.105f * leftArmThickness, jointColor);
-    sphereAt(rightShoulder, 0.105f * rightArmThickness, jointColor);
-    sphereAt(leftHip, 0.105f * leftLegThickness, jointColor);
-    sphereAt(rightHip, 0.105f * rightLegThickness, jointColor);
+    jointAt(chestTop, 0.095f * std::max(0.85f, chestWidth), jointColor);
+    jointAt(leftShoulder, 0.105f * leftArmThickness, jointColor);
+    jointAt(rightShoulder, 0.105f * rightArmThickness, jointColor);
+    jointAt(leftHip, 0.105f * leftLegThickness, jointColor);
+    jointAt(rightHip, 0.105f * rightLegThickness, jointColor);
 
     QMatrix4x4 headRot = torsoRot;
     headRot.rotate(pose.headYawDeg, 0, 1, 0);
@@ -1009,7 +1033,11 @@ void PrevizViewport::drawHumanoid(
     const float headRy = headRadius * headHeight;
     const float headRz = headRadius * headDepth;
     const QVector3D headCenter = torsoPoint(QVector3D(0.0f, torsoHeight + headRy * 1.08f, 0.0f));
-    ellipsoidAt(headCenter, headRot, headRx, headRy, headRz, skinColor);
+    if (boxy) {
+        boxAt(headCenter, headRot, headRx * 2.0f, headRy * 2.0f, headRz * 2.0f, skinColor);
+    } else {
+        ellipsoidAt(headCenter, headRot, headRx, headRy, headRz, skinColor);
+    }
     QMatrix4x4 face;
     face.translate(headCenter.x(), headCenter.y(), headCenter.z());
     face = face * headRot;
@@ -1024,30 +1052,35 @@ void PrevizViewport::drawHumanoid(
         const float upperArm = 0.52f * upperArmLength;
         const float forearm = 0.48f * forearmLength;
         QMatrix4x4 upperRot = torsoRot * downwardRot(shoulderPitch, shoulderRoll);
-        drawLocal(":cylinder", segmentMatrix(shoulder, upperRot, upperArm, 0.075f * upperArmWidth,
+        drawLocal(boxy ? ":box" : ":cylinder", segmentMatrix(shoulder, upperRot, upperArm, 0.075f * upperArmWidth,
                                              0.075f * upperArmDepth), limbColor);
         const QVector3D elbow = segmentEnd(shoulder, upperRot, upperArm);
-        sphereAt(elbow, 0.085f * std::max(upperArmWidth, forearmWidth), jointColor);
+        jointAt(elbow, 0.085f * std::max(upperArmWidth, forearmWidth), jointColor);
         QMatrix4x4 lowerRot = upperRot;
         lowerRot.rotate(elbowDeg, 1, 0, 0);
-        drawLocal(":cylinder", segmentMatrix(elbow, lowerRot, forearm, 0.065f * forearmWidth,
+        drawLocal(boxy ? ":box" : ":cylinder", segmentMatrix(elbow, lowerRot, forearm, 0.065f * forearmWidth,
                                              0.065f * forearmDepth), limbColor);
         const float handRadius = 0.075f * handScaleValue * forearmWidth;
-        ellipsoidAt(segmentEnd(elbow, lowerRot, forearm), lowerRot, handRadius, handRadius,
-                    handRadius * handDepthValue, skinColor);
+        const QVector3D handCenter = segmentEnd(elbow, lowerRot, forearm);
+        if (boxy) {
+            boxAt(handCenter, lowerRot, handRadius * 2.0f, handRadius * 2.0f, handRadius * 2.0f * handDepthValue,
+                  skinColor);
+        } else {
+            ellipsoidAt(handCenter, lowerRot, handRadius, handRadius, handRadius * handDepthValue, skinColor);
+        }
     };
 
     auto drawLeg = [&](const QVector3D& hip, float hipPitch, float hipRoll, float kneeDeg, float upperLeg,
                        float lowerLeg, float thighWidth, float shinWidth, float thighDepthValue,
                        float shinDepthValue, float footScaleValue, float footDepthValue) {
         QMatrix4x4 upperRot = torsoRot * downwardRot(hipPitch, hipRoll);
-        drawLocal(":cylinder", segmentMatrix(hip, upperRot, upperLeg, 0.095f * thighWidth,
+        drawLocal(boxy ? ":box" : ":cylinder", segmentMatrix(hip, upperRot, upperLeg, 0.095f * thighWidth,
                                              0.095f * thighDepthValue), limbColor);
         const QVector3D knee = segmentEnd(hip, upperRot, upperLeg);
-        sphereAt(knee, 0.095f * std::max(thighWidth, shinWidth), jointColor);
+        jointAt(knee, 0.095f * std::max(thighWidth, shinWidth), jointColor);
         QMatrix4x4 lowerRot = upperRot;
         lowerRot.rotate(kneeDeg, 1, 0, 0);
-        drawLocal(":cylinder", segmentMatrix(knee, lowerRot, lowerLeg, 0.08f * shinWidth,
+        drawLocal(boxy ? ":box" : ":cylinder", segmentMatrix(knee, lowerRot, lowerLeg, 0.08f * shinWidth,
                                              0.08f * shinDepthValue), limbColor);
         const QVector3D ankle = segmentEnd(knee, lowerRot, lowerLeg);
         QMatrix4x4 foot;

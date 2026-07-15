@@ -530,6 +530,37 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     std::filesystem::remove_all(path);
 }
 
+TEST_CASE("Previz boxed humanoid body round trips through ppam", "[core][previz][io]") {
+    core::Project project("P");
+    core::Cut& cut = project.addScene("S").addCut("C");
+    cut.addCel("A").addLayer("L").addFrame();
+
+    core::PrevizModel model;
+    model.name = "Robot";
+    model.filePath = ":humanoid_box";
+    model.humanoidBody.chestWidth = 1.55f;
+    model.humanoidBody.chestDepth = 1.30f;
+    model.humanoidBody.leftUpperArmLength = 0.72f;
+    model.humanoidBody.rightShinDepth = 1.42f;
+    cut.previz().models.push_back(model);
+
+    const auto path = std::filesystem::temp_directory_path() / "ppam_previz_box_humanoid_test.ppproj";
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const core::PrevizScene& previz = loaded->scene(0).cut(0).previz();
+    REQUIRE(previz.models.size() == 1);
+    REQUIRE(previz.models[0].filePath == ":humanoid_box");
+    REQUIRE(previz.models[0].humanoidBody.chestWidth == 1.55f);
+    REQUIRE(previz.models[0].humanoidBody.chestDepth == 1.30f);
+    REQUIRE(previz.models[0].humanoidBody.leftUpperArmLength == 0.72f);
+    REQUIRE(previz.models[0].humanoidBody.rightShinDepth == 1.42f);
+
+    std::filesystem::remove_all(path);
+}
+
 TEST_CASE("Cut camera frame keys interpolate", "[core][camera]") {
     core::Cut cut("Cut 1");
 

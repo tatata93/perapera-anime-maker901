@@ -27,7 +27,7 @@
 namespace {
 
 bool isHumanoidKind(const std::string& filePath) {
-    return filePath == ":humanoid";
+    return filePath == ":humanoid" || filePath == ":humanoid_box";
 }
 
 core::PrevizHumanoidPose humanoidPosePreset(int presetIndex) {
@@ -311,12 +311,14 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     QAction* addCylinderAction = primitiveMenu->addAction(tr("円柱"));
     QAction* addSphereAction = primitiveMenu->addAction(tr("球"));
     QAction* addHumanoidAction = primitiveMenu->addAction(tr("人型"));
+    QAction* addRobotAction = primitiveMenu->addAction(tr("人型ロボット"));
     addPrimitiveButton->setMenu(primitiveMenu);
     layout->addWidget(addPrimitiveButton);
     connect(addBoxAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":box"), true); });
     connect(addCylinderAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":cylinder"), true); });
     connect(addSphereAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":sphere"), true); });
     connect(addHumanoidAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":humanoid"), true); });
+    connect(addRobotAction, &QAction::triggered, this, [this] { addPrimitive(QStringLiteral(":humanoid_box"), true); });
 
     auto* removeButton = new QPushButton(tr("モデル削除"), container);
     layout->addWidget(removeButton);
@@ -1323,6 +1325,7 @@ void PrevizWindow::addPrimitive(const QString& kind, bool select) {
     if (kind == QStringLiteral(":cylinder")) label = tr("円柱");
     else if (kind == QStringLiteral(":sphere")) label = tr("球");
     else if (kind == QStringLiteral(":humanoid")) label = tr("人型");
+    else if (kind == QStringLiteral(":humanoid_box")) label = tr("人型ロボット");
 
     core::PrevizModel primitive;
     int number = 1;
