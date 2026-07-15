@@ -483,7 +483,7 @@ void PrevizWindow::setScene(core::PrevizScene* scene) {
     m_viewport->setScene(scene);
     // 空のシーンには最初から操作できる箱を1つ置く(目安キューブの実体化)
     if (m_scene && m_scene->models.empty()) {
-        addPrimitive(QStringLiteral(":box"), false);
+        addPrimitive(QStringLiteral(":box"), true);
     }
     refreshModelList();
     refreshCameraUi();
