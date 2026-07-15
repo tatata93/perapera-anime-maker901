@@ -8,9 +8,11 @@
 class PrevizViewport;
 class PrevizSheetPanel;
 class QComboBox;
+class QDialog;
 class QDoubleSpinBox;
 class QLabel;
 class QListWidget;
+class QPushButton;
 class QSpinBox;
 class QTimer;
 class QToolButton;
@@ -80,6 +82,8 @@ private:
     void addHumanoidWalkCycleKeys();
     void setPoseControlsEnabled(bool enabled);
     void setBodyControlsEnabled(bool enabled);
+    void openPoseWindow();
+    void openBodyWindow();
     // 対象(カメラ/選択モデル)に応じてcameraFn/modelFnのどちらかを適用し、UI・シートを更新する
     void applyNudge(const std::function<void(core::PrevizCameraState&)>& cameraFn,
                     const std::function<void(core::PrevizTransform&)>& modelFn);
@@ -101,6 +105,12 @@ private:
     QDoubleSpinBox* m_scaleX = nullptr;
     QDoubleSpinBox* m_scaleY = nullptr;
     QDoubleSpinBox* m_scaleZ = nullptr;
+    QPushButton* m_openPoseWindowButton = nullptr;
+    QPushButton* m_openBodyWindowButton = nullptr;
+    QDialog* m_poseDialog = nullptr;
+    QDialog* m_bodyDialog = nullptr;
+    QWidget* m_posePanel = nullptr;
+    QWidget* m_bodyPanel = nullptr;
     QComboBox* m_posePresetCombo = nullptr;
     QWidget* m_poseLabelWidget = nullptr;
     QWidget* m_posePresetRow = nullptr;
@@ -108,14 +118,20 @@ private:
     QWidget* m_poseKeyClearButton = nullptr;
     QWidget* m_walkCycleButton = nullptr;
     QDoubleSpinBox* m_poseTorsoPitch = nullptr;
+    QDoubleSpinBox* m_poseTorsoRoll = nullptr;
+    QDoubleSpinBox* m_poseHeadPitch = nullptr;
     QDoubleSpinBox* m_poseHeadYaw = nullptr;
     QDoubleSpinBox* m_poseLeftShoulder = nullptr;
+    QDoubleSpinBox* m_poseLeftShoulderRoll = nullptr;
     QDoubleSpinBox* m_poseLeftElbow = nullptr;
     QDoubleSpinBox* m_poseRightShoulder = nullptr;
+    QDoubleSpinBox* m_poseRightShoulderRoll = nullptr;
     QDoubleSpinBox* m_poseRightElbow = nullptr;
     QDoubleSpinBox* m_poseLeftHip = nullptr;
+    QDoubleSpinBox* m_poseLeftHipRoll = nullptr;
     QDoubleSpinBox* m_poseLeftKnee = nullptr;
     QDoubleSpinBox* m_poseRightHip = nullptr;
+    QDoubleSpinBox* m_poseRightHipRoll = nullptr;
     QDoubleSpinBox* m_poseRightKnee = nullptr;
     QComboBox* m_bodyPresetCombo = nullptr;
     QWidget* m_bodyLabelWidget = nullptr;
@@ -133,6 +149,18 @@ private:
     QDoubleSpinBox* m_bodyLegThickness = nullptr;
     QDoubleSpinBox* m_bodyHandScale = nullptr;
     QDoubleSpinBox* m_bodyFootScale = nullptr;
+    QDoubleSpinBox* m_bodyLeftArmLength = nullptr;
+    QDoubleSpinBox* m_bodyRightArmLength = nullptr;
+    QDoubleSpinBox* m_bodyLeftArmThickness = nullptr;
+    QDoubleSpinBox* m_bodyRightArmThickness = nullptr;
+    QDoubleSpinBox* m_bodyLeftLegLength = nullptr;
+    QDoubleSpinBox* m_bodyRightLegLength = nullptr;
+    QDoubleSpinBox* m_bodyLeftLegThickness = nullptr;
+    QDoubleSpinBox* m_bodyRightLegThickness = nullptr;
+    QDoubleSpinBox* m_bodyLeftHandScale = nullptr;
+    QDoubleSpinBox* m_bodyRightHandScale = nullptr;
+    QDoubleSpinBox* m_bodyLeftFootScale = nullptr;
+    QDoubleSpinBox* m_bodyRightFootScale = nullptr;
     // 十字リモコン(ナッジ操作)
     QComboBox* m_nudgeTargetCombo = nullptr;  // 0=カメラ、1=選択モデル
     QDoubleSpinBox* m_moveStepSpin = nullptr;

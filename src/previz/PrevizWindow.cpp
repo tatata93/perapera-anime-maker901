@@ -1,6 +1,7 @@
 #include "PrevizWindow.h"
 
 #include <QComboBox>
+#include <QDialog>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -11,6 +12,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QTimer>
@@ -33,26 +35,36 @@ core::PrevizHumanoidPose humanoidPosePreset(int presetIndex) {
     switch (presetIndex) {
         case 1:  // walk A
             pose.torsoPitchDeg = 4.0f;
+            pose.torsoRollDeg = -2.0f;
             pose.headYawDeg = -4.0f;
             pose.leftShoulderPitchDeg = 28.0f;
+            pose.leftShoulderRollDeg = -4.0f;
             pose.leftElbowDeg = 12.0f;
             pose.rightShoulderPitchDeg = -32.0f;
+            pose.rightShoulderRollDeg = 4.0f;
             pose.rightElbowDeg = 18.0f;
             pose.leftHipPitchDeg = -28.0f;
+            pose.leftHipRollDeg = -3.0f;
             pose.leftKneeDeg = 18.0f;
             pose.rightHipPitchDeg = 32.0f;
+            pose.rightHipRollDeg = 3.0f;
             pose.rightKneeDeg = 34.0f;
             break;
         case 2:  // walk B
             pose.torsoPitchDeg = 4.0f;
+            pose.torsoRollDeg = 2.0f;
             pose.headYawDeg = 4.0f;
             pose.leftShoulderPitchDeg = -32.0f;
+            pose.leftShoulderRollDeg = -4.0f;
             pose.leftElbowDeg = 18.0f;
             pose.rightShoulderPitchDeg = 28.0f;
+            pose.rightShoulderRollDeg = 4.0f;
             pose.rightElbowDeg = 12.0f;
             pose.leftHipPitchDeg = 32.0f;
+            pose.leftHipRollDeg = -3.0f;
             pose.leftKneeDeg = 34.0f;
             pose.rightHipPitchDeg = -28.0f;
+            pose.rightHipRollDeg = 3.0f;
             pose.rightKneeDeg = 18.0f;
             break;
         case 3:  // right arm up
@@ -76,6 +88,17 @@ core::PrevizHumanoidPose humanoidPosePreset(int presetIndex) {
             pose.leftKneeDeg = 68.0f;
             pose.rightHipPitchDeg = 42.0f;
             pose.rightKneeDeg = 68.0f;
+            break;
+        case 5:  // open limbs
+            pose.torsoPitchDeg = 2.0f;
+            pose.leftShoulderRollDeg = -55.0f;
+            pose.leftElbowDeg = 10.0f;
+            pose.rightShoulderRollDeg = 55.0f;
+            pose.rightElbowDeg = 10.0f;
+            pose.leftHipRollDeg = -28.0f;
+            pose.leftKneeDeg = 6.0f;
+            pose.rightHipRollDeg = 28.0f;
+            pose.rightKneeDeg = 6.0f;
             break;
         case 0:
         default:
@@ -331,25 +354,46 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyTransformFromUi(); });
     }
 
-    auto* poseLabel = new QLabel(tr("人型ポーズ"), container);
+    m_openPoseWindowButton = new QPushButton(tr("人型ポーズ..."), container);
+    m_openBodyWindowButton = new QPushButton(tr("人型体型..."), container);
+    layout->addWidget(m_openPoseWindowButton);
+    layout->addWidget(m_openBodyWindowButton);
+    connect(m_openPoseWindowButton, &QPushButton::clicked, this, &PrevizWindow::openPoseWindow);
+    connect(m_openBodyWindowButton, &QPushButton::clicked, this, &PrevizWindow::openBodyWindow);
+
+    const auto addPanelRow = [](QWidget* parent, QVBoxLayout* targetLayout, const QString& label, QWidget* w) {
+        auto* row = new QWidget(parent);
+        auto* h = new QHBoxLayout(row);
+        h->setContentsMargins(4, 0, 4, 0);
+        h->addWidget(new QLabel(label, row));
+        h->addWidget(w, 1);
+        targetLayout->addWidget(row);
+    };
+
+    m_posePanel = new QWidget(this);
+    auto* poseLayout = new QVBoxLayout(m_posePanel);
+    poseLayout->setContentsMargins(8, 8, 8, 8);
+    poseLayout->setSpacing(6);
+    auto* poseLabel = new QLabel(tr("人型ポーズ"), m_posePanel);
     m_poseLabelWidget = poseLabel;
-    layout->addWidget(poseLabel);
-    auto* posePresetRow = new QWidget(container);
+    poseLayout->addWidget(poseLabel);
+    auto* posePresetRow = new QWidget(m_posePanel);
     m_posePresetRow = posePresetRow;
     auto* posePresetLayout = new QHBoxLayout(posePresetRow);
     posePresetLayout->setContentsMargins(4, 0, 4, 0);
     m_posePresetCombo = new QComboBox(posePresetRow);
-    m_posePresetCombo->addItems({tr("ニュートラル"), tr("歩きA"), tr("歩きB"), tr("右腕上げ"), tr("しゃがみ")});
+    m_posePresetCombo->addItems({tr("ニュートラル"), tr("歩きA"), tr("歩きB"), tr("右腕上げ"), tr("しゃがみ"),
+                                 tr("手足を開く")});
     auto* applyPosePresetButton = new QPushButton(tr("適用"), posePresetRow);
     posePresetLayout->addWidget(m_posePresetCombo, 1);
     posePresetLayout->addWidget(applyPosePresetButton);
-    layout->addWidget(posePresetRow);
+    poseLayout->addWidget(posePresetRow);
     connect(applyPosePresetButton, &QPushButton::clicked, this, [this] {
         applyHumanoidPosePreset(m_posePresetCombo ? m_posePresetCombo->currentIndex() : 0);
     });
 
-    const auto makePoseSpin = [container]() {
-        auto* spin = new QDoubleSpinBox(container);
+    const auto makePoseSpin = [this]() {
+        auto* spin = new QDoubleSpinBox(m_posePanel);
         spin->setRange(-180.0, 180.0);
         spin->setSingleStep(5.0);
         spin->setDecimals(1);
@@ -358,33 +402,47 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         return spin;
     };
     m_poseTorsoPitch = makePoseSpin();
+    m_poseTorsoRoll = makePoseSpin();
+    m_poseHeadPitch = makePoseSpin();
     m_poseHeadYaw = makePoseSpin();
     m_poseLeftShoulder = makePoseSpin();
+    m_poseLeftShoulderRoll = makePoseSpin();
     m_poseLeftElbow = makePoseSpin();
     m_poseRightShoulder = makePoseSpin();
+    m_poseRightShoulderRoll = makePoseSpin();
     m_poseRightElbow = makePoseSpin();
     m_poseLeftHip = makePoseSpin();
+    m_poseLeftHipRoll = makePoseSpin();
     m_poseLeftKnee = makePoseSpin();
     m_poseRightHip = makePoseSpin();
+    m_poseRightHipRoll = makePoseSpin();
     m_poseRightKnee = makePoseSpin();
-    addRow(tr("胴 前後"), m_poseTorsoPitch);
-    addRow(tr("頭 左右"), m_poseHeadYaw);
-    addRow(tr("左肩 前後"), m_poseLeftShoulder);
-    addRow(tr("左肘"), m_poseLeftElbow);
-    addRow(tr("右肩 前後"), m_poseRightShoulder);
-    addRow(tr("右肘"), m_poseRightElbow);
-    addRow(tr("左脚 前後"), m_poseLeftHip);
-    addRow(tr("左膝"), m_poseLeftKnee);
-    addRow(tr("右脚 前後"), m_poseRightHip);
-    addRow(tr("右膝"), m_poseRightKnee);
-    for (QDoubleSpinBox* spin : {m_poseTorsoPitch, m_poseHeadYaw, m_poseLeftShoulder, m_poseLeftElbow,
-                                 m_poseRightShoulder, m_poseRightElbow, m_poseLeftHip, m_poseLeftKnee,
-                                 m_poseRightHip, m_poseRightKnee}) {
+    addPanelRow(m_posePanel, poseLayout, tr("胴 前後"), m_poseTorsoPitch);
+    addPanelRow(m_posePanel, poseLayout, tr("胴 左右傾き"), m_poseTorsoRoll);
+    addPanelRow(m_posePanel, poseLayout, tr("頭 上下"), m_poseHeadPitch);
+    addPanelRow(m_posePanel, poseLayout, tr("頭 左右"), m_poseHeadYaw);
+    addPanelRow(m_posePanel, poseLayout, tr("左肩 前後"), m_poseLeftShoulder);
+    addPanelRow(m_posePanel, poseLayout, tr("左肩 開き"), m_poseLeftShoulderRoll);
+    addPanelRow(m_posePanel, poseLayout, tr("左肘"), m_poseLeftElbow);
+    addPanelRow(m_posePanel, poseLayout, tr("右肩 前後"), m_poseRightShoulder);
+    addPanelRow(m_posePanel, poseLayout, tr("右肩 開き"), m_poseRightShoulderRoll);
+    addPanelRow(m_posePanel, poseLayout, tr("右肘"), m_poseRightElbow);
+    addPanelRow(m_posePanel, poseLayout, tr("左脚 前後"), m_poseLeftHip);
+    addPanelRow(m_posePanel, poseLayout, tr("左脚 開き"), m_poseLeftHipRoll);
+    addPanelRow(m_posePanel, poseLayout, tr("左膝"), m_poseLeftKnee);
+    addPanelRow(m_posePanel, poseLayout, tr("右脚 前後"), m_poseRightHip);
+    addPanelRow(m_posePanel, poseLayout, tr("右脚 開き"), m_poseRightHipRoll);
+    addPanelRow(m_posePanel, poseLayout, tr("右膝"), m_poseRightKnee);
+    for (QDoubleSpinBox* spin : {m_poseTorsoPitch, m_poseTorsoRoll, m_poseHeadPitch, m_poseHeadYaw,
+                                 m_poseLeftShoulder, m_poseLeftShoulderRoll, m_poseLeftElbow,
+                                 m_poseRightShoulder, m_poseRightShoulderRoll, m_poseRightElbow,
+                                 m_poseLeftHip, m_poseLeftHipRoll, m_poseLeftKnee, m_poseRightHip,
+                                 m_poseRightHipRoll, m_poseRightKnee}) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyPoseFromUi(); });
     }
-    auto* poseKeyButton = new QPushButton(tr("現在コマにポーズキー"), container);
+    auto* poseKeyButton = new QPushButton(tr("現在コマにポーズキー"), m_posePanel);
     m_poseKeyButton = poseKeyButton;
-    layout->addWidget(poseKeyButton);
+    poseLayout->addWidget(poseKeyButton);
     connect(poseKeyButton, &QPushButton::clicked, this, [this] {
         core::PrevizModel* model = selectedModel();
         if (!model || !isHumanoidKind(model->filePath)) return;
@@ -393,9 +451,9 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         m_viewport->update();
         emit sceneEdited();
     });
-    auto* poseKeyClearButton = new QPushButton(tr("ポーズキー削除"), container);
+    auto* poseKeyClearButton = new QPushButton(tr("ポーズキー削除"), m_posePanel);
     m_poseKeyClearButton = poseKeyClearButton;
-    layout->addWidget(poseKeyClearButton);
+    poseLayout->addWidget(poseKeyClearButton);
     connect(poseKeyClearButton, &QPushButton::clicked, this, [this] {
         core::PrevizModel* model = selectedModel();
         if (!model || !isHumanoidKind(model->filePath)) return;
@@ -405,15 +463,21 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         m_viewport->update();
         emit sceneEdited();
     });
-    auto* walkCycleButton = new QPushButton(tr("歩きループキー作成"), container);
+    auto* walkCycleButton = new QPushButton(tr("歩きループキー作成"), m_posePanel);
     m_walkCycleButton = walkCycleButton;
-    layout->addWidget(walkCycleButton);
+    poseLayout->addWidget(walkCycleButton);
     connect(walkCycleButton, &QPushButton::clicked, this, &PrevizWindow::addHumanoidWalkCycleKeys);
+    poseLayout->addStretch(1);
+    m_posePanel->hide();
 
-    auto* bodyLabel = new QLabel(tr("人型体型"), container);
+    m_bodyPanel = new QWidget(this);
+    auto* bodyLayout = new QVBoxLayout(m_bodyPanel);
+    bodyLayout->setContentsMargins(8, 8, 8, 8);
+    bodyLayout->setSpacing(6);
+    auto* bodyLabel = new QLabel(tr("人型体型"), m_bodyPanel);
     m_bodyLabelWidget = bodyLabel;
-    layout->addWidget(bodyLabel);
-    auto* bodyPresetRow = new QWidget(container);
+    bodyLayout->addWidget(bodyLabel);
+    auto* bodyPresetRow = new QWidget(m_bodyPanel);
     m_bodyPresetRow = bodyPresetRow;
     auto* bodyPresetLayout = new QHBoxLayout(bodyPresetRow);
     bodyPresetLayout->setContentsMargins(4, 0, 4, 0);
@@ -422,13 +486,13 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     auto* applyBodyPresetButton = new QPushButton(tr("適用"), bodyPresetRow);
     bodyPresetLayout->addWidget(m_bodyPresetCombo, 1);
     bodyPresetLayout->addWidget(applyBodyPresetButton);
-    layout->addWidget(bodyPresetRow);
+    bodyLayout->addWidget(bodyPresetRow);
     connect(applyBodyPresetButton, &QPushButton::clicked, this, [this] {
         applyHumanoidBodyPreset(m_bodyPresetCombo ? m_bodyPresetCombo->currentIndex() : 0);
     });
 
-    const auto makeBodySpin = [container]() {
-        auto* spin = new QDoubleSpinBox(container);
+    const auto makeBodySpin = [this]() {
+        auto* spin = new QDoubleSpinBox(m_bodyPanel);
         spin->setRange(0.20, 3.00);
         spin->setSingleStep(0.05);
         spin->setDecimals(2);
@@ -436,6 +500,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         spin->setFocusPolicy(Qt::ClickFocus);
         return spin;
     };
+    bodyLayout->addWidget(new QLabel(tr("まとめて"), m_bodyPanel));
     m_bodyHeadScale = makeBodySpin();
     m_bodyTorsoLength = makeBodySpin();
     m_bodyChestWidth = makeBodySpin();
@@ -449,25 +514,56 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     m_bodyLegThickness = makeBodySpin();
     m_bodyHandScale = makeBodySpin();
     m_bodyFootScale = makeBodySpin();
-    addRow(tr("頭サイズ"), m_bodyHeadScale);
-    addRow(tr("胴長"), m_bodyTorsoLength);
-    addRow(tr("胸幅"), m_bodyChestWidth);
-    addRow(tr("腹幅"), m_bodyBellyWidth);
-    addRow(tr("腰幅"), m_bodyWaistWidth);
-    addRow(tr("肩幅"), m_bodyShoulderWidth);
-    addRow(tr("股幅"), m_bodyHipWidth);
-    addRow(tr("腕の長さ"), m_bodyArmLength);
-    addRow(tr("腕の太さ"), m_bodyArmThickness);
-    addRow(tr("脚の長さ"), m_bodyLegLength);
-    addRow(tr("脚の太さ"), m_bodyLegThickness);
-    addRow(tr("手サイズ"), m_bodyHandScale);
-    addRow(tr("足サイズ"), m_bodyFootScale);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("頭サイズ"), m_bodyHeadScale);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("胴長"), m_bodyTorsoLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("胸幅"), m_bodyChestWidth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腹幅"), m_bodyBellyWidth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腰幅"), m_bodyWaistWidth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("肩幅"), m_bodyShoulderWidth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("股幅"), m_bodyHipWidth);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腕の長さ"), m_bodyArmLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("腕の太さ"), m_bodyArmThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("脚の長さ"), m_bodyLegLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("脚の太さ"), m_bodyLegThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("手サイズ"), m_bodyHandScale);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("足サイズ"), m_bodyFootScale);
+    bodyLayout->addWidget(new QLabel(tr("左右個別"), m_bodyPanel));
+    m_bodyLeftArmLength = makeBodySpin();
+    m_bodyRightArmLength = makeBodySpin();
+    m_bodyLeftArmThickness = makeBodySpin();
+    m_bodyRightArmThickness = makeBodySpin();
+    m_bodyLeftLegLength = makeBodySpin();
+    m_bodyRightLegLength = makeBodySpin();
+    m_bodyLeftLegThickness = makeBodySpin();
+    m_bodyRightLegThickness = makeBodySpin();
+    m_bodyLeftHandScale = makeBodySpin();
+    m_bodyRightHandScale = makeBodySpin();
+    m_bodyLeftFootScale = makeBodySpin();
+    m_bodyRightFootScale = makeBodySpin();
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左腕 長さ"), m_bodyLeftArmLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右腕 長さ"), m_bodyRightArmLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左腕 太さ"), m_bodyLeftArmThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右腕 太さ"), m_bodyRightArmThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左脚 長さ"), m_bodyLeftLegLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右脚 長さ"), m_bodyRightLegLength);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左脚 太さ"), m_bodyLeftLegThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右脚 太さ"), m_bodyRightLegThickness);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左手 サイズ"), m_bodyLeftHandScale);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右手 サイズ"), m_bodyRightHandScale);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("左足 サイズ"), m_bodyLeftFootScale);
+    addPanelRow(m_bodyPanel, bodyLayout, tr("右足 サイズ"), m_bodyRightFootScale);
     for (QDoubleSpinBox* spin : {m_bodyHeadScale, m_bodyTorsoLength, m_bodyChestWidth, m_bodyBellyWidth,
                                  m_bodyWaistWidth, m_bodyShoulderWidth, m_bodyHipWidth, m_bodyArmLength,
                                  m_bodyArmThickness, m_bodyLegLength, m_bodyLegThickness, m_bodyHandScale,
-                                 m_bodyFootScale}) {
+                                 m_bodyFootScale, m_bodyLeftArmLength, m_bodyRightArmLength,
+                                 m_bodyLeftArmThickness, m_bodyRightArmThickness, m_bodyLeftLegLength,
+                                 m_bodyRightLegLength, m_bodyLeftLegThickness, m_bodyRightLegThickness,
+                                 m_bodyLeftHandScale, m_bodyRightHandScale, m_bodyLeftFootScale,
+                                 m_bodyRightFootScale}) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyBodyFromUi(); });
     }
+    bodyLayout->addStretch(1);
+    m_bodyPanel->hide();
 
     // モーションキー(カメラ/選択モデル): 現在コマにキーを打つ・消す
     setPoseControlsEnabled(false);
@@ -724,19 +820,70 @@ void PrevizWindow::applyTransformFromUi() {
     emit sceneEdited();
 }
 
+void PrevizWindow::openPoseWindow() {
+    core::PrevizModel* model = selectedModel();
+    if (!model || !isHumanoidKind(model->filePath)) return;
+
+    if (!m_poseDialog) {
+        m_poseDialog = new QDialog(this);
+        m_poseDialog->setWindowTitle(tr("人型ポーズ"));
+        m_poseDialog->resize(340, 620);
+        auto* dialogLayout = new QVBoxLayout(m_poseDialog);
+        dialogLayout->setContentsMargins(0, 0, 0, 0);
+        auto* area = new QScrollArea(m_poseDialog);
+        area->setWidgetResizable(true);
+        area->setWidget(m_posePanel);
+        dialogLayout->addWidget(area);
+    }
+
+    refreshPoseUi();
+    if (m_posePanel) m_posePanel->show();
+    m_poseDialog->show();
+    m_poseDialog->raise();
+    m_poseDialog->activateWindow();
+}
+
+void PrevizWindow::openBodyWindow() {
+    core::PrevizModel* model = selectedModel();
+    if (!model || !isHumanoidKind(model->filePath)) return;
+
+    if (!m_bodyDialog) {
+        m_bodyDialog = new QDialog(this);
+        m_bodyDialog->setWindowTitle(tr("人型体型"));
+        m_bodyDialog->resize(340, 680);
+        auto* dialogLayout = new QVBoxLayout(m_bodyDialog);
+        dialogLayout->setContentsMargins(0, 0, 0, 0);
+        auto* area = new QScrollArea(m_bodyDialog);
+        area->setWidgetResizable(true);
+        area->setWidget(m_bodyPanel);
+        dialogLayout->addWidget(area);
+    }
+
+    refreshBodyUi();
+    if (m_bodyPanel) m_bodyPanel->show();
+    m_bodyDialog->show();
+    m_bodyDialog->raise();
+    m_bodyDialog->activateWindow();
+}
+
 void PrevizWindow::setPoseControlsEnabled(bool enabled) {
+    if (m_openPoseWindowButton) {
+        m_openPoseWindowButton->setVisible(enabled);
+        m_openPoseWindowButton->setEnabled(enabled);
+    }
+    if (!enabled && m_poseDialog) m_poseDialog->hide();
+    if (m_posePanel) m_posePanel->setEnabled(enabled);
     for (QWidget* widget : {m_poseLabelWidget, m_posePresetRow, m_poseKeyButton, m_poseKeyClearButton,
                             m_walkCycleButton}) {
-        if (widget) widget->setVisible(enabled);
+        if (widget) widget->setEnabled(enabled);
     }
     if (m_posePresetCombo) m_posePresetCombo->setEnabled(enabled);
-    for (QDoubleSpinBox* spin : {m_poseTorsoPitch, m_poseHeadYaw, m_poseLeftShoulder, m_poseLeftElbow,
-                                 m_poseRightShoulder, m_poseRightElbow, m_poseLeftHip, m_poseLeftKnee,
-                                 m_poseRightHip, m_poseRightKnee}) {
-        if (spin) {
-            spin->setEnabled(enabled);
-            if (spin->parentWidget()) spin->parentWidget()->setVisible(enabled);
-        }
+    for (QDoubleSpinBox* spin : {m_poseTorsoPitch, m_poseTorsoRoll, m_poseHeadPitch, m_poseHeadYaw,
+                                 m_poseLeftShoulder, m_poseLeftShoulderRoll, m_poseLeftElbow,
+                                 m_poseRightShoulder, m_poseRightShoulderRoll, m_poseRightElbow,
+                                 m_poseLeftHip, m_poseLeftHipRoll, m_poseLeftKnee, m_poseRightHip,
+                                 m_poseRightHipRoll, m_poseRightKnee}) {
+        if (spin) spin->setEnabled(enabled);
     }
 }
 
@@ -749,14 +896,20 @@ void PrevizWindow::refreshPoseUi() {
     m_updating = true;
     const core::PrevizHumanoidPose pose = model->poseAt(m_viewport->frame());
     m_poseTorsoPitch->setValue(pose.torsoPitchDeg);
+    m_poseTorsoRoll->setValue(pose.torsoRollDeg);
+    m_poseHeadPitch->setValue(pose.headPitchDeg);
     m_poseHeadYaw->setValue(pose.headYawDeg);
     m_poseLeftShoulder->setValue(pose.leftShoulderPitchDeg);
+    m_poseLeftShoulderRoll->setValue(pose.leftShoulderRollDeg);
     m_poseLeftElbow->setValue(pose.leftElbowDeg);
     m_poseRightShoulder->setValue(pose.rightShoulderPitchDeg);
+    m_poseRightShoulderRoll->setValue(pose.rightShoulderRollDeg);
     m_poseRightElbow->setValue(pose.rightElbowDeg);
     m_poseLeftHip->setValue(pose.leftHipPitchDeg);
+    m_poseLeftHipRoll->setValue(pose.leftHipRollDeg);
     m_poseLeftKnee->setValue(pose.leftKneeDeg);
     m_poseRightHip->setValue(pose.rightHipPitchDeg);
+    m_poseRightHipRoll->setValue(pose.rightHipRollDeg);
     m_poseRightKnee->setValue(pose.rightKneeDeg);
     m_updating = false;
 }
@@ -774,14 +927,20 @@ void PrevizWindow::applyPoseFromUi() {
 
     core::PrevizHumanoidPose& pose = editableHumanoidPose(*model);
     pose.torsoPitchDeg = static_cast<float>(m_poseTorsoPitch->value());
+    pose.torsoRollDeg = static_cast<float>(m_poseTorsoRoll->value());
+    pose.headPitchDeg = static_cast<float>(m_poseHeadPitch->value());
     pose.headYawDeg = static_cast<float>(m_poseHeadYaw->value());
     pose.leftShoulderPitchDeg = static_cast<float>(m_poseLeftShoulder->value());
+    pose.leftShoulderRollDeg = static_cast<float>(m_poseLeftShoulderRoll->value());
     pose.leftElbowDeg = static_cast<float>(m_poseLeftElbow->value());
     pose.rightShoulderPitchDeg = static_cast<float>(m_poseRightShoulder->value());
+    pose.rightShoulderRollDeg = static_cast<float>(m_poseRightShoulderRoll->value());
     pose.rightElbowDeg = static_cast<float>(m_poseRightElbow->value());
     pose.leftHipPitchDeg = static_cast<float>(m_poseLeftHip->value());
+    pose.leftHipRollDeg = static_cast<float>(m_poseLeftHipRoll->value());
     pose.leftKneeDeg = static_cast<float>(m_poseLeftKnee->value());
     pose.rightHipPitchDeg = static_cast<float>(m_poseRightHip->value());
+    pose.rightHipRollDeg = static_cast<float>(m_poseRightHipRoll->value());
     pose.rightKneeDeg = static_cast<float>(m_poseRightKnee->value());
 
     m_viewport->update();
@@ -790,18 +949,25 @@ void PrevizWindow::applyPoseFromUi() {
 }
 
 void PrevizWindow::setBodyControlsEnabled(bool enabled) {
+    if (m_openBodyWindowButton) {
+        m_openBodyWindowButton->setVisible(enabled);
+        m_openBodyWindowButton->setEnabled(enabled);
+    }
+    if (!enabled && m_bodyDialog) m_bodyDialog->hide();
+    if (m_bodyPanel) m_bodyPanel->setEnabled(enabled);
     for (QWidget* widget : {m_bodyLabelWidget, m_bodyPresetRow}) {
-        if (widget) widget->setVisible(enabled);
+        if (widget) widget->setEnabled(enabled);
     }
     if (m_bodyPresetCombo) m_bodyPresetCombo->setEnabled(enabled);
     for (QDoubleSpinBox* spin : {m_bodyHeadScale, m_bodyTorsoLength, m_bodyChestWidth, m_bodyBellyWidth,
                                  m_bodyWaistWidth, m_bodyShoulderWidth, m_bodyHipWidth, m_bodyArmLength,
                                  m_bodyArmThickness, m_bodyLegLength, m_bodyLegThickness, m_bodyHandScale,
-                                 m_bodyFootScale}) {
-        if (spin) {
-            spin->setEnabled(enabled);
-            if (spin->parentWidget()) spin->parentWidget()->setVisible(enabled);
-        }
+                                 m_bodyFootScale, m_bodyLeftArmLength, m_bodyRightArmLength,
+                                 m_bodyLeftArmThickness, m_bodyRightArmThickness, m_bodyLeftLegLength,
+                                 m_bodyRightLegLength, m_bodyLeftLegThickness, m_bodyRightLegThickness,
+                                 m_bodyLeftHandScale, m_bodyRightHandScale, m_bodyLeftFootScale,
+                                 m_bodyRightFootScale}) {
+        if (spin) spin->setEnabled(enabled);
     }
 }
 
@@ -826,6 +992,18 @@ void PrevizWindow::refreshBodyUi() {
     m_bodyLegThickness->setValue(body.legThickness);
     m_bodyHandScale->setValue(body.handScale);
     m_bodyFootScale->setValue(body.footScale);
+    m_bodyLeftArmLength->setValue(body.leftArmLength);
+    m_bodyRightArmLength->setValue(body.rightArmLength);
+    m_bodyLeftArmThickness->setValue(body.leftArmThickness);
+    m_bodyRightArmThickness->setValue(body.rightArmThickness);
+    m_bodyLeftLegLength->setValue(body.leftLegLength);
+    m_bodyRightLegLength->setValue(body.rightLegLength);
+    m_bodyLeftLegThickness->setValue(body.leftLegThickness);
+    m_bodyRightLegThickness->setValue(body.rightLegThickness);
+    m_bodyLeftHandScale->setValue(body.leftHandScale);
+    m_bodyRightHandScale->setValue(body.rightHandScale);
+    m_bodyLeftFootScale->setValue(body.leftFootScale);
+    m_bodyRightFootScale->setValue(body.rightFootScale);
     m_updating = false;
 }
 
@@ -848,6 +1026,18 @@ void PrevizWindow::applyBodyFromUi() {
     body.legThickness = static_cast<float>(m_bodyLegThickness->value());
     body.handScale = static_cast<float>(m_bodyHandScale->value());
     body.footScale = static_cast<float>(m_bodyFootScale->value());
+    body.leftArmLength = static_cast<float>(m_bodyLeftArmLength->value());
+    body.rightArmLength = static_cast<float>(m_bodyRightArmLength->value());
+    body.leftArmThickness = static_cast<float>(m_bodyLeftArmThickness->value());
+    body.rightArmThickness = static_cast<float>(m_bodyRightArmThickness->value());
+    body.leftLegLength = static_cast<float>(m_bodyLeftLegLength->value());
+    body.rightLegLength = static_cast<float>(m_bodyRightLegLength->value());
+    body.leftLegThickness = static_cast<float>(m_bodyLeftLegThickness->value());
+    body.rightLegThickness = static_cast<float>(m_bodyRightLegThickness->value());
+    body.leftHandScale = static_cast<float>(m_bodyLeftHandScale->value());
+    body.rightHandScale = static_cast<float>(m_bodyRightHandScale->value());
+    body.leftFootScale = static_cast<float>(m_bodyLeftFootScale->value());
+    body.rightFootScale = static_cast<float>(m_bodyRightFootScale->value());
 
     m_viewport->update();
     emit sceneEdited();

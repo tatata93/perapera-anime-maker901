@@ -856,6 +856,18 @@ void PrevizViewport::drawHumanoid(
     const float legThickness = ratio(body.legThickness);
     const float handScale = ratio(body.handScale);
     const float footScale = ratio(body.footScale);
+    const float leftArmLengthScale = armLengthScale * ratio(body.leftArmLength);
+    const float rightArmLengthScale = armLengthScale * ratio(body.rightArmLength);
+    const float leftArmThickness = armThickness * ratio(body.leftArmThickness);
+    const float rightArmThickness = armThickness * ratio(body.rightArmThickness);
+    const float leftLegLengthScale = legLengthScale * ratio(body.leftLegLength);
+    const float rightLegLengthScale = legLengthScale * ratio(body.rightLegLength);
+    const float leftLegThickness = legThickness * ratio(body.leftLegThickness);
+    const float rightLegThickness = legThickness * ratio(body.rightLegThickness);
+    const float leftHandScale = handScale * ratio(body.leftHandScale);
+    const float rightHandScale = handScale * ratio(body.rightHandScale);
+    const float leftFootScale = footScale * ratio(body.leftFootScale);
+    const float rightFootScale = footScale * ratio(body.rightFootScale);
 
     const auto drawLocal = [&](const std::string& filePath, const QMatrix4x4& local, const QVector4D& color) {
         drawMesh(filePath, modelMatrix * local, viewProj, /*unlit=*/false, highlight, &color);
@@ -902,11 +914,11 @@ void PrevizViewport::drawHumanoid(
     torsoRot.rotate(pose.torsoRollDeg, 0, 0, 1);
     torsoRot.rotate(pose.torsoPitchDeg, 1, 0, 0);
 
-    const float upperArm = 0.52f * armLengthScale;
-    const float forearm = 0.48f * armLengthScale;
-    const float upperLeg = 0.62f * legLengthScale;
-    const float lowerLeg = 0.58f * legLengthScale;
-    const float pelvisY = std::max(0.35f, upperLeg + lowerLeg - 0.18f);
+    const float leftUpperLeg = 0.62f * leftLegLengthScale;
+    const float leftLowerLeg = 0.58f * leftLegLengthScale;
+    const float rightUpperLeg = 0.62f * rightLegLengthScale;
+    const float rightLowerLeg = 0.58f * rightLegLengthScale;
+    const float pelvisY = std::max(0.35f, std::max(leftUpperLeg + leftLowerLeg, rightUpperLeg + rightLowerLeg) - 0.18f);
 
     const QVector3D pelvis(0.0f, pelvisY, 0.0f);
     const auto torsoPoint = [&](const QVector3D& p) {
@@ -939,10 +951,10 @@ void PrevizViewport::drawHumanoid(
     const QVector3D rightHip = torsoPoint(QVector3D(hipHalf, 0.03f, 0.0f));
 
     sphereAt(chestTop, 0.095f * std::max(0.85f, chestWidth), jointColor);
-    sphereAt(leftShoulder, 0.105f * armThickness, jointColor);
-    sphereAt(rightShoulder, 0.105f * armThickness, jointColor);
-    sphereAt(leftHip, 0.105f * legThickness, jointColor);
-    sphereAt(rightHip, 0.105f * legThickness, jointColor);
+    sphereAt(leftShoulder, 0.105f * leftArmThickness, jointColor);
+    sphereAt(rightShoulder, 0.105f * rightArmThickness, jointColor);
+    sphereAt(leftHip, 0.105f * leftLegThickness, jointColor);
+    sphereAt(rightHip, 0.105f * rightLegThickness, jointColor);
 
     QMatrix4x4 headRot = torsoRot;
     headRot.rotate(pose.headYawDeg, 0, 1, 0);
@@ -957,36 +969,44 @@ void PrevizViewport::drawHumanoid(
     face.scale(0.12f * headScale, 0.08f * headScale, 0.08f * headScale);
     drawLocal(":box", face, skinColor);
 
-    auto drawArm = [&](const QVector3D& shoulder, float shoulderPitch, float shoulderRoll, float elbowDeg) {
+    auto drawArm = [&](const QVector3D& shoulder, float shoulderPitch, float shoulderRoll, float elbowDeg,
+                       float lengthScale, float thicknessScale, float handScaleValue) {
+        const float upperArm = 0.52f * lengthScale;
+        const float forearm = 0.48f * lengthScale;
         QMatrix4x4 upperRot = torsoRot * downwardRot(shoulderPitch, shoulderRoll);
-        drawLocal(":cylinder", segmentMatrix(shoulder, upperRot, upperArm, 0.075f * armThickness), limbColor);
+        drawLocal(":cylinder", segmentMatrix(shoulder, upperRot, upperArm, 0.075f * thicknessScale), limbColor);
         const QVector3D elbow = segmentEnd(shoulder, upperRot, upperArm);
-        sphereAt(elbow, 0.085f * armThickness, jointColor);
+        sphereAt(elbow, 0.085f * thicknessScale, jointColor);
         QMatrix4x4 lowerRot = upperRot;
         lowerRot.rotate(elbowDeg, 1, 0, 0);
-        drawLocal(":cylinder", segmentMatrix(elbow, lowerRot, forearm, 0.065f * armThickness), limbColor);
-        sphereAt(segmentEnd(elbow, lowerRot, forearm), 0.075f * handScale * armThickness, skinColor);
+        drawLocal(":cylinder", segmentMatrix(elbow, lowerRot, forearm, 0.065f * thicknessScale), limbColor);
+        sphereAt(segmentEnd(elbow, lowerRot, forearm), 0.075f * handScaleValue * thicknessScale, skinColor);
     };
 
-    auto drawLeg = [&](const QVector3D& hip, float hipPitch, float hipRoll, float kneeDeg) {
+    auto drawLeg = [&](const QVector3D& hip, float hipPitch, float hipRoll, float kneeDeg, float upperLeg,
+                       float lowerLeg, float thicknessScale, float footScaleValue) {
         QMatrix4x4 upperRot = torsoRot * downwardRot(hipPitch, hipRoll);
-        drawLocal(":cylinder", segmentMatrix(hip, upperRot, upperLeg, 0.095f * legThickness), limbColor);
+        drawLocal(":cylinder", segmentMatrix(hip, upperRot, upperLeg, 0.095f * thicknessScale), limbColor);
         const QVector3D knee = segmentEnd(hip, upperRot, upperLeg);
-        sphereAt(knee, 0.095f * legThickness, jointColor);
+        sphereAt(knee, 0.095f * thicknessScale, jointColor);
         QMatrix4x4 lowerRot = upperRot;
         lowerRot.rotate(kneeDeg, 1, 0, 0);
-        drawLocal(":cylinder", segmentMatrix(knee, lowerRot, lowerLeg, 0.08f * legThickness), limbColor);
+        drawLocal(":cylinder", segmentMatrix(knee, lowerRot, lowerLeg, 0.08f * thicknessScale), limbColor);
         const QVector3D ankle = segmentEnd(knee, lowerRot, lowerLeg);
         QMatrix4x4 foot;
-        foot.translate(ankle.x(), ankle.y() - 0.05f * footScale, ankle.z() - 0.12f * footScale);
-        foot.scale(0.22f * footScale, 0.08f * legThickness, 0.38f * footScale);
+        foot.translate(ankle.x(), ankle.y() - 0.05f * footScaleValue, ankle.z() - 0.12f * footScaleValue);
+        foot.scale(0.22f * footScaleValue, 0.08f * thicknessScale, 0.38f * footScaleValue);
         drawLocal(":box", foot, footColor);
     };
 
-    drawArm(leftShoulder, pose.leftShoulderPitchDeg, pose.leftShoulderRollDeg, pose.leftElbowDeg);
-    drawArm(rightShoulder, pose.rightShoulderPitchDeg, pose.rightShoulderRollDeg, pose.rightElbowDeg);
-    drawLeg(leftHip, pose.leftHipPitchDeg, pose.leftHipRollDeg, pose.leftKneeDeg);
-    drawLeg(rightHip, pose.rightHipPitchDeg, pose.rightHipRollDeg, pose.rightKneeDeg);
+    drawArm(leftShoulder, pose.leftShoulderPitchDeg, pose.leftShoulderRollDeg, pose.leftElbowDeg,
+            leftArmLengthScale, leftArmThickness, leftHandScale);
+    drawArm(rightShoulder, pose.rightShoulderPitchDeg, pose.rightShoulderRollDeg, pose.rightElbowDeg,
+            rightArmLengthScale, rightArmThickness, rightHandScale);
+    drawLeg(leftHip, pose.leftHipPitchDeg, pose.leftHipRollDeg, pose.leftKneeDeg, leftUpperLeg, leftLowerLeg,
+            leftLegThickness, leftFootScale);
+    drawLeg(rightHip, pose.rightHipPitchDeg, pose.rightHipRollDeg, pose.rightKneeDeg, rightUpperLeg, rightLowerLeg,
+            rightLegThickness, rightFootScale);
 }
 
 float PrevizViewport::currentLensDistortion() const {

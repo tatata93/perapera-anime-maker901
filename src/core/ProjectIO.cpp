@@ -128,7 +128,19 @@ json humanoidBodyToJson(const PrevizHumanoidBody& b) {
             {"legLength", b.legLength},
             {"legThickness", b.legThickness},
             {"handScale", b.handScale},
-            {"footScale", b.footScale}};
+            {"footScale", b.footScale},
+            {"leftArmLength", b.leftArmLength},
+            {"rightArmLength", b.rightArmLength},
+            {"leftArmThickness", b.leftArmThickness},
+            {"rightArmThickness", b.rightArmThickness},
+            {"leftLegLength", b.leftLegLength},
+            {"rightLegLength", b.rightLegLength},
+            {"leftLegThickness", b.leftLegThickness},
+            {"rightLegThickness", b.rightLegThickness},
+            {"leftHandScale", b.leftHandScale},
+            {"rightHandScale", b.rightHandScale},
+            {"leftFootScale", b.leftFootScale},
+            {"rightFootScale", b.rightFootScale}};
 }
 PrevizHumanoidBody humanoidBodyFromJson(const json& j) {
     PrevizHumanoidBody b;
@@ -145,6 +157,18 @@ PrevizHumanoidBody humanoidBodyFromJson(const json& j) {
     b.legThickness = j.value("legThickness", 1.0f);
     b.handScale = j.value("handScale", 1.0f);
     b.footScale = j.value("footScale", 1.0f);
+    b.leftArmLength = j.value("leftArmLength", 1.0f);
+    b.rightArmLength = j.value("rightArmLength", 1.0f);
+    b.leftArmThickness = j.value("leftArmThickness", 1.0f);
+    b.rightArmThickness = j.value("rightArmThickness", 1.0f);
+    b.leftLegLength = j.value("leftLegLength", 1.0f);
+    b.rightLegLength = j.value("rightLegLength", 1.0f);
+    b.leftLegThickness = j.value("leftLegThickness", 1.0f);
+    b.rightLegThickness = j.value("rightLegThickness", 1.0f);
+    b.leftHandScale = j.value("leftHandScale", 1.0f);
+    b.rightHandScale = j.value("rightHandScale", 1.0f);
+    b.leftFootScale = j.value("leftFootScale", 1.0f);
+    b.rightFootScale = j.value("rightFootScale", 1.0f);
     return b;
 }
 

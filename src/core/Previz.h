@@ -54,6 +54,18 @@ struct PrevizHumanoidBody {
     float legThickness = 1.0f;
     float handScale = 1.0f;
     float footScale = 1.0f;
+    float leftArmLength = 1.0f;
+    float rightArmLength = 1.0f;
+    float leftArmThickness = 1.0f;
+    float rightArmThickness = 1.0f;
+    float leftLegLength = 1.0f;
+    float rightLegLength = 1.0f;
+    float leftLegThickness = 1.0f;
+    float rightLegThickness = 1.0f;
+    float leftHandScale = 1.0f;
+    float rightHandScale = 1.0f;
+    float leftFootScale = 1.0f;
+    float rightFootScale = 1.0f;
 };
 
 namespace previz_detail {
