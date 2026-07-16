@@ -8,13 +8,18 @@ namespace core {
 namespace {
 
 // boundaryLayersのいずれかでalphaが閾値以上なら「線」(塗り止め)とみなす
-bool isBlocked(const std::vector<const Bitmap*>& layers, int x, int y, uint8_t threshold) {
+bool isBlocked(const std::vector<const Bitmap*>& layers, const Bitmap* target, int x, int y, uint8_t threshold) {
     for (const Bitmap* layer : layers) {
         if (!layer || layer->isEmpty()) continue;
+        if (layer == target) continue;
         if (x >= layer->width() || y >= layer->height()) continue;
         if (layer->pixel(x, y).a >= threshold) return true;
     }
     return false;
+}
+
+bool samePixel(Bitmap::Pixel a, Bitmap::Pixel b) {
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
 }
 
 }  // namespace
@@ -25,7 +30,9 @@ DirtyRect floodFill(Bitmap& target, const std::vector<const Bitmap*>& boundaryLa
     const int h = target.height();
     if (w <= 0 || h <= 0) return {};
     if (seedX < 0 || seedX >= w || seedY < 0 || seedY >= h) return {};
-    if (isBlocked(boundaryLayers, seedX, seedY, alphaThreshold)) return {};  // 線の上をクリックした
+    if (isBlocked(boundaryLayers, &target, seedX, seedY, alphaThreshold)) return {};  // 線の上をクリックした
+    const Bitmap::Pixel seedColor = target.pixel(seedX, seedY);
+    if (samePixel(seedColor, color)) return {};
 
     // BFSで連結した空き領域を収集する
     std::vector<uint8_t> region(static_cast<size_t>(w) * h, 0);
@@ -47,7 +54,8 @@ DirtyRect floodFill(Bitmap& target, const std::vector<const Bitmap*>& boundaryLa
             const int ny = y + dy[d];
             if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
             if (region[idx(nx, ny)]) continue;
-            if (isBlocked(boundaryLayers, nx, ny, alphaThreshold)) continue;
+            if (isBlocked(boundaryLayers, &target, nx, ny, alphaThreshold)) continue;
+            if (!samePixel(target.pixel(nx, ny), seedColor)) continue;
             region[idx(nx, ny)] = 1;
             frontier.push({nx, ny});
         }
@@ -67,7 +75,7 @@ DirtyRect floodFill(Bitmap& target, const std::vector<const Bitmap*>& boundaryLa
                 if (region[idx(x, y)]) continue;
                 const bool nearRegion = (x > 0 && region[idx(x - 1, y)]) || (x + 1 < w && region[idx(x + 1, y)]) ||
                                         (y > 0 && region[idx(x, y - 1)]) || (y + 1 < h && region[idx(x, y + 1)]);
-                if (nearRegion) {
+                if (nearRegion && samePixel(target.pixel(x, y), seedColor)) {
                     grown[idx(x, y)] = 1;
                     dirty.unite({x, y, x + 1, y + 1});
                 }

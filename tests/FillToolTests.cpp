@@ -44,6 +44,41 @@ TEST_CASE("floodFill fills a closed region bounded by another layer's lines", "[
     REQUIRE(lineLayer.pixel(10, 10).a == 255);
 }
 
+TEST_CASE("floodFill recolors an already filled region", "[core][fill]") {
+    auto lineLayer = makeTransparent(64, 64);
+    auto paintLayer = makeTransparent(64, 64);
+    drawRectOutline(lineLayer, 10, 10, 50, 50);
+
+    core::floodFill(paintLayer, {&lineLayer, &paintLayer}, 30, 30, {255, 0, 0, 255}, 64, /*dilatePx=*/0);
+    const auto dirty =
+        core::floodFill(paintLayer, {&lineLayer, &paintLayer}, 30, 30, {0, 0, 255, 255}, 64, /*dilatePx=*/0);
+
+    REQUIRE_FALSE(dirty.isEmpty());
+    REQUIRE(paintLayer.pixel(30, 30).b == 255);
+    REQUIRE(paintLayer.pixel(11, 11).b == 255);
+    REQUIRE(paintLayer.pixel(5, 5).a == 0);
+}
+
+TEST_CASE("floodFill recolors one side while color-trace boundaries still block", "[core][fill]") {
+    auto lineLayer = makeTransparent(64, 64);
+    auto colorTraceLayer = makeTransparent(64, 64);
+    auto paintLayer = makeTransparent(64, 64);
+    drawRectOutline(lineLayer, 10, 10, 50, 50);
+    for (int y = 11; y < 50; ++y) {
+        colorTraceLayer.setPixel(32, y, {255, 0, 0, 255});
+    }
+
+    std::vector<const core::Bitmap*> boundary{&lineLayer, &colorTraceLayer, &paintLayer};
+    core::floodFill(paintLayer, boundary, 20, 30, {255, 0, 0, 255}, 64, /*dilatePx=*/0);
+    core::floodFill(paintLayer, boundary, 40, 30, {0, 0, 255, 255}, 64, /*dilatePx=*/0);
+    const auto dirty = core::floodFill(paintLayer, boundary, 20, 30, {0, 255, 0, 255}, 64, /*dilatePx=*/0);
+
+    REQUIRE_FALSE(dirty.isEmpty());
+    REQUIRE(paintLayer.pixel(20, 30).g == 255);
+    REQUIRE(paintLayer.pixel(40, 30).b == 255);
+    REQUIRE(paintLayer.pixel(32, 30).a == 0);
+}
+
 TEST_CASE("floodFill on a line pixel is a no-op", "[core][fill]") {
     auto lineLayer = makeTransparent(32, 32);
     auto paintLayer = makeTransparent(32, 32);
