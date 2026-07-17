@@ -220,9 +220,11 @@ private:
     void setupMenus();
     void setupPanels();
     void setupRetroThemeMenu(QMenu* viewMenu);
+    void setStandardTheme();
     void setRetroTheme(perapera::ui::RetroThemeVariant variant);
     void updateRetroThemeActions();
     void applyRetroChrome();
+    void clearRetroChrome();
 
     void newDocument();
     // 作成オプション(名前・解像度・FPS)をダイアログで決めて新規プロジェクトを作る
@@ -404,6 +406,7 @@ private:
     QAction* m_playAction = nullptr;
     QAction* m_onionAction = nullptr;
     QAction* m_pressureAction = nullptr;   // 表示メニューの筆圧検知トグル(ツールバーの筆圧チェックと同期)
+    QAction* m_standardUiAction = nullptr;
     QAction* m_retro95Action = nullptr;
     QAction* m_retroXpAction = nullptr;
     QCheckBox* m_pressureCheck = nullptr;  // ツールバーの筆圧チェック

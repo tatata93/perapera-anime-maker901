@@ -14,7 +14,9 @@
 #include <QPainter>
 #include <QPointer>
 #include <QSizePolicy>
+#include <QStyle>
 #include <QStyleFactory>
+#include <QVariant>
 #include <algorithm>
 #include <cmath>
 
@@ -27,6 +29,14 @@ constexpr const char* kVariantProperty = "peraperaRetroThemeVariant";
 constexpr const char* kDockTitleInstalledProperty = "peraperaRetroDockTitleInstalled";
 constexpr const char* kWindowFrameInstalledProperty = "peraperaRetroWindowFrameInstalled";
 constexpr const char* kResizeFilterInstalledProperty = "peraperaRetroResizeFilterInstalled";
+
+struct StandardAppearance {
+    bool captured = false;
+    QString styleName;
+    QPalette palette;
+    QFont font;
+    QString styleSheet;
+};
 
 enum class CaptionCommand {
     Minimize,
@@ -42,6 +52,40 @@ enum ResizeEdge {
     ResizeTop = 1 << 2,
     ResizeBottom = 1 << 3,
 };
+
+StandardAppearance& standardAppearance() {
+    static StandardAppearance appearance;
+    return appearance;
+}
+
+void captureStandardAppearance(QApplication& app) {
+    StandardAppearance& appearance = standardAppearance();
+    if (appearance.captured) return;
+    appearance.captured = true;
+    if (app.style()) appearance.styleName = app.style()->objectName();
+    appearance.palette = app.palette();
+    appearance.font = app.font();
+    appearance.styleSheet = app.styleSheet();
+}
+
+void restoreStandardAppearance(QApplication& app) {
+    StandardAppearance& appearance = standardAppearance();
+    if (!appearance.captured) return;
+
+    bool styleRestored = false;
+    if (!appearance.styleName.isEmpty()) {
+        if (auto* style = QStyleFactory::create(appearance.styleName)) {
+            app.setStyle(style);
+            styleRestored = true;
+        }
+    }
+    if (!styleRestored) {
+        if (auto* style = QStyleFactory::create(QStringLiteral("Fusion"))) app.setStyle(style);
+    }
+    app.setFont(appearance.font);
+    app.setPalette(appearance.palette);
+    app.setStyleSheet(appearance.styleSheet);
+}
 
 void applyWindowsBaseStyle(QApplication& app) {
     if (auto* style = QStyleFactory::create(QStringLiteral("Windows"))) {
@@ -188,6 +232,16 @@ protected:
         if (event->type() == QEvent::ChildAdded) {
             auto* childEvent = static_cast<QChildEvent*>(event);
             if (childEvent->child()) installOn(childEvent->child());
+            return QObject::eventFilter(watched, event);
+        }
+
+        if (!isRetroThemeEnabled() || !m_window->property(kWindowFrameInstalledProperty).toBool()) {
+            if (m_cursorSet) {
+                m_window->unsetCursor();
+                m_cursorSet = false;
+            }
+            m_dragging = false;
+            m_edges = ResizeNone;
             return QObject::eventFilter(watched, event);
         }
 
@@ -842,6 +896,7 @@ QSplitter::handle {
 }  // namespace
 
 void applyRetroTheme(QApplication& app, RetroThemeVariant variant) {
+    captureStandardAppearance(app);
     app.setProperty(kEnabledProperty, true);
     app.setProperty(kVariantProperty, variant == RetroThemeVariant::Windows95 ? 95 : 1);
     applyWindowsBaseStyle(app);
@@ -857,6 +912,12 @@ void applyRetroTheme(QApplication& app, RetroThemeVariant variant) {
     app.setStyleSheet(windowsXpStyleSheet());
 }
 
+void clearRetroTheme(QApplication& app) {
+    app.setProperty(kEnabledProperty, false);
+    app.setProperty(kVariantProperty, 0);
+    restoreStandardAppearance(app);
+}
+
 void setRetroThemeAvailable(QApplication& app, bool available) {
     app.setProperty(kAvailableProperty, available);
 }
@@ -870,7 +931,7 @@ bool isRetroThemeEnabled() {
 }
 
 RetroThemeVariant activeRetroThemeVariant() {
-    if (!qApp) return RetroThemeVariant::WindowsXp;
+    if (!qApp) return RetroThemeVariant::Windows95;
     return qApp->property(kVariantProperty).toInt() == 95 ? RetroThemeVariant::Windows95
                                                            : RetroThemeVariant::WindowsXp;
 }
@@ -885,6 +946,17 @@ void installRetroDockTitleBars(QWidget* root) {
     }
 }
 
+void removeRetroDockTitleBars(QWidget* root) {
+    if (!root) return;
+    const auto docks = root->findChildren<QDockWidget*>();
+    for (QDockWidget* dock : docks) {
+        if (!dock || !dock->property(kDockTitleInstalledProperty).toBool()) continue;
+        dock->setTitleBarWidget(nullptr);
+        dock->setProperty(kDockTitleInstalledProperty, false);
+        dock->update();
+    }
+}
+
 void installRetroWindowFrame(QMainWindow* window) {
     if (!window || !isRetroThemeEnabled()) return;
 
@@ -894,10 +966,24 @@ void installRetroWindowFrame(QMainWindow* window) {
         window->setWindowFlag(Qt::FramelessWindowHint, true);
         window->setProperty(kWindowFrameInstalledProperty, true);
     }
-    if (!window->property(kResizeFilterInstalledProperty).toBool()) {
-        auto* filter = new RetroResizeFilter(window);
-        filter->installOn(window);
-        window->setProperty(kResizeFilterInstalledProperty, true);
+    auto* filter = dynamic_cast<RetroResizeFilter*>(window->property(kResizeFilterInstalledProperty).value<QObject*>());
+    if (!filter) {
+        filter = new RetroResizeFilter(window);
+        window->setProperty(kResizeFilterInstalledProperty, QVariant::fromValue(static_cast<QObject*>(filter)));
+    }
+    filter->installOn(window);
+    if (wasVisible) window->show();
+}
+
+void removeRetroWindowFrame(QMainWindow* window) {
+    if (!window) return;
+
+    const bool wasVisible = window->isVisible();
+    if (window->property(kWindowFrameInstalledProperty).toBool()) {
+        window->setMenuWidget(nullptr);
+        window->setWindowFlag(Qt::FramelessWindowHint, false);
+        window->setProperty(kWindowFrameInstalledProperty, false);
+        window->unsetCursor();
     }
     if (wasVisible) window->show();
 }

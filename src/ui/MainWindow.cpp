@@ -1728,7 +1728,7 @@ void MainWindow::setActiveCel(int celIndex) {
 void MainWindow::setupRetroThemeMenu(QMenu* viewMenu) {
     if (!viewMenu || !perapera::ui::isRetroThemeAvailable()) return;
 
-    QMenu* retroMenu = viewMenu->addMenu(tr("レトロUI"));
+    QMenu* retroMenu = viewMenu->addMenu(tr("UIテーマ"));
     auto* retroGroup = new QActionGroup(this);
     retroGroup->setExclusive(true);
 
@@ -1738,6 +1738,11 @@ void MainWindow::setupRetroThemeMenu(QMenu* viewMenu) {
     connect(m_retro95Action, &QAction::triggered, this,
             [this] { setRetroTheme(perapera::ui::RetroThemeVariant::Windows95); });
 
+    m_standardUiAction = retroMenu->addAction(tr("通常UI"));
+    m_standardUiAction->setCheckable(true);
+    retroGroup->addAction(m_standardUiAction);
+    connect(m_standardUiAction, &QAction::triggered, this, &MainWindow::setStandardTheme);
+
     m_retroXpAction = retroMenu->addAction(tr("Windows XP風"));
     m_retroXpAction->setCheckable(true);
     retroGroup->addAction(m_retroXpAction);
@@ -1745,6 +1750,16 @@ void MainWindow::setupRetroThemeMenu(QMenu* viewMenu) {
             [this] { setRetroTheme(perapera::ui::RetroThemeVariant::WindowsXp); });
 
     updateRetroThemeActions();
+}
+
+void MainWindow::setStandardTheme() {
+    if (!qApp) return;
+    perapera::ui::clearRetroTheme(*qApp);
+    clearRetroChrome();
+    updateRetroThemeActions();
+    for (QWidget* window : QApplication::topLevelWidgets()) {
+        if (window) window->update();
+    }
 }
 
 void MainWindow::setRetroTheme(perapera::ui::RetroThemeVariant variant) {
@@ -1758,12 +1773,15 @@ void MainWindow::setRetroTheme(perapera::ui::RetroThemeVariant variant) {
 }
 
 void MainWindow::updateRetroThemeActions() {
-    if (!m_retro95Action || !m_retroXpAction) return;
+    if (!m_standardUiAction || !m_retro95Action || !m_retroXpAction) return;
     const auto active = perapera::ui::activeRetroThemeVariant();
+    const bool retroEnabled = perapera::ui::isRetroThemeEnabled();
+    QSignalBlocker blockStandard(m_standardUiAction);
     QSignalBlocker block95(m_retro95Action);
     QSignalBlocker blockXp(m_retroXpAction);
-    m_retro95Action->setChecked(active == perapera::ui::RetroThemeVariant::Windows95);
-    m_retroXpAction->setChecked(active == perapera::ui::RetroThemeVariant::WindowsXp);
+    m_standardUiAction->setChecked(!retroEnabled);
+    m_retro95Action->setChecked(retroEnabled && active == perapera::ui::RetroThemeVariant::Windows95);
+    m_retroXpAction->setChecked(retroEnabled && active == perapera::ui::RetroThemeVariant::WindowsXp);
 }
 
 void MainWindow::applyRetroChrome() {
@@ -1776,6 +1794,17 @@ void MainWindow::applyRetroChrome() {
     perapera::ui::installRetroWindowFrame(m_projectManagerWindow);
     perapera::ui::installRetroWindowFrame(m_shootingWindow);
     perapera::ui::installRetroWindowFrame(m_floatingCanvasWindow);
+}
+
+void MainWindow::clearRetroChrome() {
+    perapera::ui::removeRetroDockTitleBars(this);
+    perapera::ui::removeRetroWindowFrame(m_previzWindow);
+    perapera::ui::removeRetroWindowFrame(m_storyboardWindow);
+    perapera::ui::removeRetroWindowFrame(m_settingBoardWindow);
+    perapera::ui::removeRetroWindowFrame(m_editWindow);
+    perapera::ui::removeRetroWindowFrame(m_projectManagerWindow);
+    perapera::ui::removeRetroWindowFrame(m_shootingWindow);
+    perapera::ui::removeRetroWindowFrame(m_floatingCanvasWindow);
 }
 
 void MainWindow::setupMenus() {

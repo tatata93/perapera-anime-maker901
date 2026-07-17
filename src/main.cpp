@@ -147,29 +147,22 @@ int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     const QStringList args = app.arguments();
 
-    perapera::ui::RetroThemeVariant retroVariant = perapera::ui::RetroThemeVariant::WindowsXp;
-#if defined(PERAPERA_RETRO_UI)
-    const bool retroUiBuild = true;
+    perapera::ui::RetroThemeVariant retroVariant = perapera::ui::RetroThemeVariant::Windows95;
     bool retroUiEnabled = true;
-#else
-    const bool retroUiBuild = false;
-    bool retroUiEnabled = false;
-#endif
     for (const QString& arg : args) {
         const QString lower = arg.toLower();
         if (lower == QStringLiteral("--normal-ui")) retroUiEnabled = false;
-        if (lower == QStringLiteral("--retro-ui") || lower == QStringLiteral("--retro-ui=xp") ||
-            lower == QStringLiteral("--windowsxp-ui")) {
-            retroUiEnabled = true;
-            retroVariant = perapera::ui::RetroThemeVariant::WindowsXp;
-        }
-        if (lower == QStringLiteral("--retro-ui=95") || lower == QStringLiteral("--retro-ui=win95") ||
-            lower == QStringLiteral("--windows95-ui")) {
+        if (lower == QStringLiteral("--retro-ui") || lower == QStringLiteral("--retro-ui=95") ||
+            lower == QStringLiteral("--retro-ui=win95") || lower == QStringLiteral("--windows95-ui")) {
             retroUiEnabled = true;
             retroVariant = perapera::ui::RetroThemeVariant::Windows95;
         }
+        if (lower == QStringLiteral("--retro-ui=xp") || lower == QStringLiteral("--windowsxp-ui")) {
+            retroUiEnabled = true;
+            retroVariant = perapera::ui::RetroThemeVariant::WindowsXp;
+        }
     }
-    perapera::ui::setRetroThemeAvailable(app, retroUiBuild || retroUiEnabled);
+    perapera::ui::setRetroThemeAvailable(app, true);
     if (retroUiEnabled) perapera::ui::applyRetroTheme(app, retroVariant);
     if (args.contains(QStringLiteral("--retro-ui-smoke"))) return 0;
 

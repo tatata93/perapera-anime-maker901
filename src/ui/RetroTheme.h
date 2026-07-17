@@ -13,12 +13,15 @@ enum class RetroThemeVariant {
 };
 
 void applyRetroTheme(QApplication& app, RetroThemeVariant variant);
+void clearRetroTheme(QApplication& app);
 void setRetroThemeAvailable(QApplication& app, bool available);
 bool isRetroThemeAvailable();
 bool isRetroThemeEnabled();
 RetroThemeVariant activeRetroThemeVariant();
 
 void installRetroDockTitleBars(QWidget* root);
+void removeRetroDockTitleBars(QWidget* root);
 void installRetroWindowFrame(QMainWindow* window);
+void removeRetroWindowFrame(QMainWindow* window);
 
 }  // namespace perapera::ui
