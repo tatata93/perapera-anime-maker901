@@ -26,6 +26,7 @@
 #include "ui/NewCutDialog.h"
 #include "ui/NewProjectDialog.h"
 #include "ui/ProjectManagerWindow.h"
+#include "ui/RetroTheme.h"
 #include "ui/SettingBoardWindow.h"
 #include "ui/ShootingWindow.h"
 #include "ui/StoryboardWindow.h"
@@ -142,16 +143,40 @@ QString writeDebugCubeStl(const QString& path) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    QApplication::setAttribute(Qt::AA_UseStyleSheetPropagationInWidgetStyles, true);
     QApplication app(argc, argv);
+    const QStringList args = app.arguments();
+
+    perapera::ui::RetroThemeVariant retroVariant = perapera::ui::RetroThemeVariant::WindowsXp;
+#if defined(PERAPERA_RETRO_UI)
+    bool retroUiEnabled = true;
+#else
+    bool retroUiEnabled = false;
+#endif
+    for (const QString& arg : args) {
+        const QString lower = arg.toLower();
+        if (lower == QStringLiteral("--normal-ui")) retroUiEnabled = false;
+        if (lower == QStringLiteral("--retro-ui") || lower == QStringLiteral("--retro-ui=xp") ||
+            lower == QStringLiteral("--windowsxp-ui")) {
+            retroUiEnabled = true;
+            retroVariant = perapera::ui::RetroThemeVariant::WindowsXp;
+        }
+        if (lower == QStringLiteral("--retro-ui=95") || lower == QStringLiteral("--retro-ui=win95") ||
+            lower == QStringLiteral("--windows95-ui")) {
+            retroUiEnabled = true;
+            retroVariant = perapera::ui::RetroThemeVariant::Windows95;
+        }
+    }
+    if (retroUiEnabled) perapera::ui::applyRetroTheme(app, retroVariant);
+    if (args.contains(QStringLiteral("--retro-ui-smoke"))) return 0;
 
     // 動作確認用: --multiplane-test <出力PNG> でマルチプレーン撮影台のデモシーン
     // (奥=背景/中=セルA/手前=セルB、セルAにピント)をレイトレースし、
     // ウィンドウを開かずにPNGへ保存して終了する
     {
-        const QStringList earlyArgs = app.arguments();
-        const int multiplaneIndex = earlyArgs.indexOf("--multiplane-test");
-        if (multiplaneIndex >= 0 && multiplaneIndex + 1 < earlyArgs.size()) {
-            const QString outputPath = earlyArgs.at(multiplaneIndex + 1);
+        const int multiplaneIndex = args.indexOf("--multiplane-test");
+        if (multiplaneIndex >= 0 && multiplaneIndex + 1 < args.size()) {
+            const QString outputPath = args.at(multiplaneIndex + 1);
 
             static core::Bitmap backgroundArt = makeMultiplaneBackgroundArt();
             static core::Bitmap celAArt = makeMultiplaneCelAArt();
@@ -189,8 +214,6 @@ int main(int argc, char* argv[]) {
     MainWindow window;
     window.resize(1280, 800);
     window.show();
-
-    const QStringList args = app.arguments();
 
     // "--"で始まる動作確認用フックが1つもない場合のみクラッシュリカバリ確認を行う。
     // ヘッドレステスト実行時に復元ダイアログが出て止まってしまうのを防ぐ

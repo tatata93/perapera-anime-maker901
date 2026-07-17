@@ -1,6 +1,6 @@
 add_subdirectory(core)
 
-add_executable(perapera-anime-maker901
+set(PERAPERA_APP_SOURCES
     main.cpp
     ui/MainWindow.cpp
     ui/MainWindow.h
@@ -44,6 +44,8 @@ add_executable(perapera-anime-maker901
     ui/CanvasSizeDialog.h
     ui/FloatingCanvasWindow.cpp
     ui/FloatingCanvasWindow.h
+    ui/RetroTheme.cpp
+    ui/RetroTheme.h
     render/GLCanvas.cpp
     render/GLCanvas.h
     previz/GltfLoader.cpp
@@ -60,19 +62,27 @@ add_executable(perapera-anime-maker901
 
 # tinygltf(ヘッダオンリー、MIT)
 find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h" REQUIRED)
-target_include_directories(perapera-anime-maker901 PRIVATE ${TINYGLTF_INCLUDE_DIRS})
-
-target_link_libraries(perapera-anime-maker901 PRIVATE
-    perapera_core
-    Qt6::Widgets
-    Qt6::OpenGLWidgets
-)
-
-target_include_directories(perapera-anime-maker901 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
 find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${Qt6_DIR}/../../../bin")
-if(WINDEPLOYQT_EXECUTABLE)
-    add_custom_command(TARGET perapera-anime-maker901 POST_BUILD
-        COMMAND ${WINDEPLOYQT_EXECUTABLE} --no-compiler-runtime $<TARGET_FILE:perapera-anime-maker901>
+
+function(add_perapera_app target_name)
+    add_executable(${target_name} ${PERAPERA_APP_SOURCES})
+    target_include_directories(${target_name} PRIVATE
+        ${TINYGLTF_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}
     )
-endif()
+    target_link_libraries(${target_name} PRIVATE
+        perapera_core
+        Qt6::Widgets
+        Qt6::OpenGLWidgets
+    )
+    if(WINDEPLOYQT_EXECUTABLE)
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${WINDEPLOYQT_EXECUTABLE} --no-compiler-runtime $<TARGET_FILE:${target_name}>
+        )
+    endif()
+endfunction()
+
+add_perapera_app(perapera-anime-maker901)
+
+add_perapera_app(perapera-anime-maker901-retro)
+target_compile_definitions(perapera-anime-maker901-retro PRIVATE PERAPERA_RETRO_UI=1)
