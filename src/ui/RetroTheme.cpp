@@ -242,6 +242,19 @@ QRect resizedGeometry(const QRect& start, int edges, const QPoint& delta, const 
     return next;
 }
 
+bool isInteractiveResizeBlocker(QObject* object, const QWidget* window) {
+    for (QObject* current = object; current && current != window; current = current->parent()) {
+        if (current->inherits("QAbstractButton") || current->inherits("QAbstractSlider") ||
+            current->inherits("QAbstractSpinBox") || current->inherits("QComboBox") ||
+            current->inherits("QLineEdit") || current->inherits("QTextEdit") ||
+            current->inherits("QPlainTextEdit") || current->inherits("QAbstractItemView") ||
+            current->inherits("QMenuBar") || current->inherits("QToolBar") || current->inherits("QTabBar")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 class RetroResizeFilter : public QObject {
 public:
     explicit RetroResizeFilter(QMainWindow* window) : QObject(window), m_window(window) {}
@@ -275,6 +288,11 @@ protected:
             event->type() == QEvent::MouseButtonRelease) {
             auto* mouseEvent = static_cast<QMouseEvent*>(event);
             const QPoint globalPos = mouseEvent->globalPosition().toPoint();
+
+            if (!m_dragging && isInteractiveResizeBlocker(watched, m_window)) {
+                clearResizeCursor();
+                return QObject::eventFilter(watched, event);
+            }
 
             if (event->type() == QEvent::MouseButtonPress && mouseEvent->button() == Qt::LeftButton) {
                 const int edges = resizeEdgesAt(m_window, globalPos);
