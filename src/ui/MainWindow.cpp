@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include <QActionGroup>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QColorDialog>
@@ -20,6 +21,7 @@
 #include <QRectF>
 #include <QCheckBox>
 #include <QSlider>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -54,6 +56,7 @@
 #include "ui/LayerPanel.h"
 #include "ui/PalettePanel.h"
 #include "ui/ReferencePanel.h"
+#include "ui/RetroTheme.h"
 #include "ui/SettingBoardWindow.h"
 #include "ui/ShootingWindow.h"
 #include "ui/StoryboardWindow.h"
@@ -103,6 +106,7 @@ template <typename Window>
 Window* createSecondaryWindow() {
     auto* window = new Window(nullptr);
     window->setAttribute(Qt::WA_QuitOnClose, false);
+    perapera::ui::installRetroWindowFrame(window);
     return window;
 }
 
@@ -378,6 +382,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     createNewDocument();
     setupPanels();
+    applyRetroChrome();
     setupMenus();
     setupToolBar();
     setupCutBar();
@@ -817,6 +822,7 @@ void MainWindow::detachMainCanvas() {
 
     auto* window = new FloatingCanvasWindow(tr("メインキャンバス"), this);
     m_floatingCanvasWindow = window;
+    perapera::ui::installRetroWindowFrame(window);
     window->setCentralWidget(m_canvas);
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &MainWindow::restoreMainCanvas);
     connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
@@ -1719,6 +1725,59 @@ void MainWindow::setActiveCel(int celIndex) {
     updateXsheetPanel();  // 末尾でupdateCelPanel()も呼ばれる
 }
 
+void MainWindow::setupRetroThemeMenu(QMenu* viewMenu) {
+    if (!viewMenu || !perapera::ui::isRetroThemeAvailable()) return;
+
+    QMenu* retroMenu = viewMenu->addMenu(tr("レトロUI"));
+    auto* retroGroup = new QActionGroup(this);
+    retroGroup->setExclusive(true);
+
+    m_retro95Action = retroMenu->addAction(tr("Windows 95風"));
+    m_retro95Action->setCheckable(true);
+    retroGroup->addAction(m_retro95Action);
+    connect(m_retro95Action, &QAction::triggered, this,
+            [this] { setRetroTheme(perapera::ui::RetroThemeVariant::Windows95); });
+
+    m_retroXpAction = retroMenu->addAction(tr("Windows XP風"));
+    m_retroXpAction->setCheckable(true);
+    retroGroup->addAction(m_retroXpAction);
+    connect(m_retroXpAction, &QAction::triggered, this,
+            [this] { setRetroTheme(perapera::ui::RetroThemeVariant::WindowsXp); });
+
+    updateRetroThemeActions();
+}
+
+void MainWindow::setRetroTheme(perapera::ui::RetroThemeVariant variant) {
+    if (!qApp) return;
+    perapera::ui::applyRetroTheme(*qApp, variant);
+    applyRetroChrome();
+    updateRetroThemeActions();
+    for (QWidget* window : QApplication::topLevelWidgets()) {
+        if (window) window->update();
+    }
+}
+
+void MainWindow::updateRetroThemeActions() {
+    if (!m_retro95Action || !m_retroXpAction) return;
+    const auto active = perapera::ui::activeRetroThemeVariant();
+    QSignalBlocker block95(m_retro95Action);
+    QSignalBlocker blockXp(m_retroXpAction);
+    m_retro95Action->setChecked(active == perapera::ui::RetroThemeVariant::Windows95);
+    m_retroXpAction->setChecked(active == perapera::ui::RetroThemeVariant::WindowsXp);
+}
+
+void MainWindow::applyRetroChrome() {
+    if (!perapera::ui::isRetroThemeEnabled()) return;
+    perapera::ui::installRetroDockTitleBars(this);
+    perapera::ui::installRetroWindowFrame(m_previzWindow);
+    perapera::ui::installRetroWindowFrame(m_storyboardWindow);
+    perapera::ui::installRetroWindowFrame(m_settingBoardWindow);
+    perapera::ui::installRetroWindowFrame(m_editWindow);
+    perapera::ui::installRetroWindowFrame(m_projectManagerWindow);
+    perapera::ui::installRetroWindowFrame(m_shootingWindow);
+    perapera::ui::installRetroWindowFrame(m_floatingCanvasWindow);
+}
+
 void MainWindow::setupMenus() {
     QMenu* fileMenu = menuBar()->addMenu(tr("ファイル(&F)"));
 
@@ -1810,6 +1869,10 @@ void MainWindow::setupMenus() {
     viewMenu->addAction(m_tapPanel->toggleViewAction());
     viewMenu->addAction(m_referencePanel->toggleViewAction());
     viewMenu->addSeparator();
+    if (perapera::ui::isRetroThemeAvailable()) {
+        setupRetroThemeMenu(viewMenu);
+        viewMenu->addSeparator();
+    }
     // 仕上げ表示: 色トレス線・作監修正レイヤーを隠して最終画を確認する(書き出しと同じ見え方)
     QAction* cleanViewAction = viewMenu->addAction(tr("仕上げ表示(トレス線/修正を隠す)(&C)"));
     cleanViewAction->setCheckable(true);

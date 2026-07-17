@@ -149,8 +149,10 @@ int main(int argc, char* argv[]) {
 
     perapera::ui::RetroThemeVariant retroVariant = perapera::ui::RetroThemeVariant::WindowsXp;
 #if defined(PERAPERA_RETRO_UI)
+    const bool retroUiBuild = true;
     bool retroUiEnabled = true;
 #else
+    const bool retroUiBuild = false;
     bool retroUiEnabled = false;
 #endif
     for (const QString& arg : args) {
@@ -167,6 +169,7 @@ int main(int argc, char* argv[]) {
             retroVariant = perapera::ui::RetroThemeVariant::Windows95;
         }
     }
+    perapera::ui::setRetroThemeAvailable(app, retroUiBuild || retroUiEnabled);
     if (retroUiEnabled) perapera::ui::applyRetroTheme(app, retroVariant);
     if (args.contains(QStringLiteral("--retro-ui-smoke"))) return 0;
 

@@ -1,12 +1,33 @@
 #include "RetroTheme.h"
 
+#include <QAbstractButton>
 #include <QApplication>
+#include <QDockWidget>
 #include <QFont>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QMainWindow>
+#include <QMouseEvent>
 #include <QPalette>
+#include <QPainter>
+#include <QSizePolicy>
 #include <QStyleFactory>
 
 namespace perapera::ui {
 namespace {
+
+constexpr const char* kAvailableProperty = "peraperaRetroThemeAvailable";
+constexpr const char* kEnabledProperty = "peraperaRetroThemeEnabled";
+constexpr const char* kVariantProperty = "peraperaRetroThemeVariant";
+constexpr const char* kDockTitleInstalledProperty = "peraperaRetroDockTitleInstalled";
+constexpr const char* kWindowFrameInstalledProperty = "peraperaRetroWindowFrameInstalled";
+
+enum class CaptionCommand {
+    Minimize,
+    MaximizeRestore,
+    FloatRestore,
+    Close,
+};
 
 void applyWindowsBaseStyle(QApplication& app) {
     if (auto* style = QStyleFactory::create(QStringLiteral("Windows"))) {
@@ -64,6 +85,271 @@ QPalette windowsXpPalette() {
     return palette;
 }
 
+bool isXp() {
+    return activeRetroThemeVariant() == RetroThemeVariant::WindowsXp;
+}
+
+QColor titleBarStartColor(bool active) {
+    if (!active) return isXp() ? QColor(122, 150, 190) : QColor(128, 128, 128);
+    return isXp() ? QColor(0, 84, 227) : QColor(0, 0, 128);
+}
+
+QColor titleBarEndColor(bool active) {
+    if (!active) return isXp() ? QColor(192, 202, 218) : QColor(192, 192, 192);
+    return isXp() ? QColor(61, 149, 255) : QColor(16, 132, 208);
+}
+
+void drawClassicRaisedFrame(QPainter& painter, const QRect& rect, bool sunken) {
+    const QColor light = Qt::white;
+    const QColor mid(128, 128, 128);
+    const QColor dark(64, 64, 64);
+
+    const QColor topLeft = sunken ? dark : light;
+    const QColor bottomRight = sunken ? light : dark;
+    painter.setPen(topLeft);
+    painter.drawLine(rect.topLeft(), rect.topRight());
+    painter.drawLine(rect.topLeft(), rect.bottomLeft());
+    painter.setPen(bottomRight);
+    painter.drawLine(rect.bottomLeft(), rect.bottomRight());
+    painter.drawLine(rect.topRight(), rect.bottomRight());
+
+    const QRect inner = rect.adjusted(1, 1, -1, -1);
+    painter.setPen(sunken ? mid : QColor(223, 223, 223));
+    painter.drawLine(inner.topLeft(), inner.topRight());
+    painter.drawLine(inner.topLeft(), inner.bottomLeft());
+    painter.setPen(sunken ? QColor(223, 223, 223) : mid);
+    painter.drawLine(inner.bottomLeft(), inner.bottomRight());
+    painter.drawLine(inner.topRight(), inner.bottomRight());
+}
+
+void drawCaptionGlyph(QPainter& painter, CaptionCommand command, const QRect& rect, bool closeGlyphIsWhite) {
+    QPen pen(closeGlyphIsWhite ? Qt::white : Qt::black);
+    pen.setWidth(2);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    const int cx = rect.center().x();
+    const int cy = rect.center().y();
+    if (command == CaptionCommand::Minimize) {
+        painter.drawLine(rect.left() + 5, rect.bottom() - 5, rect.right() - 5, rect.bottom() - 5);
+        return;
+    }
+    if (command == CaptionCommand::Close) {
+        painter.drawLine(cx - 4, cy - 4, cx + 4, cy + 4);
+        painter.drawLine(cx + 4, cy - 4, cx - 4, cy + 4);
+        return;
+    }
+    if (command == CaptionCommand::FloatRestore) {
+        painter.drawRect(cx - 4, cy - 4, 8, 8);
+        painter.drawLine(cx - 2, cy - 6, cx + 6, cy - 6);
+        painter.drawLine(cx + 6, cy - 6, cx + 6, cy + 2);
+        return;
+    }
+    painter.drawRect(cx - 5, cy - 5, 10, 10);
+    painter.drawLine(cx - 5, cy - 2, cx + 5, cy - 2);
+}
+
+class RetroCaptionButton : public QAbstractButton {
+public:
+    explicit RetroCaptionButton(CaptionCommand command, QWidget* parent = nullptr)
+        : QAbstractButton(parent), m_command(command) {
+        setCursor(Qt::ArrowCursor);
+        setFocusPolicy(Qt::NoFocus);
+        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        setToolTip(toolTipForCommand(command));
+    }
+
+    QSize sizeHint() const override {
+        return isXp() ? QSize(22, 20) : QSize(18, 16);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, isXp());
+        const QRect r = rect().adjusted(1, 1, -1, -1);
+        const bool down = isDown();
+        const bool hover = underMouse();
+
+        if (!isXp()) {
+            painter.fillRect(rect(), QColor(212, 208, 200));
+            drawClassicRaisedFrame(painter, r, down);
+            drawCaptionGlyph(painter, m_command, r.adjusted(down ? 1 : 0, down ? 1 : 0, down ? 1 : 0, down ? 1 : 0),
+                             false);
+            return;
+        }
+
+        const bool close = m_command == CaptionCommand::Close;
+        const QColor top = close ? QColor(255, 130, 102) : QColor(124, 184, 255);
+        const QColor bottom = close ? QColor(194, 30, 22) : QColor(0, 84, 227);
+        const QColor hotTop = close ? QColor(255, 167, 128) : QColor(160, 209, 255);
+        const QColor hotBottom = close ? QColor(230, 54, 38) : QColor(32, 112, 245);
+
+        QLinearGradient gradient(r.topLeft(), r.bottomLeft());
+        gradient.setColorAt(0.0, hover ? hotTop : top);
+        gradient.setColorAt(1.0, hover ? hotBottom : bottom);
+        painter.setPen(QColor(255, 255, 255, 180));
+        painter.setBrush(gradient);
+        painter.drawRoundedRect(r.adjusted(0, 0, -1, -1), 4, 4);
+        if (down) painter.fillRect(r.adjusted(2, 2, -2, -2), QColor(0, 0, 0, 45));
+        drawCaptionGlyph(painter, m_command, r.adjusted(down ? 1 : 0, down ? 1 : 0, down ? 1 : 0, down ? 1 : 0),
+                         true);
+    }
+
+private:
+    static QString toolTipForCommand(CaptionCommand command) {
+        switch (command) {
+            case CaptionCommand::Minimize:
+                return QObject::tr("最小化");
+            case CaptionCommand::MaximizeRestore:
+                return QObject::tr("最大化/元に戻す");
+            case CaptionCommand::FloatRestore:
+                return QObject::tr("別ウィンドウ/戻す");
+            case CaptionCommand::Close:
+                return QObject::tr("閉じる");
+        }
+        return {};
+    }
+
+    CaptionCommand m_command;
+};
+
+class RetroTitleBarBase : public QWidget {
+public:
+    explicit RetroTitleBarBase(QWidget* parent = nullptr) : QWidget(parent) {
+        setAutoFillBackground(false);
+        setAttribute(Qt::WA_StyledBackground, false);
+        setMinimumHeight(isXp() ? 28 : 23);
+    }
+
+protected:
+    void paintTitleBackground(QPainter& painter, const QString& title, bool active) {
+        QRect r = rect();
+        if (isXp()) {
+            QLinearGradient gradient(r.topLeft(), r.topRight());
+            gradient.setColorAt(0.0, titleBarStartColor(active));
+            gradient.setColorAt(1.0, titleBarEndColor(active));
+            painter.fillRect(r, gradient);
+            painter.setPen(QColor(255, 255, 255, 80));
+            painter.drawLine(r.left(), r.top(), r.right(), r.top());
+        } else {
+            QLinearGradient gradient(r.topLeft(), r.topRight());
+            gradient.setColorAt(0.0, titleBarStartColor(active));
+            gradient.setColorAt(1.0, titleBarEndColor(active));
+            painter.fillRect(r.adjusted(2, 2, -2, -2), gradient);
+            drawClassicRaisedFrame(painter, r.adjusted(0, 0, -1, -1), false);
+        }
+
+        QFont titleFont = font();
+        titleFont.setBold(true);
+        painter.setFont(titleFont);
+        painter.setPen(Qt::white);
+        const QRect textRect = r.adjusted(isXp() ? 8 : 7, 0, 88, 0);
+        painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, title);
+    }
+};
+
+class RetroDockTitleBar : public RetroTitleBarBase {
+public:
+    explicit RetroDockTitleBar(QDockWidget* dock) : RetroTitleBarBase(dock), m_dock(dock) {
+        auto* layout = new QHBoxLayout(this);
+        layout->setContentsMargins(isXp() ? 7 : 5, isXp() ? 4 : 3, isXp() ? 5 : 4, isXp() ? 4 : 3);
+        layout->setSpacing(2);
+        layout->addStretch(1);
+
+        auto* minButton = new RetroCaptionButton(CaptionCommand::Minimize, this);
+        auto* floatButton = new RetroCaptionButton(CaptionCommand::FloatRestore, this);
+        auto* closeButton = new RetroCaptionButton(CaptionCommand::Close, this);
+        layout->addWidget(minButton);
+        layout->addWidget(floatButton);
+        layout->addSpacing(isXp() ? 2 : 4);
+        layout->addWidget(closeButton);
+
+        connect(minButton, &QAbstractButton::clicked, dock, [dock] { dock->hide(); });
+        connect(floatButton, &QAbstractButton::clicked, dock, [dock] { dock->setFloating(!dock->isFloating()); });
+        connect(closeButton, &QAbstractButton::clicked, dock, [dock] { dock->close(); });
+        connect(dock, &QWidget::windowTitleChanged, this, [this] { update(); });
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        paintTitleBackground(painter, m_dock ? m_dock->windowTitle() : QString(), true);
+    }
+
+private:
+    QDockWidget* m_dock = nullptr;
+};
+
+class RetroWindowTitleBar : public RetroTitleBarBase {
+public:
+    explicit RetroWindowTitleBar(QMainWindow* window) : RetroTitleBarBase(window), m_window(window) {
+        auto* layout = new QHBoxLayout(this);
+        layout->setContentsMargins(isXp() ? 8 : 5, isXp() ? 4 : 3, isXp() ? 5 : 4, isXp() ? 4 : 3);
+        layout->setSpacing(2);
+        layout->addStretch(1);
+
+        auto* minButton = new RetroCaptionButton(CaptionCommand::Minimize, this);
+        auto* maxButton = new RetroCaptionButton(CaptionCommand::MaximizeRestore, this);
+        auto* closeButton = new RetroCaptionButton(CaptionCommand::Close, this);
+        layout->addWidget(minButton);
+        layout->addWidget(maxButton);
+        layout->addSpacing(isXp() ? 2 : 4);
+        layout->addWidget(closeButton);
+
+        connect(minButton, &QAbstractButton::clicked, window, [window] { window->showMinimized(); });
+        connect(maxButton, &QAbstractButton::clicked, window, [window] {
+            window->isMaximized() ? window->showNormal() : window->showMaximized();
+        });
+        connect(closeButton, &QAbstractButton::clicked, window, [window] { window->close(); });
+        connect(window, &QWidget::windowTitleChanged, this, [this] { update(); });
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        paintTitleBackground(painter, m_window ? m_window->windowTitle() : QString(), isActiveWindow());
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton && m_window) {
+            m_window->isMaximized() ? m_window->showNormal() : m_window->showMaximized();
+            event->accept();
+            return;
+        }
+        RetroTitleBarBase::mouseDoubleClickEvent(event);
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton && m_window) {
+            m_dragging = true;
+            m_dragOffset = event->globalPosition().toPoint() - m_window->frameGeometry().topLeft();
+            event->accept();
+            return;
+        }
+        RetroTitleBarBase::mousePressEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (m_dragging && m_window && !m_window->isMaximized()) {
+            m_window->move(event->globalPosition().toPoint() - m_dragOffset);
+            event->accept();
+            return;
+        }
+        RetroTitleBarBase::mouseMoveEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        m_dragging = false;
+        RetroTitleBarBase::mouseReleaseEvent(event);
+    }
+
+private:
+    QMainWindow* m_window = nullptr;
+    bool m_dragging = false;
+    QPoint m_dragOffset;
+};
+
 QString windows95StyleSheet() {
     return QStringLiteral(R"(
 QWidget {
@@ -99,6 +385,23 @@ QMenu {
 }
 QMenu::item {
     padding: 3px 28px 3px 20px;
+}
+QMenu::separator {
+    height: 2px;
+    background: #808080;
+    border-bottom: 1px solid #ffffff;
+    margin: 3px 4px;
+}
+QMenu::indicator {
+    width: 13px;
+    height: 13px;
+}
+QMenu::indicator:checked {
+    background: #d4d0c8;
+    border-top: 1px solid #404040;
+    border-left: 1px solid #404040;
+    border-right: 1px solid #ffffff;
+    border-bottom: 1px solid #ffffff;
 }
 QPushButton, QToolButton {
     background-color: #d4d0c8;
@@ -137,6 +440,22 @@ QDoubleSpinBox::down-button {
     border-left: 1px solid #ffffff;
     border-right: 1px solid #404040;
     border-bottom: 1px solid #404040;
+}
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 18px;
+}
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    color: #000000;
+    selection-background-color: #000080;
+    selection-color: #ffffff;
+    border-top: 2px solid #404040;
+    border-left: 2px solid #404040;
+    border-right: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    outline: 0;
 }
 QHeaderView::section {
     background-color: #d4d0c8;
@@ -245,6 +564,19 @@ QMenu {
 QMenu::item {
     padding: 4px 30px 4px 22px;
 }
+QMenu::separator {
+    height: 1px;
+    background: #808080;
+    margin: 4px 5px;
+}
+QMenu::indicator {
+    width: 14px;
+    height: 14px;
+}
+QMenu::indicator:checked {
+    background-color: #316ac5;
+    border: 1px solid #0a246a;
+}
 QPushButton, QToolButton {
     color: #000000;
     border: 1px solid #7f9db9;
@@ -278,6 +610,22 @@ QComboBox::drop-down, QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox
 QDoubleSpinBox::down-button {
     background-color: #ece9d8;
     border-left: 1px solid #7f9db9;
+}
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 20px;
+}
+QComboBox:hover {
+    border: 1px solid #f2a300;
+}
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    color: #000000;
+    selection-background-color: #316ac5;
+    selection-color: #ffffff;
+    border: 1px solid #7f9db9;
+    outline: 0;
 }
 QHeaderView::section {
     background-color: #ece9d8;
@@ -342,6 +690,8 @@ QSplitter::handle {
 }  // namespace
 
 void applyRetroTheme(QApplication& app, RetroThemeVariant variant) {
+    app.setProperty(kEnabledProperty, true);
+    app.setProperty(kVariantProperty, variant == RetroThemeVariant::Windows95 ? 95 : 1);
     applyWindowsBaseStyle(app);
     if (variant == RetroThemeVariant::Windows95) {
         app.setFont(QFont(QStringLiteral("MS UI Gothic"), 9));
@@ -353,6 +703,45 @@ void applyRetroTheme(QApplication& app, RetroThemeVariant variant) {
     app.setFont(QFont(QStringLiteral("Tahoma"), 9));
     app.setPalette(windowsXpPalette());
     app.setStyleSheet(windowsXpStyleSheet());
+}
+
+void setRetroThemeAvailable(QApplication& app, bool available) {
+    app.setProperty(kAvailableProperty, available);
+}
+
+bool isRetroThemeAvailable() {
+    return qApp && qApp->property(kAvailableProperty).toBool();
+}
+
+bool isRetroThemeEnabled() {
+    return qApp && qApp->property(kEnabledProperty).toBool();
+}
+
+RetroThemeVariant activeRetroThemeVariant() {
+    if (!qApp) return RetroThemeVariant::WindowsXp;
+    return qApp->property(kVariantProperty).toInt() == 95 ? RetroThemeVariant::Windows95
+                                                           : RetroThemeVariant::WindowsXp;
+}
+
+void installRetroDockTitleBars(QWidget* root) {
+    if (!root || !isRetroThemeEnabled()) return;
+    const auto docks = root->findChildren<QDockWidget*>();
+    for (QDockWidget* dock : docks) {
+        if (!dock || dock->property(kDockTitleInstalledProperty).toBool()) continue;
+        dock->setTitleBarWidget(new RetroDockTitleBar(dock));
+        dock->setProperty(kDockTitleInstalledProperty, true);
+    }
+}
+
+void installRetroWindowFrame(QMainWindow* window) {
+    if (!window || !isRetroThemeEnabled()) return;
+    if (window->property(kWindowFrameInstalledProperty).toBool()) return;
+
+    const bool wasVisible = window->isVisible();
+    window->setMenuWidget(new RetroWindowTitleBar(window));
+    window->setWindowFlag(Qt::FramelessWindowHint, true);
+    window->setProperty(kWindowFrameInstalledProperty, true);
+    if (wasVisible) window->show();
 }
 
 }  // namespace perapera::ui

@@ -28,6 +28,7 @@
 #include "core/StrokeCommand.h"
 #include "render/GLCanvas.h"
 #include "ui/FloatingCanvasWindow.h"
+#include "ui/RetroTheme.h"
 
 namespace {
 // 「よくあるコンテ用紙テンプレート」を模した1枚の紙のサイズ。全カット共通。
@@ -905,6 +906,7 @@ void StoryboardWindow::detachCanvas() {
     m_canvasLayout->removeWidget(m_canvas);
     auto* window = new FloatingCanvasWindow(tr("絵コンテ キャンバス"), this);
     m_floatingCanvasWindow = window;
+    perapera::ui::installRetroWindowFrame(window);
     window->setCentralWidget(m_canvas);
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &StoryboardWindow::restoreCanvas);
     connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });

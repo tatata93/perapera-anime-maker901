@@ -10,6 +10,7 @@
 
 #include "core/CommandStack.h"
 #include "core/Project.h"
+#include "ui/RetroTheme.h"
 
 class CameraPanel;
 class CelPanel;
@@ -33,6 +34,7 @@ class QImage;
 class QComboBox;
 class QDialog;
 class QLabel;
+class QMenu;
 class QSlider;
 class QSpinBox;
 class QTimer;
@@ -217,6 +219,10 @@ private:
     void setupToolBar();
     void setupMenus();
     void setupPanels();
+    void setupRetroThemeMenu(QMenu* viewMenu);
+    void setRetroTheme(perapera::ui::RetroThemeVariant variant);
+    void updateRetroThemeActions();
+    void applyRetroChrome();
 
     void newDocument();
     // 作成オプション(名前・解像度・FPS)をダイアログで決めて新規プロジェクトを作る
@@ -398,6 +404,8 @@ private:
     QAction* m_playAction = nullptr;
     QAction* m_onionAction = nullptr;
     QAction* m_pressureAction = nullptr;   // 表示メニューの筆圧検知トグル(ツールバーの筆圧チェックと同期)
+    QAction* m_retro95Action = nullptr;
+    QAction* m_retroXpAction = nullptr;
     QCheckBox* m_pressureCheck = nullptr;  // ツールバーの筆圧チェック
     QComboBox* m_cutCombo = nullptr;  // カットバーのカット選択
     FramePanel* m_framePanel = nullptr;

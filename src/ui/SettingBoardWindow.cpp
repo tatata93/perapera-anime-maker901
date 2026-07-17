@@ -31,6 +31,7 @@
 #include "render/GLCanvas.h"
 #include "ui/CanvasSizeDialog.h"
 #include "ui/FloatingCanvasWindow.h"
+#include "ui/RetroTheme.h"
 
 namespace {
 // 設定ボード1枚のサイズ(作画キャンバスと同じ1920x1080)
@@ -476,6 +477,7 @@ void SettingBoardWindow::detachCanvas() {
     m_canvasLayout->removeWidget(m_canvas);
     auto* window = new FloatingCanvasWindow(tr("設定ボード キャンバス"), this);
     m_floatingCanvasWindow = window;
+    perapera::ui::installRetroWindowFrame(window);
     window->setCentralWidget(m_canvas);
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &SettingBoardWindow::restoreCanvas);
     connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
