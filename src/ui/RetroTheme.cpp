@@ -2,7 +2,9 @@
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QChildEvent>
 #include <QDockWidget>
+#include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -10,8 +12,11 @@
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPainter>
+#include <QPointer>
 #include <QSizePolicy>
 #include <QStyleFactory>
+#include <algorithm>
+#include <cmath>
 
 namespace perapera::ui {
 namespace {
@@ -21,12 +26,21 @@ constexpr const char* kEnabledProperty = "peraperaRetroThemeEnabled";
 constexpr const char* kVariantProperty = "peraperaRetroThemeVariant";
 constexpr const char* kDockTitleInstalledProperty = "peraperaRetroDockTitleInstalled";
 constexpr const char* kWindowFrameInstalledProperty = "peraperaRetroWindowFrameInstalled";
+constexpr const char* kResizeFilterInstalledProperty = "peraperaRetroResizeFilterInstalled";
 
 enum class CaptionCommand {
     Minimize,
     MaximizeRestore,
     FloatRestore,
     Close,
+};
+
+enum ResizeEdge {
+    ResizeNone = 0,
+    ResizeLeft = 1 << 0,
+    ResizeRight = 1 << 1,
+    ResizeTop = 1 << 2,
+    ResizeBottom = 1 << 3,
 };
 
 void applyWindowsBaseStyle(QApplication& app) {
@@ -98,6 +112,144 @@ QColor titleBarEndColor(bool active) {
     if (!active) return isXp() ? QColor(192, 202, 218) : QColor(192, 192, 192);
     return isXp() ? QColor(61, 149, 255) : QColor(16, 132, 208);
 }
+
+int resizeEdgesAt(const QWidget* window, const QPoint& globalPos) {
+    if (!window || window->isMaximized()) return ResizeNone;
+    constexpr int kResizeMargin = 8;
+    const QRect frame = window->frameGeometry();
+    if (!frame.adjusted(-kResizeMargin, -kResizeMargin, kResizeMargin, kResizeMargin).contains(globalPos))
+        return ResizeNone;
+
+    int edges = ResizeNone;
+    if (std::abs(globalPos.x() - frame.left()) <= kResizeMargin) edges |= ResizeLeft;
+    if (std::abs(globalPos.x() - frame.right()) <= kResizeMargin) edges |= ResizeRight;
+    if (std::abs(globalPos.y() - frame.top()) <= kResizeMargin) edges |= ResizeTop;
+    if (std::abs(globalPos.y() - frame.bottom()) <= kResizeMargin) edges |= ResizeBottom;
+    return edges;
+}
+
+Qt::CursorShape cursorForResizeEdges(int edges) {
+    const bool left = (edges & ResizeLeft) != 0;
+    const bool right = (edges & ResizeRight) != 0;
+    const bool top = (edges & ResizeTop) != 0;
+    const bool bottom = (edges & ResizeBottom) != 0;
+    if ((left && top) || (right && bottom)) return Qt::SizeFDiagCursor;
+    if ((right && top) || (left && bottom)) return Qt::SizeBDiagCursor;
+    if (left || right) return Qt::SizeHorCursor;
+    if (top || bottom) return Qt::SizeVerCursor;
+    return Qt::ArrowCursor;
+}
+
+QSize effectiveMinimumSize(const QWidget* window) {
+    const QSize fallback(240, 160);
+    if (!window) return fallback;
+    return window->minimumSize().expandedTo(window->minimumSizeHint()).expandedTo(fallback);
+}
+
+QRect resizedGeometry(const QRect& start, int edges, const QPoint& delta, const QSize& minSize, const QSize& maxSize) {
+    QRect next = start;
+    const int maxW = std::max(minSize.width(), maxSize.width());
+    const int maxH = std::max(minSize.height(), maxSize.height());
+
+    if ((edges & ResizeLeft) != 0) {
+        const int minLeft = start.right() - maxW + 1;
+        const int maxLeft = start.right() - minSize.width() + 1;
+        next.setLeft(std::clamp(start.left() + delta.x(), minLeft, maxLeft));
+    } else if ((edges & ResizeRight) != 0) {
+        next.setWidth(std::clamp(start.width() + delta.x(), minSize.width(), maxW));
+    }
+
+    if ((edges & ResizeTop) != 0) {
+        const int minTop = start.bottom() - maxH + 1;
+        const int maxTop = start.bottom() - minSize.height() + 1;
+        next.setTop(std::clamp(start.top() + delta.y(), minTop, maxTop));
+    } else if ((edges & ResizeBottom) != 0) {
+        next.setHeight(std::clamp(start.height() + delta.y(), minSize.height(), maxH));
+    }
+
+    return next;
+}
+
+class RetroResizeFilter : public QObject {
+public:
+    explicit RetroResizeFilter(QMainWindow* window) : QObject(window), m_window(window) {}
+
+    void installOn(QObject* object) {
+        if (!object) return;
+        object->installEventFilter(this);
+        const auto children = object->children();
+        for (QObject* child : children) installOn(child);
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (!m_window) return QObject::eventFilter(watched, event);
+
+        if (event->type() == QEvent::ChildAdded) {
+            auto* childEvent = static_cast<QChildEvent*>(event);
+            if (childEvent->child()) installOn(childEvent->child());
+            return QObject::eventFilter(watched, event);
+        }
+
+        if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove ||
+            event->type() == QEvent::MouseButtonRelease) {
+            auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            const QPoint globalPos = mouseEvent->globalPosition().toPoint();
+
+            if (event->type() == QEvent::MouseButtonPress && mouseEvent->button() == Qt::LeftButton) {
+                const int edges = resizeEdgesAt(m_window, globalPos);
+                if (edges != ResizeNone) {
+                    m_dragging = true;
+                    m_edges = edges;
+                    m_startGeometry = m_window->frameGeometry();
+                    m_startGlobalPos = globalPos;
+                    mouseEvent->accept();
+                    return true;
+                }
+            }
+
+            if (event->type() == QEvent::MouseMove) {
+                if (m_dragging) {
+                    const QSize minSize = effectiveMinimumSize(m_window);
+                    const QSize maxSize = m_window->maximumSize();
+                    m_window->setGeometry(resizedGeometry(m_startGeometry, m_edges, globalPos - m_startGlobalPos,
+                                                          minSize, maxSize));
+                    mouseEvent->accept();
+                    return true;
+                }
+
+                const int edges = resizeEdgesAt(m_window, globalPos);
+                if (edges != ResizeNone) {
+                    m_window->setCursor(cursorForResizeEdges(edges));
+                    m_cursorSet = true;
+                } else if (m_cursorSet) {
+                    m_window->unsetCursor();
+                    m_cursorSet = false;
+                }
+            }
+
+            if (event->type() == QEvent::MouseButtonRelease && mouseEvent->button() == Qt::LeftButton) {
+                m_dragging = false;
+                m_edges = ResizeNone;
+            }
+        }
+
+        if (event->type() == QEvent::Leave && !m_dragging && m_cursorSet) {
+            m_window->unsetCursor();
+            m_cursorSet = false;
+        }
+
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QPointer<QMainWindow> m_window;
+    bool m_dragging = false;
+    bool m_cursorSet = false;
+    int m_edges = ResizeNone;
+    QRect m_startGeometry;
+    QPoint m_startGlobalPos;
+};
 
 void drawClassicRaisedFrame(QPainter& painter, const QRect& rect, bool sunken) {
     const QColor light = Qt::white;
@@ -735,12 +887,18 @@ void installRetroDockTitleBars(QWidget* root) {
 
 void installRetroWindowFrame(QMainWindow* window) {
     if (!window || !isRetroThemeEnabled()) return;
-    if (window->property(kWindowFrameInstalledProperty).toBool()) return;
 
     const bool wasVisible = window->isVisible();
-    window->setMenuWidget(new RetroWindowTitleBar(window));
-    window->setWindowFlag(Qt::FramelessWindowHint, true);
-    window->setProperty(kWindowFrameInstalledProperty, true);
+    if (!window->property(kWindowFrameInstalledProperty).toBool()) {
+        window->setMenuWidget(new RetroWindowTitleBar(window));
+        window->setWindowFlag(Qt::FramelessWindowHint, true);
+        window->setProperty(kWindowFrameInstalledProperty, true);
+    }
+    if (!window->property(kResizeFilterInstalledProperty).toBool()) {
+        auto* filter = new RetroResizeFilter(window);
+        filter->installOn(window);
+        window->setProperty(kResizeFilterInstalledProperty, true);
+    }
     if (wasVisible) window->show();
 }
 
