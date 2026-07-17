@@ -6,6 +6,7 @@
 #include <QDockWidget>
 #include <QEvent>
 #include <QFont>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMainWindow>
@@ -13,10 +14,13 @@
 #include <QPalette>
 #include <QPainter>
 #include <QPointer>
+#include <QScreen>
 #include <QSizePolicy>
 #include <QStyle>
 #include <QStyleFactory>
+#include <QTimer>
 #include <QVariant>
+#include <QWidget>
 #include <algorithm>
 #include <cmath>
 
@@ -29,6 +33,7 @@ constexpr const char* kVariantProperty = "peraperaRetroThemeVariant";
 constexpr const char* kDockTitleInstalledProperty = "peraperaRetroDockTitleInstalled";
 constexpr const char* kWindowFrameInstalledProperty = "peraperaRetroWindowFrameInstalled";
 constexpr const char* kResizeFilterInstalledProperty = "peraperaRetroResizeFilterInstalled";
+constexpr const char* kScreenGuardInstalledProperty = "peraperaWindowScreenGuardInstalled";
 
 struct StandardAppearance {
     bool captured = false;
@@ -157,9 +162,32 @@ QColor titleBarEndColor(bool active) {
     return isXp() ? QColor(61, 149, 255) : QColor(16, 132, 208);
 }
 
+QRect availableScreenGeometryFor(const QWidget* window) {
+    QScreen* screen = nullptr;
+    if (window) {
+        screen = QGuiApplication::screenAt(window->frameGeometry().center());
+        if (!screen) screen = window->screen();
+    }
+    if (!screen) screen = QGuiApplication::primaryScreen();
+    return screen ? screen->availableGeometry() : QRect(0, 0, 1280, 720);
+}
+
+QSize effectiveMaximumSize(const QWidget* window, const QRect& available) {
+    if (!window) return available.size();
+    return window->maximumSize().boundedTo(available.size());
+}
+
+QPoint clampedTopLeft(const QRect& rect, const QRect& available) {
+    const int minX = available.left();
+    const int minY = available.top();
+    const int maxX = std::max(minX, available.right() - rect.width() + 1);
+    const int maxY = std::max(minY, available.bottom() - rect.height() + 1);
+    return {std::clamp(rect.left(), minX, maxX), std::clamp(rect.top(), minY, maxY)};
+}
+
 int resizeEdgesAt(const QWidget* window, const QPoint& globalPos) {
     if (!window || window->isMaximized()) return ResizeNone;
-    constexpr int kResizeMargin = 8;
+    constexpr int kResizeMargin = 12;
     const QRect frame = window->frameGeometry();
     if (!frame.adjusted(-kResizeMargin, -kResizeMargin, kResizeMargin, kResizeMargin).contains(globalPos))
         return ResizeNone;
@@ -220,6 +248,7 @@ public:
 
     void installOn(QObject* object) {
         if (!object) return;
+        if (auto* widget = qobject_cast<QWidget*>(object)) widget->setMouseTracking(true);
         object->installEventFilter(this);
         const auto children = object->children();
         for (QObject* child : children) installOn(child);
@@ -236,10 +265,7 @@ protected:
         }
 
         if (!isRetroThemeEnabled() || !m_window->property(kWindowFrameInstalledProperty).toBool()) {
-            if (m_cursorSet) {
-                m_window->unsetCursor();
-                m_cursorSet = false;
-            }
+            clearResizeCursor();
             m_dragging = false;
             m_edges = ResizeNone;
             return QObject::eventFilter(watched, event);
@@ -257,6 +283,7 @@ protected:
                     m_edges = edges;
                     m_startGeometry = m_window->frameGeometry();
                     m_startGlobalPos = globalPos;
+                    setResizeCursor(cursorTarget(watched), cursorForResizeEdges(edges));
                     mouseEvent->accept();
                     return true;
                 }
@@ -274,11 +301,9 @@ protected:
 
                 const int edges = resizeEdgesAt(m_window, globalPos);
                 if (edges != ResizeNone) {
-                    m_window->setCursor(cursorForResizeEdges(edges));
-                    m_cursorSet = true;
-                } else if (m_cursorSet) {
-                    m_window->unsetCursor();
-                    m_cursorSet = false;
+                    setResizeCursor(cursorTarget(watched), cursorForResizeEdges(edges));
+                } else {
+                    clearResizeCursor();
                 }
             }
 
@@ -288,22 +313,65 @@ protected:
             }
         }
 
-        if (event->type() == QEvent::Leave && !m_dragging && m_cursorSet) {
-            m_window->unsetCursor();
-            m_cursorSet = false;
+        if (event->type() == QEvent::Leave && !m_dragging) {
+            clearResizeCursor();
         }
 
         return QObject::eventFilter(watched, event);
     }
 
 private:
+    QWidget* cursorTarget(QObject* watched) const {
+        if (auto* widget = qobject_cast<QWidget*>(watched)) return widget;
+        return m_window;
+    }
+
+    void setResizeCursor(QWidget* widget, Qt::CursorShape shape) {
+        if (!widget) widget = m_window;
+        if (m_cursorWidget && m_cursorWidget != widget) m_cursorWidget->unsetCursor();
+        if (widget) {
+            widget->setCursor(shape);
+            m_cursorWidget = widget;
+        }
+    }
+
+    void clearResizeCursor() {
+        if (m_cursorWidget) m_cursorWidget->unsetCursor();
+        m_cursorWidget.clear();
+    }
+
     QPointer<QMainWindow> m_window;
+    QPointer<QWidget> m_cursorWidget;
     bool m_dragging = false;
-    bool m_cursorSet = false;
     int m_edges = ResizeNone;
     QRect m_startGeometry;
     QPoint m_startGlobalPos;
 };
+
+class WindowScreenGuard : public QObject {
+public:
+    explicit WindowScreenGuard(QWidget* window) : QObject(window), m_window(window) {}
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (watched == m_window && event->type() == QEvent::Show) {
+            QTimer::singleShot(0, this, [this] {
+                if (m_window) keepWindowOnScreen(m_window);
+            });
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QPointer<QWidget> m_window;
+};
+
+void installWindowScreenGuard(QWidget* window) {
+    if (!window || window->property(kScreenGuardInstalledProperty).toBool()) return;
+    auto* guard = new WindowScreenGuard(window);
+    window->installEventFilter(guard);
+    window->setProperty(kScreenGuardInstalledProperty, true);
+}
 
 void drawClassicRaisedFrame(QPainter& painter, const QRect& rect, bool sunken) {
     const QColor light = Qt::white;
@@ -958,7 +1026,9 @@ void removeRetroDockTitleBars(QWidget* root) {
 }
 
 void installRetroWindowFrame(QMainWindow* window) {
-    if (!window || !isRetroThemeEnabled()) return;
+    if (!window) return;
+    installWindowScreenGuard(window);
+    if (!isRetroThemeEnabled()) return;
 
     const bool wasVisible = window->isVisible();
     if (!window->property(kWindowFrameInstalledProperty).toBool()) {
@@ -986,6 +1056,26 @@ void removeRetroWindowFrame(QMainWindow* window) {
         window->unsetCursor();
     }
     if (wasVisible) window->show();
+}
+
+void keepWindowOnScreen(QWidget* window) {
+    if (!window || window->isMaximized() || window->isFullScreen()) return;
+
+    const QRect available = availableScreenGeometryFor(window);
+    if (available.isEmpty()) return;
+
+    QRect frame = window->frameGeometry();
+    if (frame.isEmpty()) frame = QRect(window->pos(), window->size());
+
+    const QSize minSize = effectiveMinimumSize(window).boundedTo(available.size());
+    const QSize maxSize = effectiveMaximumSize(window, available).expandedTo(minSize);
+    const QSize targetSize = frame.size().expandedTo(minSize).boundedTo(maxSize);
+
+    if (targetSize != frame.size()) window->resize(targetSize);
+
+    frame = window->frameGeometry();
+    const QPoint topLeft = clampedTopLeft(frame, available);
+    if (topLeft != frame.topLeft()) window->move(window->pos() + (topLeft - frame.topLeft()));
 }
 
 }  // namespace perapera::ui
