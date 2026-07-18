@@ -32,6 +32,8 @@ public:
     // ボード一覧を再構築する(m_updatingガードで選択変更シグナルの暴発を防ぐ)。
     // vector再配置に備え、描画エリアも選択ボードへ再設定する
     void refresh();
+    void debugDetachCanvas();
+    FloatingCanvasWindow* debugFloatingCanvasWindow() const;
 
 signals:
     void edited();  // ボードの追加/削除/名前変更/手描き/画像貼付が行われた
@@ -59,6 +61,7 @@ private:
     void chooseColor();
     // 現在の太さ/色設定をキャンバスへ適用する
     void applyToolSettingsToCanvas();
+    GLCanvas* createCanvas(QWidget* parent);
     int selectedBoardIndex() const;
 
     // 色指定(色指定書)操作: 選択中ボードのcolorSpecsを編集する

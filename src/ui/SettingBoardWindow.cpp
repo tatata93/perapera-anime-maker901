@@ -208,12 +208,10 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     toolRow->addStretch();
     rightLayout->addLayout(toolRow);
 
-    m_canvas = new GLCanvas(rightContainer);
-    m_canvas->setCanvasSize(kBoardWidth, kBoardHeight);
-    m_canvas->setTool(GLCanvas::Tool::Pen);
     m_canvasHost = new QWidget(rightContainer);
     m_canvasLayout = new QVBoxLayout(m_canvasHost);
     m_canvasLayout->setContentsMargins(0, 0, 0, 0);
+    m_canvas = createCanvas(m_canvasHost);
     m_canvasLayout->addWidget(m_canvas);
     rightLayout->addWidget(m_canvasHost, 1);
 
@@ -239,30 +237,21 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
 
     setCentralWidget(central);
 
-    m_canvas->setStrokeCommandSink(
-        [this](std::unique_ptr<core::Command>) { onStrokeFinished(); });
-
     connect(m_penButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
-        m_canvas->setTool(GLCanvas::Tool::Pen);
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Pen);
         m_radiusSlider->setValue(static_cast<int>(m_penRadius));
         m_radiusValueLabel->setText(QString::number(static_cast<int>(m_penRadius)));
     });
     connect(m_eraserButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
-        m_canvas->setTool(GLCanvas::Tool::Eraser);
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Eraser);
         m_radiusSlider->setValue(static_cast<int>(m_eraserRadius));
         m_radiusValueLabel->setText(QString::number(static_cast<int>(m_eraserRadius)));
     });
     connect(m_eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
-        m_canvas->setTool(GLCanvas::Tool::Eyedropper);
-    });
-    connect(m_canvas, &GLCanvas::colorPicked, this, [this](QColor color) {
-        m_penColor = color;
-        m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
-        applyToolSettingsToCanvas();
-        m_penButton->setChecked(true);
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Eyedropper);
     });
     connect(m_radiusSlider, &QSlider::valueChanged, this, &SettingBoardWindow::onRadiusSliderChanged);
     connect(m_colorButton, &QPushButton::clicked, this, &SettingBoardWindow::chooseColor);
@@ -475,25 +464,42 @@ void SettingBoardWindow::updateFinalStampOverlay() {
 void SettingBoardWindow::detachCanvas() {
     if (m_floatingCanvasWindow || !m_canvas || !m_canvasLayout) return;
     m_canvasLayout->removeWidget(m_canvas);
+    m_canvas->deleteLater();
+    m_canvas = nullptr;
     auto* window = new FloatingCanvasWindow(tr("設定ボード キャンバス"), this);
     m_floatingCanvasWindow = window;
     perapera::ui::installRetroWindowFrame(window);
+    m_canvas = createCanvas(window);
     window->setCentralWidget(m_canvas);
+    bindCanvasToSelectedBoard();
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &SettingBoardWindow::restoreCanvas);
-    connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
+    connect(window, &QObject::destroyed, this, [this, window] {
+        if (m_floatingCanvasWindow == window) m_floatingCanvasWindow = nullptr;
+    });
     window->show();
 }
 
 void SettingBoardWindow::restoreCanvas() {
     if (!m_floatingCanvasWindow || !m_canvasLayout) return;
     FloatingCanvasWindow* window = m_floatingCanvasWindow;
-    QWidget* canvas = window->takeCentralWidget();
-    if (canvas) {
-        m_canvasLayout->addWidget(canvas);
-        canvas->show();
+    if (m_canvas) {
+        if (window->centralWidget() == m_canvas) window->takeCentralWidget();
+        m_canvas->deleteLater();
+        m_canvas = nullptr;
     }
+    m_canvas = createCanvas(m_canvasHost);
+    m_canvasLayout->addWidget(m_canvas);
+    bindCanvasToSelectedBoard();
+    m_canvas->show();
     m_floatingCanvasWindow = nullptr;
-    window->deleteLater();
+}
+
+void SettingBoardWindow::debugDetachCanvas() {
+    detachCanvas();
+}
+
+FloatingCanvasWindow* SettingBoardWindow::debugFloatingCanvasWindow() const {
+    return m_floatingCanvasWindow;
 }
 
 void SettingBoardWindow::bindCanvasToSelectedBoard() {
@@ -555,9 +561,33 @@ void SettingBoardWindow::chooseColor() {
 }
 
 void SettingBoardWindow::applyToolSettingsToCanvas() {
+    if (!m_canvas) return;
     m_canvas->setPenRadius(m_penRadius);
     m_canvas->setPenColor(m_penColor);
     m_canvas->setEraserRadius(m_eraserRadius);
+}
+
+GLCanvas* SettingBoardWindow::createCanvas(QWidget* parent) {
+    auto* canvas = new GLCanvas(parent);
+    canvas->setCanvasSize(kBoardWidth, kBoardHeight);
+    if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
+        canvas->setTool(GLCanvas::Tool::Eyedropper);
+    } else if (m_eraserButton && m_eraserButton->isChecked()) {
+        canvas->setTool(GLCanvas::Tool::Eraser);
+    } else {
+        canvas->setTool(GLCanvas::Tool::Pen);
+    }
+    canvas->setPenRadius(m_penRadius);
+    canvas->setPenColor(m_penColor);
+    canvas->setEraserRadius(m_eraserRadius);
+    canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command>) { onStrokeFinished(); });
+    connect(canvas, &GLCanvas::colorPicked, this, [this](QColor color) {
+        m_penColor = color;
+        m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+        applyToolSettingsToCanvas();
+        m_penButton->setChecked(true);
+    });
+    return canvas;
 }
 
 int SettingBoardWindow::selectedColorSpecIndex() const {

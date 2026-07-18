@@ -47,6 +47,9 @@ public:
     void debugOpenPreview();
     // 動作確認用: 現在開いているプレビューダイアログ(未使用時はnullptr)
     QDialog* debugPreviewDialog() const { return m_previewDialog; }
+    // 動作確認用: キャンバスを別窓へ移す
+    void debugDetachCanvas();
+    FloatingCanvasWindow* debugFloatingCanvasWindow() const;
 
 signals:
     void edited();  // カット番号/内容/セリフ/尺またはコンテ絵が編集された
@@ -74,6 +77,7 @@ private:
     void chooseColor();
     // 現在の太さ/色設定をキャンバスへ適用する
     void applyToolSettingsToCanvases();
+    GLCanvas* createCanvas(QWidget* parent);
     // 内容/セリフ欄(複数行テキスト)を選択パネルへ反映し、コンテ用紙下敷きを最新テキストで敷き直す
     void onActionTextChanged();
     void onDialogueTextChanged();

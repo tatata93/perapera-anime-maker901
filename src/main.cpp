@@ -22,6 +22,7 @@
 #include "render/GLCanvas.h"
 #include "ui/EditWindow.h"
 #include "ui/ExportDialog.h"
+#include "ui/FloatingCanvasWindow.h"
 #include "ui/MainWindow.h"
 #include "ui/NewCutDialog.h"
 #include "ui/NewProjectDialog.h"
@@ -1039,6 +1040,28 @@ int main(int argc, char* argv[]) {
     // 動作確認用: --settingboard-test <出力PNG> で設定ボードデモ(ボード2枚、1枚目に赤い線+色指定3色)を
     // 組んでから設定ボードウィンドウを開き、その全体(ボード一覧+描画エリア+色指定)を保存する。
     // 併せてメインウィンドウ(参照ドックの色指定込み)も「ベース名_main.png」で保存して終了する
+    const int storyboardDetachIndex = args.indexOf("--storyboard-detach-test");
+    if (storyboardDetachIndex >= 0 && storyboardDetachIndex + 1 < args.size()) {
+        const QString outputPath = args.at(storyboardDetachIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupStoryboardDemo();
+            window.debugOpenStoryboard();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                window.storyboardWindow()->debugDetachCanvas();
+                QTimer::singleShot(300, &window, [&window, outputPath] {
+                    auto* floating = window.storyboardWindow()->debugFloatingCanvasWindow();
+                    if (!floating) {
+                        QApplication::exit(1);
+                        return;
+                    }
+                    floating->grab().save(outputPath);
+                    floating->close();
+                    QTimer::singleShot(100, &window, [] { QApplication::exit(0); });
+                });
+            });
+        });
+    }
+
     const int settingBoardIndex = args.indexOf("--settingboard-test");
     if (settingBoardIndex >= 0 && settingBoardIndex + 1 < args.size()) {
         const QString outputPath = args.at(settingBoardIndex + 1);
@@ -1059,6 +1082,28 @@ int main(int argc, char* argv[]) {
     // 動作確認用: --edit-test <出力PNG> で編集(カッティング)デモ(カット3つ、尺12/24/12、
     // 進捗: 原画/レイアウト/未着手、カット1に赤ストローク・カット2に青ストローク)を組み、
     // 編集ウィンドウを開いてグローバルコマ18(カット2内)へシークした状態を保存して終了する
+    const int settingBoardDetachIndex = args.indexOf("--settingboard-detach-test");
+    if (settingBoardDetachIndex >= 0 && settingBoardDetachIndex + 1 < args.size()) {
+        const QString outputPath = args.at(settingBoardDetachIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupSettingBoardDemo();
+            window.debugOpenSettingBoard();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                window.settingBoardWindow()->debugDetachCanvas();
+                QTimer::singleShot(300, &window, [&window, outputPath] {
+                    auto* floating = window.settingBoardWindow()->debugFloatingCanvasWindow();
+                    if (!floating) {
+                        QApplication::exit(1);
+                        return;
+                    }
+                    floating->grab().save(outputPath);
+                    floating->close();
+                    QTimer::singleShot(100, &window, [] { QApplication::exit(0); });
+                });
+            });
+        });
+    }
+
     const int editIndex = args.indexOf("--edit-test");
     if (editIndex >= 0 && editIndex + 1 < args.size()) {
         const QString outputPath = args.at(editIndex + 1);

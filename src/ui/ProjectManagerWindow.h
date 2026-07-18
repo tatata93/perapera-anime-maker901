@@ -42,6 +42,7 @@ signals:
     void newProjectRequested();     // 新規プロジェクト(作成ダイアログはメインウィンドウが出す)
     void openProjectRequested();    // プロジェクトを開く
     void saveProjectRequested();    // プロジェクトを保存
+    void projectSettingsRequested(); // プロジェクト設定を開く
 
 private:
     void rebuildTable();

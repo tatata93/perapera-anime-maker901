@@ -442,12 +442,10 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
 
     // コンテ用紙1枚(罫線・見出し・カット番号・絵の枠・内容欄・セリフ欄・秒欄を印字した下敷きの
     // 上に手書きインクを重ねる、紙全体をカバーする1つのGLCanvas)
-    m_canvas = new GLCanvas(rightContainer);
-    m_canvas->setCanvasSize(kSheetWidth, kSheetHeight);
-    m_canvas->setTool(GLCanvas::Tool::Pen);
     m_canvasHost = new QWidget(rightContainer);
     m_canvasLayout = new QVBoxLayout(m_canvasHost);
     m_canvasLayout->setContentsMargins(0, 0, 0, 0);
+    m_canvas = createCanvas(m_canvasHost);
     m_canvasLayout->addWidget(m_canvas);
     rightLayout->addWidget(m_canvasHost, 2);
 
@@ -478,44 +476,31 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
 
     // ストローク完了通知(Undo用コマンドが渡る。絵コンテに通常のUndo操作はないが、絵の枠の
     // ダブルクリング1回目で打たれてしまう点を取り消すために直近のコマンドだけ保持しておく)
-    m_canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
-        m_lastStroke = std::move(command);
-        m_lastStrokeTimer.restart();
-        onStrokeFinished();
-    });
-    connect(m_canvas, &GLCanvas::doubleClickedOnCanvas, this, &StoryboardWindow::onCanvasDoubleClicked);
-
     connect(m_zoomButton, &QPushButton::toggled, this, [this](bool checked) {
         if (checked == m_frameZoomed) return;  // トグル側からの反映(setChecked)による再帰を防ぐ
         m_frameZoomed = checked;
         if (m_frameZoomed) {
-            m_canvas->zoomToCanvasRect(kFrameRect);
+            if (m_canvas) m_canvas->zoomToCanvasRect(kFrameRect);
         } else {
-            m_canvas->resetView();
+            if (m_canvas) m_canvas->resetView();
         }
     });
 
     connect(m_penButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
-        m_canvas->setTool(GLCanvas::Tool::Pen);
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Pen);
         m_radiusSlider->setValue(static_cast<int>(m_penRadius));
         m_radiusValueLabel->setText(QString::number(static_cast<int>(m_penRadius)));
     });
     connect(m_eraserButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
-        m_canvas->setTool(GLCanvas::Tool::Eraser);
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Eraser);
         m_radiusSlider->setValue(static_cast<int>(m_eraserRadius));
         m_radiusValueLabel->setText(QString::number(static_cast<int>(m_eraserRadius)));
     });
     connect(m_eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
-        m_canvas->setTool(GLCanvas::Tool::Eyedropper);
-    });
-    connect(m_canvas, &GLCanvas::colorPicked, this, [this](QColor color) {
-        m_penColor = color;
-        m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
-        applyToolSettingsToCanvases();
-        m_penButton->setChecked(true);
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Eyedropper);
     });
     connect(m_radiusSlider, &QSlider::valueChanged, this, &StoryboardWindow::onRadiusSliderChanged);
     connect(m_colorButton, &QPushButton::clicked, this, &StoryboardWindow::chooseColor);
@@ -814,9 +799,38 @@ void StoryboardWindow::chooseColor() {
 
 void StoryboardWindow::applyToolSettingsToCanvases() {
     // ペン/消しゴムの太さ・色設定はコンテ用紙キャンバスへ適用する
+    if (!m_canvas) return;
     m_canvas->setPenRadius(m_penRadius);
     m_canvas->setPenColor(m_penColor);
     m_canvas->setEraserRadius(m_eraserRadius);
+}
+
+GLCanvas* StoryboardWindow::createCanvas(QWidget* parent) {
+    auto* canvas = new GLCanvas(parent);
+    canvas->setCanvasSize(kSheetWidth, kSheetHeight);
+    if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
+        canvas->setTool(GLCanvas::Tool::Eyedropper);
+    } else if (m_eraserButton && m_eraserButton->isChecked()) {
+        canvas->setTool(GLCanvas::Tool::Eraser);
+    } else {
+        canvas->setTool(GLCanvas::Tool::Pen);
+    }
+    canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
+        m_lastStroke = std::move(command);
+        m_lastStrokeTimer.restart();
+        onStrokeFinished();
+    });
+    connect(canvas, &GLCanvas::doubleClickedOnCanvas, this, &StoryboardWindow::onCanvasDoubleClicked);
+    connect(canvas, &GLCanvas::colorPicked, this, [this](QColor color) {
+        m_penColor = color;
+        m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+        applyToolSettingsToCanvases();
+        m_penButton->setChecked(true);
+    });
+    canvas->setPenRadius(m_penRadius);
+    canvas->setPenColor(m_penColor);
+    canvas->setEraserRadius(m_eraserRadius);
+    return canvas;
 }
 
 void StoryboardWindow::onActionTextChanged() {
@@ -904,25 +918,34 @@ void StoryboardWindow::openPreview() {
 void StoryboardWindow::detachCanvas() {
     if (m_floatingCanvasWindow || !m_canvas || !m_canvasLayout) return;
     m_canvasLayout->removeWidget(m_canvas);
+    m_canvas->deleteLater();
+    m_canvas = nullptr;
     auto* window = new FloatingCanvasWindow(tr("絵コンテ キャンバス"), this);
     m_floatingCanvasWindow = window;
     perapera::ui::installRetroWindowFrame(window);
+    m_canvas = createCanvas(window);
     window->setCentralWidget(m_canvas);
+    bindCanvasToSelectedPanel();
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &StoryboardWindow::restoreCanvas);
-    connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
+    connect(window, &QObject::destroyed, this, [this, window] {
+        if (m_floatingCanvasWindow == window) m_floatingCanvasWindow = nullptr;
+    });
     window->show();
 }
 
 void StoryboardWindow::restoreCanvas() {
     if (!m_floatingCanvasWindow || !m_canvasLayout) return;
     FloatingCanvasWindow* window = m_floatingCanvasWindow;
-    QWidget* canvas = window->takeCentralWidget();
-    if (canvas) {
-        m_canvasLayout->addWidget(canvas);
-        canvas->show();
+    if (m_canvas) {
+        if (window->centralWidget() == m_canvas) window->takeCentralWidget();
+        m_canvas->deleteLater();
+        m_canvas = nullptr;
     }
+    m_canvas = createCanvas(m_canvasHost);
+    m_canvasLayout->addWidget(m_canvas);
+    bindCanvasToSelectedPanel();
+    m_canvas->show();
     m_floatingCanvasWindow = nullptr;
-    window->deleteLater();
 }
 
 void StoryboardWindow::debugZoomToFrame() {
@@ -932,4 +955,12 @@ void StoryboardWindow::debugZoomToFrame() {
 
 void StoryboardWindow::debugOpenPreview() {
     openPreview();
+}
+
+void StoryboardWindow::debugDetachCanvas() {
+    detachCanvas();
+}
+
+FloatingCanvasWindow* StoryboardWindow::debugFloatingCanvasWindow() const {
+    return m_floatingCanvasWindow;
 }

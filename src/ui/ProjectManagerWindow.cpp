@@ -51,6 +51,9 @@ ProjectManagerWindow::ProjectManagerWindow(QWidget* parent) : QMainWindow(parent
     auto* saveProjectButton = new QPushButton(tr("保存"), central);
     connect(saveProjectButton, &QPushButton::clicked, this, [this] { emit saveProjectRequested(); });
     projectRow->addWidget(saveProjectButton);
+    auto* settingsButton = new QPushButton(tr("プロジェクト設定…"), central);
+    connect(settingsButton, &QPushButton::clicked, this, [this] { emit projectSettingsRequested(); });
+    projectRow->addWidget(settingsButton);
     projectRow->addStretch(1);
     root->addLayout(projectRow);
 

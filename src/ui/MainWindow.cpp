@@ -843,7 +843,6 @@ void MainWindow::restoreMainCanvas() {
         canvas->show();
     }
     m_floatingCanvasWindow = nullptr;
-    window->deleteLater();
 }
 
 void MainWindow::setupCutBar() {
@@ -1567,6 +1566,7 @@ void MainWindow::openCanvasSizeDialog() {
     if (!m_project) return;
 
     CanvasSizeDialog dialog(canvasWidth(), canvasHeight(), this);
+    QTimer::singleShot(0, &dialog, [&dialog] { perapera::ui::keepWindowOnScreen(&dialog); });
     if (dialog.exec() != QDialog::Accepted) return;
 
     const int newW = dialog.canvasWidth();
@@ -1597,6 +1597,7 @@ QDialog* MainWindow::debugOpenCanvasSizeDialog() {
     auto* dialog = new CanvasSizeDialog(canvasWidth(), canvasHeight(), this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
+    perapera::ui::keepWindowOnScreen(dialog);
     return dialog;
 }
 
@@ -2020,6 +2021,7 @@ void MainWindow::newDocument() {
 void MainWindow::onNewProject() {
     // 作成にあたって必要な項目(名前・解像度・FPS)をダイアログでまとめて決める
     NewProjectDialog dlg(m_fpsSpin ? m_fpsSpin->value() : kDefaultFps, this);
+    QTimer::singleShot(0, &dlg, [&dlg] { perapera::ui::keepWindowOnScreen(&dlg); });
     if (dlg.exec() != QDialog::Accepted) return;
 
     if (m_playing) togglePlayback();
@@ -4150,6 +4152,8 @@ void MainWindow::openProjectManagerWindow() {
         connect(m_projectManagerWindow, &ProjectManagerWindow::newProjectRequested, this, &MainWindow::onNewProject);
         connect(m_projectManagerWindow, &ProjectManagerWindow::openProjectRequested, this, &MainWindow::open);
         connect(m_projectManagerWindow, &ProjectManagerWindow::saveProjectRequested, this, &MainWindow::save);
+        connect(m_projectManagerWindow, &ProjectManagerWindow::projectSettingsRequested, this,
+                &MainWindow::openCanvasSizeDialog);
         // カット削除: アクティブカットのクランプ等はメインウィンドウ側で行う
         connect(m_projectManagerWindow, &ProjectManagerWindow::removeCutRequested, this, [this](int index) {
             core::Scene& scene = m_project->scene(0);
