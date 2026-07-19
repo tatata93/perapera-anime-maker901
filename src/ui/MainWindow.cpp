@@ -46,6 +46,7 @@
 #include "ui/CanvasSizeDialog.h"
 #include "ui/CelPanel.h"
 #include "ui/CelSizeDialog.h"
+#include "ui/DockPanelColumn.h"
 #include "ui/EditWindow.h"
 #include "ui/NewCutDialog.h"
 #include "ui/NewProjectDialog.h"
@@ -970,8 +971,11 @@ void MainWindow::renameActiveCut() {
 }
 
 void MainWindow::setupPanels() {
+    auto* rightPanelColumn = new perapera::ui::DockPanelColumn(QStringLiteral("MainRightPanelColumn"), this);
+    addDockWidget(Qt::RightDockWidgetArea, rightPanelColumn);
+
     m_framePanel = new FramePanel(this);
-    addDockWidget(Qt::RightDockWidgetArea, m_framePanel);
+    rightPanelColumn->addPanel(m_framePanel);
     connect(m_framePanel, &FramePanel::frameSelected, this, [this](int index) {
         // 動画一覧のクリック = 現在コマにその動画を割り付ける(タイムシート編集)
         if (m_playing) return;
@@ -990,7 +994,7 @@ void MainWindow::setupPanels() {
     connect(m_framePanel, &FramePanel::lightTableChanged, this, &MainWindow::updateLightTable);
 
     m_layerPanel = new LayerPanel(this);
-    addDockWidget(Qt::RightDockWidgetArea, m_layerPanel);
+    rightPanelColumn->addPanel(m_layerPanel);
     connect(m_layerPanel, &LayerPanel::layerSelected, this, [this](int index) {
         if (m_playing) return;
         m_activeLayer = static_cast<size_t>(index);
@@ -1046,7 +1050,7 @@ void MainWindow::setupPanels() {
     });
 
     m_palettePanel = new PalettePanel(this);
-    addDockWidget(Qt::RightDockWidgetArea, m_palettePanel);
+    rightPanelColumn->addPanel(m_palettePanel);
     connect(m_palettePanel, &PalettePanel::colorSelected, this, [this](QColor color) {
         m_penColor = color;
         m_canvas->setPenColor(m_penColor);
@@ -1121,7 +1125,7 @@ void MainWindow::setupPanels() {
     });
 
     m_celPanel = new CelPanel(this);
-    addDockWidget(Qt::RightDockWidgetArea, m_celPanel);
+    rightPanelColumn->addPanel(m_celPanel);
     connect(m_celPanel, &CelPanel::celSelected, this, [this](int index) {
         if (m_playing) return;
         setActiveCel(index);
@@ -1138,7 +1142,7 @@ void MainWindow::setupPanels() {
     connect(m_celPanel, &CelPanel::celSizeRequested, this, &MainWindow::openCelSizeDialog);
 
     m_tapPanel = new TapPanel(this);
-    addDockWidget(Qt::RightDockWidgetArea, m_tapPanel);
+    rightPanelColumn->addPanel(m_tapPanel);
     connect(m_tapPanel, &TapPanel::keySelected, this, [this](int frame) {
         if (m_playing) return;
         setCurrentFrame(static_cast<size_t>(frame));
@@ -1178,7 +1182,7 @@ void MainWindow::setupPanels() {
     });
 
     m_cameraPanel = new CameraPanel(this);
-    addDockWidget(Qt::RightDockWidgetArea, m_cameraPanel);
+    rightPanelColumn->addPanel(m_cameraPanel);
     connect(m_cameraPanel, &CameraPanel::valuesChanged, this, [this](double, double, double) {
         updateCameraOverlay();  // データは変更せずプレビューのみ更新する
     });
@@ -1209,7 +1213,7 @@ void MainWindow::setupPanels() {
     connect(m_cameraPanel, &CameraPanel::showFrameToggled, this, [this](bool) { updateCameraOverlay(); });
 
     m_referencePanel = new ReferencePanel(this);
-    addDockWidget(Qt::RightDockWidgetArea, m_referencePanel);
+    rightPanelColumn->addPanel(m_referencePanel);
     connect(m_referencePanel, &ReferencePanel::boardSelected, this, [this](int index) {
         m_referenceBoardIndex = index;
         updateReferencePanel();

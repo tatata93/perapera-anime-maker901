@@ -1269,7 +1269,7 @@ void StoryboardWindow::exportStoryboardPdf() {
 
     QPdfWriter writer(pdfPath);
     writer.setResolution(300);
-    writer.setPageLayout(QPageLayout(QPageSize(QPageSize::A4), QPageLayout::Landscape, QMarginsF(10, 10, 10, 10),
+    writer.setPageLayout(QPageLayout(QPageSize(QPageSize::A4), QPageLayout::Portrait, QMarginsF(10, 10, 10, 10),
                                      QPageLayout::Millimeter));
     QPainter painter(&writer);
     if (!painter.isActive()) {
@@ -1278,7 +1278,7 @@ void StoryboardWindow::exportStoryboardPdf() {
     }
 
     const QRect page = writer.pageLayout().paintRectPixels(writer.resolution());
-    constexpr int panelsPerPage = 2;
+    constexpr int panelsPerPage = 4;
     const int slotHeight = page.height() / panelsPerPage;
     for (int i = 0; i < static_cast<int>(panels.size()); ++i) {
         if (i > 0 && i % panelsPerPage == 0) writer.newPage();

@@ -16,8 +16,6 @@
 #include <QWidget>
 #include <algorithm>
 
-#include "ui/DockScrollArea.h"
-
 XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート"), parent) {
     setObjectName(QStringLiteral("XsheetPanel"));  // レイアウト保存用の識別子
 
@@ -68,7 +66,7 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     m_table->horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);  // 列ヘッダ右クリックで表示/非表示切替
     layout->addWidget(m_table);
 
-    perapera::ui::setScrollableDockWidget(this, container);
+    setWidget(container);
 
     connect(m_frameCountSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
         if (!m_updating) emit frameCountChanged(value);

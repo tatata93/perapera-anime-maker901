@@ -23,7 +23,7 @@
 
 #include "previz/PrevizSheetPanel.h"
 #include "previz/PrevizViewport.h"
-#include "ui/DockScrollArea.h"
+#include "ui/DockPanelColumn.h"
 #include "ui/RetroTheme.h"
 
 namespace {
@@ -293,6 +293,9 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         // シートの再構築は重いので再生中は行わない(停止時にまとめて更新)
     });
 
+    auto* rightPanelColumn = new perapera::ui::DockPanelColumn(QStringLiteral("PrevizRightPanelColumn"), this);
+    addDockWidget(Qt::RightDockWidgetArea, rightPanelColumn);
+
     // モデル一覧ドック
     auto* dock = new QDockWidget(tr("モデル"), this);
     dock->setObjectName(QStringLiteral("PrevizModelDock"));
@@ -324,8 +327,8 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* removeButton = new QPushButton(tr("モデル削除"), container);
     layout->addWidget(removeButton);
-    perapera::ui::setScrollableDockWidget(dock, container);
-    addDockWidget(Qt::RightDockWidgetArea, dock);
+    dock->setWidget(container);
+    rightPanelColumn->addPanel(dock);
 
     connect(addButton, &QPushButton::clicked, this, &PrevizWindow::addModel);
     connect(removeButton, &QPushButton::clicked, this, &PrevizWindow::removeSelectedModel);
@@ -802,8 +805,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     nudgeLayout->addStretch();
 
     nudgeDock->setWidget(nudgeContainer);
-    addDockWidget(Qt::RightDockWidgetArea, nudgeDock);
-    splitDockWidget(dock, nudgeDock, Qt::Vertical);  // モデルドックの下に配置
+    rightPanelColumn->addPanel(nudgeDock);
 
     connect(m_nudgeTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         const bool isCamera = (index == 0);

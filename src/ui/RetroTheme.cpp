@@ -549,17 +549,29 @@ public:
         layout->setSpacing(2);
         layout->addStretch(1);
 
-        auto* minButton = new RetroCaptionButton(CaptionCommand::Minimize, this);
-        auto* floatButton = new RetroCaptionButton(CaptionCommand::FloatRestore, this);
-        auto* closeButton = new RetroCaptionButton(CaptionCommand::Close, this);
-        layout->addWidget(minButton);
-        layout->addWidget(floatButton);
-        layout->addSpacing(isXp() ? 2 : 4);
-        layout->addWidget(closeButton);
+        RetroCaptionButton* minButton = nullptr;
+        RetroCaptionButton* floatButton = nullptr;
+        RetroCaptionButton* closeButton = nullptr;
+        const QDockWidget::DockWidgetFeatures features = dock ? dock->features() : QDockWidget::NoDockWidgetFeatures;
+        if (features.testFlag(QDockWidget::DockWidgetClosable)) {
+            minButton = new RetroCaptionButton(CaptionCommand::Minimize, this);
+            layout->addWidget(minButton);
+        }
+        if (features.testFlag(QDockWidget::DockWidgetFloatable)) {
+            floatButton = new RetroCaptionButton(CaptionCommand::FloatRestore, this);
+            layout->addWidget(floatButton);
+        }
+        if (features.testFlag(QDockWidget::DockWidgetClosable)) {
+            layout->addSpacing(isXp() ? 2 : 4);
+            closeButton = new RetroCaptionButton(CaptionCommand::Close, this);
+            layout->addWidget(closeButton);
+        }
 
-        connect(minButton, &QAbstractButton::clicked, dock, [dock] { dock->hide(); });
-        connect(floatButton, &QAbstractButton::clicked, dock, [dock] { dock->setFloating(!dock->isFloating()); });
-        connect(closeButton, &QAbstractButton::clicked, dock, [dock] { dock->close(); });
+        if (minButton) connect(minButton, &QAbstractButton::clicked, dock, [dock] { dock->hide(); });
+        if (floatButton) {
+            connect(floatButton, &QAbstractButton::clicked, dock, [dock] { dock->setFloating(!dock->isFloating()); });
+        }
+        if (closeButton) connect(closeButton, &QAbstractButton::clicked, dock, [dock] { dock->close(); });
         connect(dock, &QWidget::windowTitleChanged, this, [this] { update(); });
     }
 
@@ -1173,6 +1185,7 @@ void installRetroDockTitleBars(QWidget* root) {
     const auto docks = root->findChildren<QDockWidget*>();
     for (QDockWidget* dock : docks) {
         if (!dock || dock->property(kDockTitleInstalledProperty).toBool()) continue;
+        if (dock->property("peraperaSkipRetroDockTitle").toBool()) continue;
         dock->setTitleBarWidget(new RetroDockTitleBar(dock));
         dock->setProperty(kDockTitleInstalledProperty, true);
     }

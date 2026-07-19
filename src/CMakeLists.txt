@@ -46,7 +46,7 @@ set(PERAPERA_APP_SOURCES
     ui/PaintLayerUtils.h
     ui/FloatingCanvasWindow.cpp
     ui/FloatingCanvasWindow.h
-    ui/DockScrollArea.h
+    ui/DockPanelColumn.h
     ui/RetroArrows.qrc
     ui/RetroTheme.cpp
     ui/RetroTheme.h

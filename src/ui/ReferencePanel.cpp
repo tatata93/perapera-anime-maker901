@@ -10,8 +10,6 @@
 #include <QSize>
 #include <QVBoxLayout>
 
-#include "ui/DockScrollArea.h"
-
 namespace {
 // 色指定リストのスウォッチアイコンの一辺サイズ
 constexpr int kColorSpecSwatchSize = 16;
@@ -41,7 +39,7 @@ ReferencePanel::ReferencePanel(QWidget* parent) : QDockWidget(tr("参照"), pare
     m_colorSpecList->setMaximumHeight(120);
     layout->addWidget(m_colorSpecList);
 
-    perapera::ui::setScrollableDockWidget(this, container);
+    setWidget(container);
 
     connect(m_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         if (m_updating) return;
