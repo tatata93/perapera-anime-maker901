@@ -1054,6 +1054,12 @@ int main(int argc, char* argv[]) {
                         QApplication::exit(1);
                         return;
                     }
+                    auto* canvas = floating->findChild<GLCanvas*>();
+                    if (!canvas) {
+                        QApplication::exit(1);
+                        return;
+                    }
+                    canvas->debugSimulateStroke();
                     floating->grab().save(outputPath);
                     floating->close();
                     QTimer::singleShot(100, &window, [] { QApplication::exit(0); });
@@ -1096,6 +1102,12 @@ int main(int argc, char* argv[]) {
                         QApplication::exit(1);
                         return;
                     }
+                    auto* canvas = floating->findChild<GLCanvas*>();
+                    if (!canvas) {
+                        QApplication::exit(1);
+                        return;
+                    }
+                    canvas->debugSimulateStroke();
                     floating->grab().save(outputPath);
                     floating->close();
                     QTimer::singleShot(100, &window, [] { QApplication::exit(0); });

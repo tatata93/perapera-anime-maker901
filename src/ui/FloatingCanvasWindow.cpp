@@ -17,9 +17,10 @@ void FloatingCanvasWindow::closeEvent(QCloseEvent* event) {
 
     m_restoreQueued = true;
     event->ignore();
-    hide();
+    setEnabled(false);
     QTimer::singleShot(0, this, [this] {
         emit restoreRequested();
+        hide();
         deleteLater();
     });
 }

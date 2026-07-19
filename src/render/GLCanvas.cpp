@@ -2,6 +2,7 @@
 
 #include <QImage>
 #include <QMouseEvent>
+#include <QOpenGLContext>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
 #include <QTabletEvent>
@@ -88,13 +89,57 @@ GLCanvas::GLCanvas(QWidget* parent) : QOpenGLWidget(parent) {
 }
 
 GLCanvas::~GLCanvas() {
+    shutdownForClose();
+}
+
+void GLCanvas::releaseGlResources() {
+    m_pendingUploadBitmap = nullptr;
+    m_pendingUploadRect = core::DirtyRect{};
+    m_uploadScratch.clear();
+    m_pendingUnderlayImage = QImage();
+    m_underlayImageDirty = false;
+    m_underlayClearRequested = false;
+    m_pendingOverlayImage = QImage();
+    m_overlayImageDirty = false;
+    m_overlayClearRequested = false;
+
+    QOpenGLContext* ctx = context();
+    if (!ctx || !ctx->isValid()) {
+        m_textures.clear();
+        m_overlayTexture.reset();
+        m_underlayTexture.reset();
+        m_program.reset();
+        return;
+    }
+
     makeCurrent();
     m_textures.clear();
     m_overlayTexture.reset();
-    m_underlayTexture.reset();  // GLリソースの解放にはカレントなコンテキストが必要
+    m_underlayTexture.reset();
     m_program.reset();
     if (m_vbo.isCreated()) m_vbo.destroy();
     doneCurrent();
+}
+
+void GLCanvas::shutdownForClose() {
+    setUpdatesEnabled(false);
+    m_inputEnabled = false;
+    m_strokeCommandSink = nullptr;
+    if (m_strokeActive) m_brush.endStroke();
+    m_strokeActive = false;
+    m_movingCel = false;
+    m_panning = false;
+    unsetCursor();
+
+    m_bitmap = nullptr;
+    m_layerStack.clear();
+    m_fillBoundary.clear();
+    m_prevOnion = nullptr;
+    m_nextOnion = nullptr;
+    m_lightTable.clear();
+    m_strokeSnapshot = core::Bitmap();
+    m_strokeDirty = core::DirtyRect{};
+    releaseGlResources();
 }
 
 void GLCanvas::setLayerStack(std::vector<StackEntry> stack, core::Bitmap* active, QPointF activeOffset) {

@@ -84,6 +84,7 @@ public:
     void setTool(Tool tool);
     Tool tool() const { return m_tool; }
     void setInputEnabled(bool enabled) { m_inputEnabled = enabled; }
+    void shutdownForClose();
 
     // ペンツールの半径・色を設定する(消しゴムの設定には影響しない)。
     // 現在ツールがペンの場合は即座に反映する
@@ -195,6 +196,7 @@ private:
     // コンテキストがカレントな状態で呼ぶこと
     QOpenGLTexture* getOrCreateTexture(const core::Bitmap* bitmap);
     void flushPendingUpload();
+    void releaseGlResources();
 
     // 部分アップロードを予約する(実際の転送はpaintGL冒頭で1回だけ行う=60fps対策)
     void queueUpload(core::Bitmap* bitmap, const core::DirtyRect& rect);

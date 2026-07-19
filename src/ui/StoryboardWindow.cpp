@@ -1407,6 +1407,7 @@ void StoryboardWindow::restoreCanvas() {
     if (!m_floatingCanvasWindow || !m_canvasLayout) return;
     FloatingCanvasWindow* window = m_floatingCanvasWindow;
     if (QWidget* floatingCentral = window->centralWidget()) {
+        if (auto* oldCanvas = floatingCentral->findChild<GLCanvas*>()) oldCanvas->shutdownForClose();
         window->takeCentralWidget();
         floatingCentral->deleteLater();
     }
