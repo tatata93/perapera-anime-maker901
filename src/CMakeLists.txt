@@ -42,6 +42,8 @@ set(PERAPERA_APP_SOURCES
     ui/CelSizeDialog.h
     ui/CanvasSizeDialog.cpp
     ui/CanvasSizeDialog.h
+    ui/PaintLayerUtils.cpp
+    ui/PaintLayerUtils.h
     ui/FloatingCanvasWindow.cpp
     ui/FloatingCanvasWindow.h
     ui/RetroTheme.cpp

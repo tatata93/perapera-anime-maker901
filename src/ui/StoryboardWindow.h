@@ -17,10 +17,12 @@ class QVBoxLayout;
 class QWidget;
 class FloatingCanvasWindow;
 class GLCanvas;
+class LayerPanel;
 
 namespace core {
 class Project;
 class Command;
+enum class LayerRole;
 }
 
 // 絵コンテウィンドウ(別ウィンドウ)。絵コンテは全工程の前に単体で描くもの:
@@ -78,6 +80,18 @@ private:
     // 現在の太さ/色設定をキャンバスへ適用する
     void applyToolSettingsToCanvases();
     GLCanvas* createCanvas(QWidget* parent);
+    QWidget* createFloatingCanvasPanel(QWidget* parent);
+    void setActiveTool(int tool);
+    void resizeStoryboardCanvas();
+    void exportStoryboardPdf();
+    void refreshLayerPanel();
+    void addPaintLayer(core::LayerRole role);
+    void duplicatePaintLayer(int layerIndex);
+    void removePaintLayer();
+    void movePaintLayer(int delta);
+    void renamePaintLayer(int layerIndex);
+    void setPaintLayerRole(int layerIndex, core::LayerRole role);
+    void syncSelectedPanelComposite();
     // 内容/セリフ欄(複数行テキスト)を選択パネルへ反映し、コンテ用紙下敷きを最新テキストで敷き直す
     void onActionTextChanged();
     void onDialogueTextChanged();
@@ -98,12 +112,14 @@ private:
     QLabel* m_totalLabel = nullptr;
     QPushButton* m_penButton = nullptr;
     QPushButton* m_eraserButton = nullptr;
+    QPushButton* m_fillButton = nullptr;
     QPushButton* m_eyedropperButton = nullptr;
     QSlider* m_radiusSlider = nullptr;
     QLabel* m_radiusValueLabel = nullptr;
     QPushButton* m_colorButton = nullptr;
     QPlainTextEdit* m_actionEdit = nullptr;
     QPlainTextEdit* m_dialogueEdit = nullptr;
+    LayerPanel* m_layerPanel = nullptr;
     bool m_updating = false;
     int m_selectedRow = -1;  // 現在選択中のパネル行(パネルが1枚もなければ-1)
 

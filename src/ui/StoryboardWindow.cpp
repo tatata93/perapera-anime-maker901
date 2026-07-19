@@ -6,28 +6,43 @@
 #include <QCloseEvent>
 #include <QColorDialog>
 #include <QDialog>
+#include <QFileDialog>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QImage>
+#include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMarginsF>
+#include <QMessageBox>
+#include <QPageLayout>
+#include <QPageSize>
 #include <QPainter>
+#include <QPdfWriter>
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSlider>
+#include <QSignalBlocker>
+#include <QStringList>
 #include <QTableWidget>
 #include <QTextOption>
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cmath>
+#include <utility>
 
 #include "core/Project.h"
 #include "core/StrokeCommand.h"
 #include "render/GLCanvas.h"
+#include "ui/CanvasSizeDialog.h"
 #include "ui/FloatingCanvasWindow.h"
+#include "ui/LayerPanel.h"
+#include "ui/PaintLayerUtils.h"
 #include "ui/RetroTheme.h"
 
 namespace {
@@ -77,10 +92,40 @@ enum Column {
 
 // サムネイルは「画面(絵)欄」のフレーム枠(kFrameRect)部分だけを切り出し、白背景に合成してから
 // サムネイルサイズへ縮小する。透明のまま縮小するとデコレーション表示上は黒く見えてしまうため
-QPixmap makeThumbnail(const core::Bitmap& bitmap) {
-    if (bitmap.isEmpty()) return QPixmap();
-    const QImage source(bitmap.data(), bitmap.width(), bitmap.height(), QImage::Format_RGBA8888);
-    const QImage cropped = source.copy(kFrameRect);
+int scaleCoord(int value, int from, int to) {
+    if (from <= 0) return value;
+    return static_cast<int>(std::lround(static_cast<double>(value) * to / from));
+}
+
+QRect scaledFrameRect(int width, int height) {
+    return QRect(scaleCoord(kFrameRect.x(), kSheetWidth, width), scaleCoord(kFrameRect.y(), kSheetHeight, height),
+                 scaleCoord(kFrameRect.width(), kSheetWidth, width),
+                 scaleCoord(kFrameRect.height(), kSheetHeight, height));
+}
+
+QSize panelCanvasSize(const core::StoryboardPanel& panel) {
+    return perapera::ui::paintLayerCanvasSize(panel.layers, panel.drawing, kSheetWidth, kSheetHeight);
+}
+
+QImage panelDrawingImage(const core::StoryboardPanel& panel) {
+    const QSize size = panelCanvasSize(panel);
+    if (!panel.layers.empty()) {
+        return perapera::ui::bitmapToImageCopy(
+            perapera::ui::compositePaintLayers(panel.layers, size.width(), size.height()));
+    }
+    return perapera::ui::bitmapToImageCopy(panel.drawing);
+}
+
+void syncStoryboardPanelComposite(core::StoryboardPanel& panel) {
+    const QSize size = panelCanvasSize(panel);
+    perapera::ui::ensurePaintLayers(panel.layers, panel.activeLayer, panel.drawing, size.width(), size.height(), true);
+    panel.drawing = perapera::ui::compositePaintLayers(panel.layers, size.width(), size.height());
+}
+
+QPixmap makeThumbnail(const core::StoryboardPanel& panel) {
+    const QImage source = panelDrawingImage(panel);
+    if (source.isNull()) return QPixmap();
+    const QImage cropped = source.copy(scaledFrameRect(source.width(), source.height()));
     QImage composed(cropped.width(), cropped.height(), QImage::Format_RGB32);
     composed.fill(Qt::white);
     QPainter painter(&composed);
@@ -95,7 +140,18 @@ QPixmap makeThumbnail(const core::Bitmap& bitmap) {
 // 描画する。GLCanvasの下敷きとして敷き、この上に手書きインク(drawing)を重ねる。
 // panelNoは1始まりのパネル通し番号(カットNo欄の見出しに使う)
 QImage renderSheetUnderlay(const core::StoryboardPanel& panel, int panelNo) {
-    QImage image(kSheetWidth, kSheetHeight, QImage::Format_RGB32);
+    const QSize size = panelCanvasSize(panel);
+    const int sheetWidth = std::max(1, size.width());
+    const int sheetHeight = std::max(1, size.height());
+    const int noColX0 = 0;
+    const int noColX1 = scaleCoord(kNoColX1, kSheetWidth, sheetWidth);
+    const int pictureColX1 = scaleCoord(kPictureColX1, kSheetWidth, sheetWidth);
+    const int actionColX1 = scaleCoord(kActionColX1, kSheetWidth, sheetWidth);
+    const int dialogueColX1 = scaleCoord(kDialogueColX1, kSheetWidth, sheetWidth);
+    const int secColX1 = sheetWidth;
+    const QRect frameRect = scaledFrameRect(sheetWidth, sheetHeight);
+
+    QImage image(sheetWidth, sheetHeight, QImage::Format_RGB32);
     image.fill(Qt::white);
 
     QPainter painter(&image);
@@ -104,9 +160,9 @@ QImage renderSheetUnderlay(const core::StoryboardPanel& panel, int panelNo) {
     painter.setPen(linePen);
 
     // 外枠+セルを区切る縦罫線
-    painter.drawRect(QRect(0, 0, kSheetWidth - 1, kSheetHeight - 1));
-    for (int x : {kNoColX1, kPictureColX1, kActionColX1, kDialogueColX1}) {
-        painter.drawLine(x, 0, x, kSheetHeight);
+    painter.drawRect(QRect(0, 0, sheetWidth - 1, sheetHeight - 1));
+    for (int x : {noColX1, pictureColX1, actionColX1, dialogueColX1}) {
+        painter.drawLine(x, 0, x, sheetHeight);
     }
 
     QFont headingFont = painter.font();
@@ -121,36 +177,36 @@ QImage renderSheetUnderlay(const core::StoryboardPanel& panel, int panelNo) {
     {
         painter.setPen(kLineColor);
         painter.setFont(headingFont);
-        const QRect headRect(kNoColX0 + kMargin, kMargin, (kNoColX1 - kNoColX0) - kMargin * 2, kHeadingHeight);
+        const QRect headRect(noColX0 + kMargin, kMargin, (noColX1 - noColX0) - kMargin * 2, kHeadingHeight);
         painter.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("C#%1").arg(panelNo));
 
         QFont cutFont = painter.font();
         cutFont.setPixelSize(28);
         painter.setFont(cutFont);
         painter.setPen(Qt::black);
-        const QRect cutRect(kNoColX0, kHeadingHeight, kNoColX1 - kNoColX0, kSheetHeight - kHeadingHeight);
+        const QRect cutRect(noColX0, kHeadingHeight, noColX1 - noColX0, sheetHeight - kHeadingHeight);
         painter.drawText(cutRect, Qt::AlignCenter, QString::fromStdString(panel.cutLabel));
     }
 
     // 画面(絵)欄: 16:9フレーム枠を実線で印字(絵はこの枠内に描く想定)
     {
         painter.setPen(kLineColor);
-        painter.drawRect(kFrameRect);
+        painter.drawRect(frameRect);
     }
 
     // 内容欄: 見出し+内容テキストの折り返し印字
     {
         painter.setFont(headingFont);
         painter.setPen(kLineColor);
-        const QRect headRect(kPictureColX1 + kMargin, kMargin, (kActionColX1 - kPictureColX1) - kMargin * 2,
+        const QRect headRect(pictureColX1 + kMargin, kMargin, (actionColX1 - pictureColX1) - kMargin * 2,
                               kHeadingHeight);
         painter.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter, QObject::tr("内容"));
 
         painter.setFont(bodyFont);
         painter.setPen(Qt::black);
-        const QRect bodyRect(kPictureColX1 + kMargin, kHeadingHeight + kMargin,
-                              (kActionColX1 - kPictureColX1) - kMargin * 2,
-                              kSheetHeight - kHeadingHeight - kMargin * 2);
+        const QRect bodyRect(pictureColX1 + kMargin, kHeadingHeight + kMargin,
+                              (actionColX1 - pictureColX1) - kMargin * 2,
+                              sheetHeight - kHeadingHeight - kMargin * 2);
         painter.drawText(bodyRect, QString::fromStdString(panel.action), wrapOption);
     }
 
@@ -158,15 +214,15 @@ QImage renderSheetUnderlay(const core::StoryboardPanel& panel, int panelNo) {
     {
         painter.setFont(headingFont);
         painter.setPen(kLineColor);
-        const QRect headRect(kActionColX1 + kMargin, kMargin, (kDialogueColX1 - kActionColX1) - kMargin * 2,
+        const QRect headRect(actionColX1 + kMargin, kMargin, (dialogueColX1 - actionColX1) - kMargin * 2,
                               kHeadingHeight);
         painter.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter, QObject::tr("セリフ"));
 
         painter.setFont(bodyFont);
         painter.setPen(Qt::black);
-        const QRect bodyRect(kActionColX1 + kMargin, kHeadingHeight + kMargin,
-                              (kDialogueColX1 - kActionColX1) - kMargin * 2,
-                              kSheetHeight - kHeadingHeight - kMargin * 2);
+        const QRect bodyRect(actionColX1 + kMargin, kHeadingHeight + kMargin,
+                              (dialogueColX1 - actionColX1) - kMargin * 2,
+                              sheetHeight - kHeadingHeight - kMargin * 2);
         painter.drawText(bodyRect, QString::fromStdString(panel.dialogue), wrapOption);
     }
 
@@ -174,7 +230,7 @@ QImage renderSheetUnderlay(const core::StoryboardPanel& panel, int panelNo) {
     {
         painter.setFont(headingFont);
         painter.setPen(kLineColor);
-        const QRect headRect(kDialogueColX1 + kMargin, kMargin, (kSecColX1 - kDialogueColX1) - kMargin * 2,
+        const QRect headRect(dialogueColX1 + kMargin, kMargin, (secColX1 - dialogueColX1) - kMargin * 2,
                               kHeadingHeight);
         painter.drawText(headRect, Qt::AlignLeft | Qt::AlignVCenter, QObject::tr("秒"));
 
@@ -182,8 +238,7 @@ QImage renderSheetUnderlay(const core::StoryboardPanel& panel, int panelNo) {
         painter.setPen(Qt::black);
         const double seconds = static_cast<double>(panel.durationFrames) / kFps;
         const QString text = QStringLiteral("%1k\n%2s").arg(panel.durationFrames).arg(seconds, 0, 'f', 1);
-        const QRect bodyRect(kDialogueColX1, kHeadingHeight, kSecColX1 - kDialogueColX1,
-                              kSheetHeight - kHeadingHeight);
+        const QRect bodyRect(dialogueColX1, kHeadingHeight, secColX1 - dialogueColX1, sheetHeight - kHeadingHeight);
         painter.drawText(bodyRect, Qt::AlignHCenter | Qt::AlignTop, text);
     }
 
@@ -194,14 +249,14 @@ QImage renderSheetUnderlay(const core::StoryboardPanel& panel, int panelNo) {
 // 絵の枠(kFrameRect)部分を白背景に合成したQImageを返す。絵が未描画(枠内が全面透明)なら
 // 白紙のまま中央にカット番号(panelNo、1始まり)を薄く重ねる。プレビュー再生の1コマ分の絵に使う
 QImage composeFrameImage(const core::StoryboardPanel& panel, int panelNo) {
-    QImage composed(kFrameRect.size(), QImage::Format_RGB32);
+    const QImage source = panelDrawingImage(panel);
+    const QRect frameRect = source.isNull() ? kFrameRect : scaledFrameRect(source.width(), source.height());
+    QImage composed(frameRect.size(), QImage::Format_RGB32);
     composed.fill(Qt::white);
 
     bool blank = true;
-    if (!panel.drawing.isEmpty()) {
-        const QImage source(panel.drawing.data(), panel.drawing.width(), panel.drawing.height(),
-                             QImage::Format_RGBA8888);
-        const QImage cropped = source.copy(kFrameRect);
+    if (!source.isNull()) {
+        const QImage cropped = source.copy(frameRect);
         for (int y = 0; y < cropped.height() && blank; ++y) {
             const uchar* row = cropped.constScanLine(y);
             for (int x = 0; x < cropped.width(); ++x) {
@@ -230,6 +285,17 @@ QImage composeFrameImage(const core::StoryboardPanel& panel, int panelNo) {
 
 // プレビュー(ビデオコンテ)再生ダイアログ。各パネルの絵をdurationFrames(24fps)どおりの時間だけ
 // 順番に表示し、最後まで行ったら先頭へループする。モードレスで、閉じるとタイマーを止める
+QImage renderStoryboardSheetImage(const core::StoryboardPanel& panel, int panelNo) {
+    QImage sheet = renderSheetUnderlay(panel, panelNo).convertToFormat(QImage::Format_RGB32);
+    const QImage drawing = panelDrawingImage(panel);
+    if (!drawing.isNull()) {
+        QPainter painter(&sheet);
+        painter.drawImage(0, 0, drawing);
+        painter.end();
+    }
+    return sheet;
+}
+
 class StoryboardPreviewDialog : public QDialog {
 public:
     StoryboardPreviewDialog(core::Project* project, QWidget* parent) : QDialog(parent), m_project(project) {
@@ -404,13 +470,17 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_eyedropperButton = new QPushButton(tr("スポイト"), rightContainer);
     m_penButton->setCheckable(true);
     m_eraserButton->setCheckable(true);
+    m_fillButton = new QPushButton(tr("塗りつぶし"), rightContainer);
+    m_fillButton->setCheckable(true);
     m_eyedropperButton->setCheckable(true);
     m_penButton->setAutoExclusive(true);
     m_eraserButton->setAutoExclusive(true);
+    m_fillButton->setAutoExclusive(true);
     m_eyedropperButton->setAutoExclusive(true);
     m_penButton->setChecked(true);
     toolRow->addWidget(m_penButton);
     toolRow->addWidget(m_eraserButton);
+    toolRow->addWidget(m_fillButton);
     toolRow->addWidget(m_eyedropperButton);
 
     // 太さ(選択中ツールの半径。ペン/消しゴムそれぞれの値をメンバで記憶し、トグル切替時に表示も切替)
@@ -434,6 +504,10 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_zoomButton = new QPushButton(tr("絵を拡大"), rightContainer);
     m_zoomButton->setCheckable(true);
     toolRow->addWidget(m_zoomButton);
+    auto* resizeButton = new QPushButton(tr("サイズ"), rightContainer);
+    toolRow->addWidget(resizeButton);
+    auto* exportButton = new QPushButton(tr("A4書き出し"), rightContainer);
+    toolRow->addWidget(exportButton);
     auto* detachButton = new QPushButton(tr("別窓"), rightContainer);
     toolRow->addWidget(detachButton);
 
@@ -473,6 +547,9 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     mainLayout->addWidget(rightContainer, 4);
 
     setCentralWidget(central);
+    m_layerPanel = new LayerPanel(this);
+    m_layerPanel->setWindowTitle(tr("絵コンテ レイヤー"));
+    addDockWidget(Qt::RightDockWidgetArea, m_layerPanel);
 
     // ストローク完了通知(Undo用コマンドが渡る。絵コンテに通常のUndo操作はないが、絵の枠の
     // ダブルクリング1回目で打たれてしまう点を取り消すために直近のコマンドだけ保持しておく)
@@ -480,7 +557,15 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
         if (checked == m_frameZoomed) return;  // トグル側からの反映(setChecked)による再帰を防ぐ
         m_frameZoomed = checked;
         if (m_frameZoomed) {
-            if (m_canvas) m_canvas->zoomToCanvasRect(kFrameRect);
+            QRect frameRect = kFrameRect;
+            if (m_project && m_project->sceneCount() > 0 && m_selectedRow >= 0) {
+                auto& panels = m_project->scene(0).storyboard();
+                if (static_cast<size_t>(m_selectedRow) < panels.size()) {
+                    const QSize size = panelCanvasSize(panels[static_cast<size_t>(m_selectedRow)]);
+                    frameRect = scaledFrameRect(size.width(), size.height());
+                }
+            }
+            if (m_canvas) m_canvas->zoomToCanvasRect(frameRect);
         } else {
             if (m_canvas) m_canvas->resetView();
         }
@@ -498,12 +583,18 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
         m_radiusSlider->setValue(static_cast<int>(m_eraserRadius));
         m_radiusValueLabel->setText(QString::number(static_cast<int>(m_eraserRadius)));
     });
+    connect(m_fillButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (!checked) return;
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Fill);
+    });
     connect(m_eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
         if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Eyedropper);
     });
     connect(m_radiusSlider, &QSlider::valueChanged, this, &StoryboardWindow::onRadiusSliderChanged);
     connect(m_colorButton, &QPushButton::clicked, this, &StoryboardWindow::chooseColor);
+    connect(resizeButton, &QPushButton::clicked, this, &StoryboardWindow::resizeStoryboardCanvas);
+    connect(exportButton, &QPushButton::clicked, this, &StoryboardWindow::exportStoryboardPdf);
     connect(detachButton, &QPushButton::clicked, this, &StoryboardWindow::detachCanvas);
 
     connect(m_table, &QTableWidget::itemChanged, this, &StoryboardWindow::onItemChanged);
@@ -516,6 +607,54 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(createCutButton, &QPushButton::clicked, this, &StoryboardWindow::createCutFromPanel);
     connect(m_actionEdit, &QPlainTextEdit::textChanged, this, &StoryboardWindow::onActionTextChanged);
     connect(m_dialogueEdit, &QPlainTextEdit::textChanged, this, &StoryboardWindow::onDialogueTextChanged);
+
+    connect(m_layerPanel, &LayerPanel::layerSelected, this, [this](int layerIndex) {
+        if (!m_project || m_project->sceneCount() == 0) return;
+        auto& panels = m_project->scene(0).storyboard();
+        if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+        core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+        if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= panel.layers.size()) return;
+        panel.activeLayer = static_cast<size_t>(layerIndex);
+        bindCanvasToSelectedPanel();
+        emit edited();
+    });
+    connect(m_layerPanel, &LayerPanel::visibilityChanged, this, [this](int layerIndex, bool visible) {
+        if (!m_project || m_project->sceneCount() == 0) return;
+        auto& panels = m_project->scene(0).storyboard();
+        if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+        core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+        if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= panel.layers.size()) return;
+        panel.layers[static_cast<size_t>(layerIndex)].visible = visible;
+        syncSelectedPanelComposite();
+        bindCanvasToSelectedPanel();
+        updateThumbnail(m_selectedRow);
+        emit edited();
+    });
+    connect(m_layerPanel, &LayerPanel::opacityChanged, this, [this](int layerIndex, int opacityPercent) {
+        if (!m_project || m_project->sceneCount() == 0) return;
+        auto& panels = m_project->scene(0).storyboard();
+        if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+        core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+        if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= panel.layers.size()) return;
+        panel.layers[static_cast<size_t>(layerIndex)].setOpacity(std::clamp(opacityPercent, 0, 100) / 100.0);
+        syncSelectedPanelComposite();
+        bindCanvasToSelectedPanel();
+        updateThumbnail(m_selectedRow);
+        emit edited();
+    });
+    connect(m_layerPanel, &LayerPanel::addRequested, this,
+            [this] { addPaintLayer(core::LayerRole::Normal); });
+    connect(m_layerPanel, &LayerPanel::duplicateRequested, this, &StoryboardWindow::duplicatePaintLayer);
+    connect(m_layerPanel, &LayerPanel::removeRequested, this, &StoryboardWindow::removePaintLayer);
+    connect(m_layerPanel, &LayerPanel::moveUpRequested, this, [this] { movePaintLayer(1); });
+    connect(m_layerPanel, &LayerPanel::moveDownRequested, this, [this] { movePaintLayer(-1); });
+    connect(m_layerPanel, &LayerPanel::renameRequested, this, &StoryboardWindow::renamePaintLayer);
+    connect(m_layerPanel, &LayerPanel::roleChangeRequested, this, [this](int layerIndex, int role) {
+        core::LayerRole layerRole = core::LayerRole::Normal;
+        if (role == 1) layerRole = core::LayerRole::ColorTrace;
+        if (role == 2) layerRole = core::LayerRole::Correction;
+        setPaintLayerRole(layerIndex, layerRole);
+    });
 
     applyToolSettingsToCanvases();
 
@@ -545,6 +684,7 @@ void StoryboardWindow::refresh() {
         updateTotalDurationLabel();
         m_updating = false;
         bindCanvasToSelectedPanel();
+        refreshLayerPanel();
         return;
     }
 
@@ -555,6 +695,7 @@ void StoryboardWindow::refresh() {
 
     for (int row = 0; row < count; ++row) {
         core::StoryboardPanel& panel = panels[static_cast<size_t>(row)];
+        syncStoryboardPanelComposite(panel);
 
         // No(編集不可)
         auto* noItem = new QTableWidgetItem(QString::number(row + 1));
@@ -564,7 +705,7 @@ void StoryboardWindow::refresh() {
         // 絵(サムネ、編集不可)
         auto* thumbItem = new QTableWidgetItem();
         thumbItem->setFlags(thumbItem->flags() & ~Qt::ItemIsEditable);
-        thumbItem->setData(Qt::DecorationRole, makeThumbnail(panel.drawing));
+        thumbItem->setData(Qt::DecorationRole, makeThumbnail(panel));
         m_table->setItem(row, kColThumb, thumbItem);
 
         // カット番号(編集可)
@@ -599,6 +740,7 @@ void StoryboardWindow::refresh() {
     // 構造変更後は古いテクスチャを破棄し、vectorの再配置に備えて必ず選択パネルへ再設定する
     m_canvas->clearTextureCache();
     bindCanvasToSelectedPanel();
+    refreshLayerPanel();
 }
 
 void StoryboardWindow::onItemChanged(QTableWidgetItem* item) {
@@ -663,6 +805,7 @@ void StoryboardWindow::addPanel() {
     core::StoryboardPanel panel;
     panel.drawing = core::Bitmap(kSheetWidth, kSheetHeight);
     panel.drawing.fill({0, 0, 0, 0});
+    perapera::ui::ensurePaintLayers(panel.layers, panel.activeLayer, panel.drawing, kSheetWidth, kSheetHeight, true);
     panel.cutLabel = panels.empty() ? std::string("1") : panels.back().cutLabel;
     panels.push_back(std::move(panel));
 
@@ -713,7 +856,10 @@ void StoryboardWindow::createCutFromPanel() {
 
 void StoryboardWindow::onStrokeFinished() {
     const int row = selectedPanelIndex();
-    if (row >= 0) updateThumbnail(row);
+    if (row >= 0) {
+        syncSelectedPanelComposite();
+        updateThumbnail(row);
+    }
     emit edited();
 }
 
@@ -725,42 +871,55 @@ void StoryboardWindow::updateThumbnail(int row) {
     if (!item) return;
 
     m_updating = true;
-    item->setData(Qt::DecorationRole, makeThumbnail(panels[static_cast<size_t>(row)].drawing));
+    item->setData(Qt::DecorationRole, makeThumbnail(panels[static_cast<size_t>(row)]));
     m_updating = false;
 }
 
 void StoryboardWindow::bindCanvasToSelectedPanel() {
     if (!m_project || m_project->sceneCount() == 0) {
         m_canvas->setBitmap(nullptr);
+        m_canvas->setFillBoundaryLayers({});
         m_updating = true;
         m_actionEdit->clear();
         m_dialogueEdit->clear();
         m_updating = false;
         m_actionEdit->setEnabled(false);
         m_dialogueEdit->setEnabled(false);
+        refreshLayerPanel();
         return;
     }
     auto& panels = m_project->scene(0).storyboard();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) {
         m_canvas->setBitmap(nullptr);
+        m_canvas->setFillBoundaryLayers({});
         m_updating = true;
         m_actionEdit->clear();
         m_dialogueEdit->clear();
         m_updating = false;
         m_actionEdit->setEnabled(false);
         m_dialogueEdit->setEnabled(false);
+        refreshLayerPanel();
         return;
     }
 
     core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
     // drawingはコンテ用紙全体(kSheetWidth x kSheetHeight)を覆う1枚の手書きビットマップ。
     // 未確保またはサイズ不一致なら確保し直す(開発中につき旧サイズのデータは破棄してよい)
-    if (panel.drawing.isEmpty() || panel.drawing.width() != kSheetWidth ||
-        panel.drawing.height() != kSheetHeight) {
-        panel.drawing = core::Bitmap(kSheetWidth, kSheetHeight);
-        panel.drawing.fill({0, 0, 0, 0});
+    syncStoryboardPanelComposite(panel);
+    const QSize size = panelCanvasSize(panel);
+    m_canvas->setCanvasSize(size.width(), size.height());
+
+    std::vector<GLCanvas::StackEntry> stack;
+    std::vector<const core::Bitmap*> boundary;
+    for (const core::PaintLayer& layer : panel.layers) {
+        if (layer.visible && layer.opacity > 0.0) {
+            stack.push_back({&layer.bitmap, QPointF(), layer.opacity});
+            if (layer.role == core::LayerRole::ColorTrace) boundary.push_back(&layer.bitmap);
+        }
     }
-    m_canvas->setBitmap(&panel.drawing);
+    core::Bitmap* editTarget = panel.layers.empty() ? nullptr : &panel.layers[panel.activeLayer].bitmap;
+    m_canvas->setFillBoundaryLayers(std::move(boundary));
+    m_canvas->setLayerStack(std::move(stack), editTarget, QPointF());
 
     // 内容/セリフ(複数行テキスト)を読み込む。m_updatingガードでtextChangedの暴発を防ぐ
     m_updating = true;
@@ -776,7 +935,8 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
     m_canvas->setUnderlayOpacity(1.0f);
 
     // 絵の枠を拡大表示中だった場合は、パネル切替後も拡大状態を維持する
-    if (m_frameZoomed) m_canvas->zoomToCanvasRect(kFrameRect);
+    if (m_frameZoomed) m_canvas->zoomToCanvasRect(scaledFrameRect(size.width(), size.height()));
+    refreshLayerPanel();
 }
 
 void StoryboardWindow::onRadiusSliderChanged(int value) {
@@ -810,6 +970,8 @@ GLCanvas* StoryboardWindow::createCanvas(QWidget* parent) {
     canvas->setCanvasSize(kSheetWidth, kSheetHeight);
     if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
         canvas->setTool(GLCanvas::Tool::Eyedropper);
+    } else if (m_fillButton && m_fillButton->isChecked()) {
+        canvas->setTool(GLCanvas::Tool::Fill);
     } else if (m_eraserButton && m_eraserButton->isChecked()) {
         canvas->setTool(GLCanvas::Tool::Eraser);
     } else {
@@ -831,6 +993,306 @@ GLCanvas* StoryboardWindow::createCanvas(QWidget* parent) {
     canvas->setPenColor(m_penColor);
     canvas->setEraserRadius(m_eraserRadius);
     return canvas;
+}
+
+QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
+    auto* panel = new QWidget(parent);
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(4, 4, 4, 4);
+
+    auto* row = new QHBoxLayout();
+    auto* penButton = new QPushButton(tr("ペン"), panel);
+    auto* eraserButton = new QPushButton(tr("消しゴム"), panel);
+    auto* fillButton = new QPushButton(tr("塗りつぶし"), panel);
+    auto* eyedropperButton = new QPushButton(tr("スポイト"), panel);
+    for (QPushButton* button : {penButton, eraserButton, fillButton, eyedropperButton}) {
+        button->setCheckable(true);
+        button->setAutoExclusive(true);
+        row->addWidget(button);
+    }
+    if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
+        eyedropperButton->setChecked(true);
+    } else if (m_fillButton && m_fillButton->isChecked()) {
+        fillButton->setChecked(true);
+    } else if (m_eraserButton && m_eraserButton->isChecked()) {
+        eraserButton->setChecked(true);
+    } else {
+        penButton->setChecked(true);
+    }
+
+    row->addWidget(new QLabel(tr("太さ"), panel));
+    auto* radiusSlider = new QSlider(Qt::Horizontal, panel);
+    radiusSlider->setRange(kRadiusMin, kRadiusMax);
+    radiusSlider->setValue(m_eraserButton && m_eraserButton->isChecked() ? static_cast<int>(m_eraserRadius)
+                                                                         : static_cast<int>(m_penRadius));
+    radiusSlider->setFixedWidth(140);
+    row->addWidget(radiusSlider);
+    auto* radiusLabel = new QLabel(QString::number(radiusSlider->value()), panel);
+    radiusLabel->setFixedWidth(28);
+    row->addWidget(radiusLabel);
+
+    auto* colorButton = new QPushButton(tr("色"), panel);
+    colorButton->setFixedWidth(48);
+    colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+    row->addWidget(colorButton);
+    row->addStretch();
+    layout->addLayout(row);
+
+    m_canvas = createCanvas(panel);
+    layout->addWidget(m_canvas, 1);
+
+    connect(penButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Pen));
+    });
+    connect(eraserButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Eraser));
+    });
+    connect(fillButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Fill));
+    });
+    connect(eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Eyedropper));
+    });
+    connect(radiusSlider, &QSlider::valueChanged, this, [this, radiusLabel](int value) {
+        if (m_eraserButton && m_eraserButton->isChecked()) {
+            m_eraserRadius = static_cast<float>(value);
+        } else {
+            m_penRadius = static_cast<float>(value);
+        }
+        radiusLabel->setText(QString::number(value));
+        if (m_radiusSlider) {
+            const QSignalBlocker blocker(m_radiusSlider);
+            m_radiusSlider->setValue(value);
+        }
+        if (m_radiusValueLabel) m_radiusValueLabel->setText(QString::number(value));
+        applyToolSettingsToCanvases();
+    });
+    connect(colorButton, &QPushButton::clicked, this, [this, colorButton] {
+        const QColor chosen = QColorDialog::getColor(m_penColor, this, tr("ペンの色"));
+        if (!chosen.isValid()) return;
+        m_penColor = chosen;
+        const QString style = QStringLiteral("background-color: %1;").arg(m_penColor.name());
+        colorButton->setStyleSheet(style);
+        if (m_colorButton) m_colorButton->setStyleSheet(style);
+        applyToolSettingsToCanvases();
+    });
+    return panel;
+}
+
+void StoryboardWindow::setActiveTool(int tool) {
+    const auto canvasTool = static_cast<GLCanvas::Tool>(tool);
+    if (m_penButton && m_eraserButton && m_fillButton && m_eyedropperButton) {
+        const QSignalBlocker b1(m_penButton);
+        const QSignalBlocker b2(m_eraserButton);
+        const QSignalBlocker b3(m_fillButton);
+        const QSignalBlocker b4(m_eyedropperButton);
+        m_penButton->setChecked(canvasTool == GLCanvas::Tool::Pen);
+        m_eraserButton->setChecked(canvasTool == GLCanvas::Tool::Eraser);
+        m_fillButton->setChecked(canvasTool == GLCanvas::Tool::Fill);
+        m_eyedropperButton->setChecked(canvasTool == GLCanvas::Tool::Eyedropper);
+    }
+    if (m_canvas) m_canvas->setTool(canvasTool);
+    if (m_radiusSlider && m_radiusValueLabel) {
+        const int value = canvasTool == GLCanvas::Tool::Eraser ? static_cast<int>(m_eraserRadius)
+                                                               : static_cast<int>(m_penRadius);
+        const QSignalBlocker blocker(m_radiusSlider);
+        m_radiusSlider->setValue(value);
+        m_radiusValueLabel->setText(QString::number(value));
+    }
+}
+
+void StoryboardWindow::syncSelectedPanelComposite() {
+    if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+    syncStoryboardPanelComposite(panels[static_cast<size_t>(m_selectedRow)]);
+}
+
+void StoryboardWindow::refreshLayerPanel() {
+    if (!m_layerPanel) return;
+    QStringList names;
+    QList<bool> visible;
+    QList<int> opacity;
+    int active = -1;
+
+    if (m_project && m_project->sceneCount() > 0 && m_selectedRow >= 0) {
+        auto& panels = m_project->scene(0).storyboard();
+        if (static_cast<size_t>(m_selectedRow) < panels.size()) {
+            core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+            perapera::ui::ensurePaintLayers(panel.layers, panel.activeLayer, panel.drawing, kSheetWidth, kSheetHeight,
+                                            true);
+            active = static_cast<int>(panel.activeLayer);
+            for (const core::PaintLayer& layer : panel.layers) {
+                QString name = QString::fromStdString(layer.name);
+                if (layer.role == core::LayerRole::ColorTrace) name += tr(" [塗分け線]");
+                if (layer.role == core::LayerRole::Correction) name += tr(" [修正]");
+                names.append(name);
+                visible.append(layer.visible);
+                opacity.append(static_cast<int>(std::lround(std::clamp(layer.opacity, 0.0, 1.0) * 100.0)));
+            }
+        }
+    }
+
+    m_layerPanel->setLayers(names, visible, opacity, active);
+}
+
+void StoryboardWindow::addPaintLayer(core::LayerRole role) {
+    if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+    core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+    syncStoryboardPanelComposite(panel);
+    const QSize size = panelCanvasSize(panel);
+
+    core::PaintLayer layer;
+    layer.role = role;
+    layer.name = role == core::LayerRole::ColorTrace ? "塗分け線" : "レイヤー";
+    layer.bitmap = core::Bitmap(size.width(), size.height());
+    layer.bitmap.fill({0, 0, 0, 0});
+    const size_t insertAt = std::min(panel.activeLayer + 1, panel.layers.size());
+    panel.layers.insert(panel.layers.begin() + static_cast<ptrdiff_t>(insertAt), std::move(layer));
+    panel.activeLayer = insertAt;
+    syncStoryboardPanelComposite(panel);
+    m_canvas->clearTextureCache();
+    bindCanvasToSelectedPanel();
+    updateThumbnail(m_selectedRow);
+    emit edited();
+}
+
+void StoryboardWindow::duplicatePaintLayer(int layerIndex) {
+    if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+    core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+    if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= panel.layers.size()) return;
+    core::PaintLayer copy = panel.layers[static_cast<size_t>(layerIndex)];
+    copy.name += " コピー";
+    panel.layers.insert(panel.layers.begin() + layerIndex + 1, std::move(copy));
+    panel.activeLayer = static_cast<size_t>(layerIndex + 1);
+    syncStoryboardPanelComposite(panel);
+    m_canvas->clearTextureCache();
+    bindCanvasToSelectedPanel();
+    updateThumbnail(m_selectedRow);
+    emit edited();
+}
+
+void StoryboardWindow::removePaintLayer() {
+    if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+    core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+    if (panel.layers.size() <= 1) return;
+    panel.layers.erase(panel.layers.begin() + static_cast<ptrdiff_t>(panel.activeLayer));
+    panel.activeLayer = std::min(panel.activeLayer, panel.layers.size() - 1);
+    syncStoryboardPanelComposite(panel);
+    m_canvas->clearTextureCache();
+    bindCanvasToSelectedPanel();
+    updateThumbnail(m_selectedRow);
+    emit edited();
+}
+
+void StoryboardWindow::movePaintLayer(int delta) {
+    if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+    core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+    const int from = static_cast<int>(panel.activeLayer);
+    const int to = from + delta;
+    if (from < 0 || to < 0 || static_cast<size_t>(to) >= panel.layers.size()) return;
+    std::swap(panel.layers[static_cast<size_t>(from)], panel.layers[static_cast<size_t>(to)]);
+    panel.activeLayer = static_cast<size_t>(to);
+    syncStoryboardPanelComposite(panel);
+    bindCanvasToSelectedPanel();
+    updateThumbnail(m_selectedRow);
+    emit edited();
+}
+
+void StoryboardWindow::renamePaintLayer(int layerIndex) {
+    if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+    core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+    if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= panel.layers.size()) return;
+
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("レイヤー名"), tr("名前:"), QLineEdit::Normal,
+                                               QString::fromStdString(panel.layers[static_cast<size_t>(layerIndex)].name),
+                                               &ok);
+    if (!ok || name.isEmpty()) return;
+    panel.layers[static_cast<size_t>(layerIndex)].name = name.toStdString();
+    refreshLayerPanel();
+    emit edited();
+}
+
+void StoryboardWindow::setPaintLayerRole(int layerIndex, core::LayerRole role) {
+    if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+    core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+    if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= panel.layers.size()) return;
+    panel.layers[static_cast<size_t>(layerIndex)].role = role;
+    bindCanvasToSelectedPanel();
+    emit edited();
+}
+
+void StoryboardWindow::resizeStoryboardCanvas() {
+    if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
+    core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
+    syncStoryboardPanelComposite(panel);
+    const QSize current = panelCanvasSize(panel);
+
+    CanvasSizeDialog dialog(current.width(), current.height(), this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const int width = dialog.canvasWidth();
+    const int height = dialog.canvasHeight();
+    if (width == current.width() && height == current.height()) return;
+
+    perapera::ui::resizePaintLayersCentered(panel.layers, width, height);
+    panel.drawing = perapera::ui::compositePaintLayers(panel.layers, width, height);
+    m_canvas->clearTextureCache();
+    bindCanvasToSelectedPanel();
+    updateThumbnail(m_selectedRow);
+    emit edited();
+}
+
+void StoryboardWindow::exportStoryboardPdf() {
+    if (!m_project || m_project->sceneCount() == 0) return;
+    auto& panels = m_project->scene(0).storyboard();
+    if (panels.empty()) return;
+
+    const QString path =
+        QFileDialog::getSaveFileName(this, tr("絵コンテを書き出し"), QString(), tr("PDF (*.pdf)"));
+    if (path.isEmpty()) return;
+    const QString pdfPath = path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive) ? path : path + ".pdf";
+
+    QPdfWriter writer(pdfPath);
+    writer.setResolution(300);
+    writer.setPageLayout(QPageLayout(QPageSize(QPageSize::A4), QPageLayout::Landscape, QMarginsF(10, 10, 10, 10),
+                                     QPageLayout::Millimeter));
+    QPainter painter(&writer);
+    if (!painter.isActive()) {
+        QMessageBox::warning(this, tr("書き出しエラー"), tr("PDFを書き出せませんでした"));
+        return;
+    }
+
+    const QRect page = writer.pageLayout().paintRectPixels(writer.resolution());
+    constexpr int panelsPerPage = 2;
+    const int slotHeight = page.height() / panelsPerPage;
+    for (int i = 0; i < static_cast<int>(panels.size()); ++i) {
+        if (i > 0 && i % panelsPerPage == 0) writer.newPage();
+        core::StoryboardPanel& panel = panels[static_cast<size_t>(i)];
+        syncStoryboardPanelComposite(panel);
+        const QImage sheet = renderStoryboardSheetImage(panel, i + 1);
+        const QRect slot(page.left(), page.top() + (i % panelsPerPage) * slotHeight, page.width(), slotHeight);
+        QSize target = sheet.size();
+        target.scale(slot.size(), Qt::KeepAspectRatio);
+        const QRect dest(slot.left() + (slot.width() - target.width()) / 2,
+                         slot.top() + (slot.height() - target.height()) / 2, target.width(), target.height());
+        painter.drawImage(dest, sheet);
+    }
+    painter.end();
 }
 
 void StoryboardWindow::onActionTextChanged() {
@@ -895,9 +1357,18 @@ void StoryboardWindow::onCanvasDoubleClicked(QPointF imagePos) {
 
     // トグル: 未拡大かつimagePosが絵の枠内ならズームイン。拡大中ならどこをダブルクリックしても解除する。
     // 実際の反映はm_zoomButtonのtoggledハンドラに任せる(ボタンでの切替と経路を一本化するため)
+    QRect frameRect = kFrameRect;
+    if (m_project && m_project->sceneCount() > 0 && m_selectedRow >= 0) {
+        auto& panels = m_project->scene(0).storyboard();
+        if (static_cast<size_t>(m_selectedRow) < panels.size()) {
+            const QSize size = panelCanvasSize(panels[static_cast<size_t>(m_selectedRow)]);
+            frameRect = scaledFrameRect(size.width(), size.height());
+        }
+    }
+
     if (m_frameZoomed) {
         m_zoomButton->setChecked(false);
-    } else if (kFrameRect.contains(imagePos.toPoint())) {
+    } else if (frameRect.contains(imagePos.toPoint())) {
         m_zoomButton->setChecked(true);
     }
 }
@@ -923,8 +1394,7 @@ void StoryboardWindow::detachCanvas() {
     auto* window = new FloatingCanvasWindow(tr("絵コンテ キャンバス"), this);
     m_floatingCanvasWindow = window;
     perapera::ui::installRetroWindowFrame(window);
-    m_canvas = createCanvas(window);
-    window->setCentralWidget(m_canvas);
+    window->setCentralWidget(createFloatingCanvasPanel(window));
     bindCanvasToSelectedPanel();
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &StoryboardWindow::restoreCanvas);
     connect(window, &QObject::destroyed, this, [this, window] {
@@ -936,11 +1406,11 @@ void StoryboardWindow::detachCanvas() {
 void StoryboardWindow::restoreCanvas() {
     if (!m_floatingCanvasWindow || !m_canvasLayout) return;
     FloatingCanvasWindow* window = m_floatingCanvasWindow;
-    if (m_canvas) {
-        if (window->centralWidget() == m_canvas) window->takeCentralWidget();
-        m_canvas->deleteLater();
-        m_canvas = nullptr;
+    if (QWidget* floatingCentral = window->centralWidget()) {
+        window->takeCentralWidget();
+        floatingCentral->deleteLater();
     }
+    m_canvas = nullptr;
     m_canvas = createCanvas(m_canvasHost);
     m_canvasLayout->addWidget(m_canvas);
     bindCanvasToSelectedPanel();

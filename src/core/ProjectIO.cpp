@@ -471,6 +471,41 @@ bool readBitmapBlob(const json& jSrc, const unsigned char* blobBase, uint64_t bl
     return true;
 }
 
+bool writePaintLayers(const std::vector<PaintLayer>& layers, json& owner, std::vector<unsigned char>& blobs,
+                      std::string* errorOut) {
+    if (layers.empty()) return true;
+
+    json jLayers = json::array();
+    for (const PaintLayer& layer : layers) {
+        json jLayer;
+        jLayer["name"] = layer.name;
+        jLayer["visible"] = layer.visible;
+        jLayer["opacity"] = std::clamp(layer.opacity, 0.0, 1.0);
+        jLayer["role"] = layerRoleToString(layer.role);
+        if (!writeBitmapBlob(layer.bitmap, jLayer, blobs, errorOut)) return false;
+        jLayers.push_back(std::move(jLayer));
+    }
+    owner["layers"] = std::move(jLayers);
+    return true;
+}
+
+bool readPaintLayers(const json& owner, const unsigned char* blobBase, uint64_t blobTotal,
+                     std::vector<PaintLayer>* layersOut, std::string* errorOut) {
+    layersOut->clear();
+    if (!owner.contains("layers") || !owner.at("layers").is_array()) return true;
+
+    for (const json& jLayer : owner.at("layers")) {
+        PaintLayer layer;
+        layer.name = jLayer.value("name", std::string());
+        layer.visible = jLayer.value("visible", true);
+        layer.opacity = std::clamp(jLayer.value("opacity", 1.0), 0.0, 1.0);
+        layer.role = layerRoleFromString(jLayer.value("role", std::string("normal")));
+        if (!readBitmapBlob(jLayer, blobBase, blobTotal, &layer.bitmap, errorOut)) return false;
+        layersOut->push_back(std::move(layer));
+    }
+    return true;
+}
+
 // --- cuts/cut_<id>.ppam 1個分のJSON変換 ---
 // 現在jCutに入っている全項目(name/frameCount/action/dialogue/status/cels(exposure/positionKeys/
 // paperW/H/layers/frames)/previz/cameraKeys/effects(params/paramCurves/mask)/
@@ -927,7 +962,9 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& folder
                 jPanel["action"] = panel.action;
                 jPanel["dialogue"] = panel.dialogue;
                 jPanel["duration"] = panel.durationFrames;
+                jPanel["activeLayer"] = panel.activeLayer;
                 if (!writeBitmapBlob(panel.drawing, jPanel, blobs, errorOut)) return false;
+                if (!writePaintLayers(panel.layers, jPanel, blobs, errorOut)) return false;
                 jPanels.push_back(std::move(jPanel));
             }
             jScenes.push_back({{"panels", std::move(jPanels)}});
@@ -947,7 +984,9 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& folder
             json jBoard;
             jBoard["name"] = board.name;
             jBoard["finalStamp"] = board.finalStamp;
+            jBoard["activeLayer"] = board.activeLayer;
             if (!writeBitmapBlob(board.image, jBoard, blobs, errorOut)) return false;
+            if (!writePaintLayers(board.layers, jBoard, blobs, errorOut)) return false;
             // 色指定(名前付き色見本)。空なら省略する
             if (!board.colorSpecs.empty()) {
                 json jColorSpecs = json::array();
@@ -1054,6 +1093,11 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                                             errorOut)) {
                             return nullptr;
                         }
+                        panel.activeLayer = jPanel.value("activeLayer", static_cast<size_t>(0));
+                        if (!readPaintLayers(jPanel, sbContainer.blobBase(), sbContainer.blobTotal(), &panel.layers,
+                                             errorOut)) {
+                            return nullptr;
+                        }
                         scene.storyboard().push_back(std::move(panel));
                     }
                 }
@@ -1073,6 +1117,11 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                     board.finalStamp = jBoard.value("finalStamp", false);
                     if (!readBitmapBlob(jBoard, boardsContainer.blobBase(), boardsContainer.blobTotal(), &board.image,
                                         errorOut)) {
+                        return nullptr;
+                    }
+                    board.activeLayer = jBoard.value("activeLayer", static_cast<size_t>(0));
+                    if (!readPaintLayers(jBoard, boardsContainer.blobBase(), boardsContainer.blobTotal(), &board.layers,
+                                         errorOut)) {
                         return nullptr;
                     }
                     if (jBoard.contains("colorSpecs")) {

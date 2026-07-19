@@ -22,6 +22,8 @@ struct ColorSpec {
 struct SettingBoard {
     std::string name;  // 例「キャラ: 主人公」「美術: 教室」
     Bitmap image;       // ボードの中身(1920x1080、透明下地)
+    std::vector<PaintLayer> layers;
+    size_t activeLayer = 0;
     std::vector<ColorSpec> colorSpecs;  // 色指定書(肌/髪/影など名前付きの色見本)。既定は空
     bool finalStamp = false;
 };

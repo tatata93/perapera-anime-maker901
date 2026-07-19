@@ -12,9 +12,11 @@ class QVBoxLayout;
 class QWidget;
 class FloatingCanvasWindow;
 class GLCanvas;
+class LayerPanel;
 
 namespace core {
 class Project;
+enum class LayerRole;
 }
 
 // 設定ボードウィンドウ(別ウィンドウ)。キャラクター設定・美術設定などの資料を
@@ -48,6 +50,7 @@ private:
     // 縮小・中央配置してsrc-over合成する
     void pasteImage();
     void resizeBoardCanvas();
+    void exportBoardImage();
     void toggleFinalStamp(bool checked);
     void updateFinalStampOverlay();
     void detachCanvas();
@@ -62,7 +65,17 @@ private:
     // 現在の太さ/色設定をキャンバスへ適用する
     void applyToolSettingsToCanvas();
     GLCanvas* createCanvas(QWidget* parent);
+    QWidget* createFloatingCanvasPanel(QWidget* parent);
+    void setActiveTool(int tool);
     int selectedBoardIndex() const;
+    void refreshLayerPanel();
+    void addPaintLayer(core::LayerRole role);
+    void duplicatePaintLayer(int layerIndex);
+    void removePaintLayer();
+    void movePaintLayer(int delta);
+    void renamePaintLayer(int layerIndex);
+    void setPaintLayerRole(int layerIndex, core::LayerRole role);
+    void syncSelectedBoardComposite();
 
     // 色指定(色指定書)操作: 選択中ボードのcolorSpecsを編集する
     void addColorSpec();       // 色を選び、名前を付けて追加する
@@ -82,12 +95,14 @@ private:
     QVBoxLayout* m_canvasLayout = nullptr;
     QPushButton* m_penButton = nullptr;
     QPushButton* m_eraserButton = nullptr;
+    QPushButton* m_fillButton = nullptr;
     QPushButton* m_eyedropperButton = nullptr;
     QPushButton* m_finalStampButton = nullptr;
     QSlider* m_radiusSlider = nullptr;
     QLabel* m_radiusValueLabel = nullptr;
     QPushButton* m_colorButton = nullptr;
     QListWidget* m_colorSpecList = nullptr;  // 色指定(色指定書)一覧: スウォッチ+名前
+    LayerPanel* m_layerPanel = nullptr;
     FloatingCanvasWindow* m_floatingCanvasWindow = nullptr;
     bool m_updating = false;
     int m_selectedRow = -1;  // 現在選択中のボード行(ボードが1枚もなければ-1)

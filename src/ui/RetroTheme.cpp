@@ -695,6 +695,25 @@ QMenu::indicator:checked {
     border-right: 1px solid #ffffff;
     border-bottom: 1px solid #ffffff;
 }
+QCheckBox::indicator, QGroupBox::indicator, QListView::indicator, QListWidget::indicator,
+QTreeView::indicator, QTableView::indicator {
+    width: 13px;
+    height: 13px;
+    background-color: #ffffff;
+    border-top: 1px solid #404040;
+    border-left: 1px solid #404040;
+    border-right: 1px solid #ffffff;
+    border-bottom: 1px solid #ffffff;
+}
+QCheckBox::indicator:checked, QGroupBox::indicator:checked, QListView::indicator:checked,
+QListWidget::indicator:checked, QTreeView::indicator:checked, QTableView::indicator:checked {
+    background-color: #000080;
+    border: 2px solid #ffffff;
+}
+QCheckBox::indicator:disabled, QGroupBox::indicator:disabled, QListView::indicator:disabled,
+QListWidget::indicator:disabled, QTreeView::indicator:disabled, QTableView::indicator:disabled {
+    background-color: #d4d0c8;
+}
 QPushButton, QToolButton {
     background-color: #d4d0c8;
     color: #000000;
@@ -868,6 +887,23 @@ QMenu::indicator {
 QMenu::indicator:checked {
     background-color: #316ac5;
     border: 1px solid #0a246a;
+}
+QCheckBox::indicator, QGroupBox::indicator, QListView::indicator, QListWidget::indicator,
+QTreeView::indicator, QTableView::indicator {
+    width: 14px;
+    height: 14px;
+    background-color: #ffffff;
+    border: 1px solid #7f9db9;
+}
+QCheckBox::indicator:checked, QGroupBox::indicator:checked, QListView::indicator:checked,
+QListWidget::indicator:checked, QTreeView::indicator:checked, QTableView::indicator:checked {
+    background-color: #316ac5;
+    border: 2px solid #ffffff;
+}
+QCheckBox::indicator:disabled, QGroupBox::indicator:disabled, QListView::indicator:disabled,
+QListWidget::indicator:disabled, QTreeView::indicator:disabled, QTableView::indicator:disabled {
+    background-color: #ece9d8;
+    border: 1px solid #aca899;
 }
 QPushButton, QToolButton {
     color: #000000;

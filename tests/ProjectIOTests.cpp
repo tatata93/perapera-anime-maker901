@@ -330,6 +330,23 @@ TEST_CASE("Storyboard panels round trip through ppproj", "[core][io][storyboard]
     panel1.drawing = core::Bitmap(16, 9);
     panel1.drawing.fill({0, 0, 0, 0});
     panel1.drawing.setPixel(3, 3, {200, 30, 30, 255});
+    core::PaintLayer storyboardLine;
+    storyboardLine.name = "Storyboard Line";
+    storyboardLine.bitmap = core::Bitmap(16, 9);
+    storyboardLine.bitmap.fill({0, 0, 0, 0});
+    storyboardLine.bitmap.setPixel(1, 1, {10, 20, 30, 255});
+    storyboardLine.opacity = 0.8;
+    core::PaintLayer storyboardTrace;
+    storyboardTrace.name = "Storyboard Trace";
+    storyboardTrace.bitmap = core::Bitmap(16, 9);
+    storyboardTrace.bitmap.fill({0, 0, 0, 0});
+    storyboardTrace.bitmap.setPixel(2, 2, {40, 50, 60, 128});
+    storyboardTrace.visible = false;
+    storyboardTrace.opacity = 0.35;
+    storyboardTrace.role = core::LayerRole::ColorTrace;
+    panel1.layers.push_back(storyboardLine);
+    panel1.layers.push_back(storyboardTrace);
+    panel1.activeLayer = 1;
     scene.storyboard().push_back(std::move(panel1));
 
     core::StoryboardPanel panel2;  // 同じカット番号の2コマ目(絵は未描画)
@@ -351,6 +368,21 @@ TEST_CASE("Storyboard panels round trip through ppproj", "[core][io][storyboard]
     REQUIRE(sb[0].durationFrames == 36);
     REQUIRE(sb[0].drawing.width() == 16);
     REQUIRE(sb[0].drawing.pixel(3, 3).r == 200);
+    REQUIRE(sb[0].layers.size() == 2);
+    REQUIRE(sb[0].activeLayer == 1);
+    REQUIRE(sb[0].layers[0].name == "Storyboard Line");
+    REQUIRE(sb[0].layers[0].visible);
+    REQUIRE(sb[0].layers[0].opacity > 0.79);
+    REQUIRE(sb[0].layers[0].opacity < 0.81);
+    REQUIRE(sb[0].layers[0].role == core::LayerRole::Normal);
+    REQUIRE(sb[0].layers[0].bitmap.width() == 16);
+    REQUIRE(sb[0].layers[0].bitmap.pixel(1, 1).g == 20);
+    REQUIRE(sb[0].layers[1].name == "Storyboard Trace");
+    REQUIRE_FALSE(sb[0].layers[1].visible);
+    REQUIRE(sb[0].layers[1].opacity > 0.34);
+    REQUIRE(sb[0].layers[1].opacity < 0.36);
+    REQUIRE(sb[0].layers[1].role == core::LayerRole::ColorTrace);
+    REQUIRE(sb[0].layers[1].bitmap.pixel(2, 2).a == 128);
     REQUIRE(sb[1].cutLabel == "1");
     REQUIRE(sb[1].durationFrames == 12);
     REQUIRE(sb[1].drawing.isEmpty());
@@ -368,6 +400,23 @@ TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]"
     board1.image = core::Bitmap(16, 9);
     board1.image.fill({0, 0, 0, 0});
     board1.image.setPixel(5, 2, {10, 200, 40, 255});  // 目印ピクセル
+    core::PaintLayer boardPaint;
+    boardPaint.name = "Board Paint";
+    boardPaint.bitmap = core::Bitmap(16, 9);
+    boardPaint.bitmap.fill({0, 0, 0, 0});
+    boardPaint.bitmap.setPixel(4, 4, {70, 80, 90, 255});
+    boardPaint.opacity = 0.6;
+    core::PaintLayer boardTrace;
+    boardTrace.name = "Board Trace";
+    boardTrace.bitmap = core::Bitmap(16, 9);
+    boardTrace.bitmap.fill({0, 0, 0, 0});
+    boardTrace.bitmap.setPixel(6, 6, {90, 80, 70, 64});
+    boardTrace.visible = false;
+    boardTrace.opacity = 0.25;
+    boardTrace.role = core::LayerRole::ColorTrace;
+    board1.layers.push_back(boardPaint);
+    board1.layers.push_back(boardTrace);
+    board1.activeLayer = 1;
     project.settingBoards().push_back(std::move(board1));
 
     // 色指定(色指定書)2色
@@ -400,6 +449,20 @@ TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]"
     REQUIRE(marked.r == 10);
     REQUIRE(marked.g == 200);
     REQUIRE(marked.b == 40);
+    REQUIRE(boards[0].layers.size() == 2);
+    REQUIRE(boards[0].activeLayer == 1);
+    REQUIRE(boards[0].layers[0].name == "Board Paint");
+    REQUIRE(boards[0].layers[0].visible);
+    REQUIRE(boards[0].layers[0].opacity > 0.59);
+    REQUIRE(boards[0].layers[0].opacity < 0.61);
+    REQUIRE(boards[0].layers[0].role == core::LayerRole::Normal);
+    REQUIRE(boards[0].layers[0].bitmap.pixel(4, 4).b == 90);
+    REQUIRE(boards[0].layers[1].name == "Board Trace");
+    REQUIRE_FALSE(boards[0].layers[1].visible);
+    REQUIRE(boards[0].layers[1].opacity > 0.24);
+    REQUIRE(boards[0].layers[1].opacity < 0.26);
+    REQUIRE(boards[0].layers[1].role == core::LayerRole::ColorTrace);
+    REQUIRE(boards[0].layers[1].bitmap.pixel(6, 6).a == 64);
     REQUIRE(boards[1].name == "美術: 教室");
     REQUIRE_FALSE(boards[1].finalStamp);
     REQUIRE(boards[1].image.isEmpty());

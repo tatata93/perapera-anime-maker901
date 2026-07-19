@@ -21,6 +21,7 @@
 #include <QSize>
 #include <QSlider>
 #include <QSignalBlocker>
+#include <QStringList>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -31,6 +32,8 @@
 #include "render/GLCanvas.h"
 #include "ui/CanvasSizeDialog.h"
 #include "ui/FloatingCanvasWindow.h"
+#include "ui/LayerPanel.h"
+#include "ui/PaintLayerUtils.h"
 #include "ui/RetroTheme.h"
 
 namespace {
@@ -133,6 +136,27 @@ QImage makeFinalStampOverlay(int width, int height) {
     return overlay;
 }
 
+QSize boardCanvasSize(const core::SettingBoard& board) {
+    return perapera::ui::paintLayerCanvasSize(board.layers, board.image, kBoardWidth, kBoardHeight);
+}
+
+void syncSettingBoardComposite(core::SettingBoard& board) {
+    const QSize size = boardCanvasSize(board);
+    perapera::ui::ensurePaintLayers(board.layers, board.activeLayer, board.image, size.width(), size.height(), true);
+    board.image = perapera::ui::compositePaintLayers(board.layers, size.width(), size.height());
+}
+
+QImage boardExportImage(core::SettingBoard& board) {
+    syncSettingBoardComposite(board);
+    QImage image = perapera::ui::bitmapToImageCopy(board.image).convertToFormat(QImage::Format_RGBA8888);
+    if (board.finalStamp && !image.isNull()) {
+        QPainter painter(&image);
+        painter.drawImage(0, 0, makeFinalStampOverlay(image.width(), image.height()));
+        painter.end();
+    }
+    return image;
+}
+
 }  // namespace
 
 SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
@@ -171,13 +195,17 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     m_eyedropperButton = new QPushButton(tr("スポイト"), rightContainer);
     m_penButton->setCheckable(true);
     m_eraserButton->setCheckable(true);
+    m_fillButton = new QPushButton(tr("塗りつぶし"), rightContainer);
+    m_fillButton->setCheckable(true);
     m_eyedropperButton->setCheckable(true);
     m_penButton->setAutoExclusive(true);
     m_eraserButton->setAutoExclusive(true);
+    m_fillButton->setAutoExclusive(true);
     m_eyedropperButton->setAutoExclusive(true);
     m_penButton->setChecked(true);
     toolRow->addWidget(m_penButton);
     toolRow->addWidget(m_eraserButton);
+    toolRow->addWidget(m_fillButton);
     toolRow->addWidget(m_eyedropperButton);
 
     toolRow->addWidget(new QLabel(tr("太さ"), rightContainer));
@@ -199,6 +227,8 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     toolRow->addWidget(pasteButton);
     auto* resizeButton = new QPushButton(tr("サイズ"), rightContainer);
     toolRow->addWidget(resizeButton);
+    auto* exportButton = new QPushButton(tr("PNG書き出し"), rightContainer);
+    toolRow->addWidget(exportButton);
     m_finalStampButton = new QPushButton(tr("決定稿"), rightContainer);
     m_finalStampButton->setCheckable(true);
     toolRow->addWidget(m_finalStampButton);
@@ -236,6 +266,9 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     mainLayout->addWidget(rightContainer, 3);
 
     setCentralWidget(central);
+    m_layerPanel = new LayerPanel(this);
+    m_layerPanel->setWindowTitle(tr("設定ボード レイヤー"));
+    addDockWidget(Qt::RightDockWidgetArea, m_layerPanel);
 
     connect(m_penButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
@@ -249,6 +282,10 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
         m_radiusSlider->setValue(static_cast<int>(m_eraserRadius));
         m_radiusValueLabel->setText(QString::number(static_cast<int>(m_eraserRadius)));
     });
+    connect(m_fillButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (!checked) return;
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Fill);
+    });
     connect(m_eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
         if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Eyedropper);
@@ -257,6 +294,7 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_colorButton, &QPushButton::clicked, this, &SettingBoardWindow::chooseColor);
     connect(pasteButton, &QPushButton::clicked, this, &SettingBoardWindow::pasteImage);
     connect(resizeButton, &QPushButton::clicked, this, &SettingBoardWindow::resizeBoardCanvas);
+    connect(exportButton, &QPushButton::clicked, this, &SettingBoardWindow::exportBoardImage);
     connect(m_finalStampButton, &QPushButton::toggled, this, &SettingBoardWindow::toggleFinalStamp);
     connect(detachButton, &QPushButton::clicked, this, &SettingBoardWindow::detachCanvas);
 
@@ -270,6 +308,52 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(renameColorSpecButton, &QPushButton::clicked, this, &SettingBoardWindow::renameColorSpec);
     connect(changeColorSpecButton, &QPushButton::clicked, this, &SettingBoardWindow::changeColorSpecColor);
     connect(removeColorSpecButton, &QPushButton::clicked, this, &SettingBoardWindow::removeColorSpec);
+
+    connect(m_layerPanel, &LayerPanel::layerSelected, this, [this](int layerIndex) {
+        if (!m_project) return;
+        auto& boards = m_project->settingBoards();
+        if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+        core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+        if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= board.layers.size()) return;
+        board.activeLayer = static_cast<size_t>(layerIndex);
+        bindCanvasToSelectedBoard();
+        emit edited();
+    });
+    connect(m_layerPanel, &LayerPanel::visibilityChanged, this, [this](int layerIndex, bool visible) {
+        if (!m_project) return;
+        auto& boards = m_project->settingBoards();
+        if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+        core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+        if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= board.layers.size()) return;
+        board.layers[static_cast<size_t>(layerIndex)].visible = visible;
+        syncSelectedBoardComposite();
+        bindCanvasToSelectedBoard();
+        emit edited();
+    });
+    connect(m_layerPanel, &LayerPanel::opacityChanged, this, [this](int layerIndex, int opacityPercent) {
+        if (!m_project) return;
+        auto& boards = m_project->settingBoards();
+        if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+        core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+        if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= board.layers.size()) return;
+        board.layers[static_cast<size_t>(layerIndex)].setOpacity(std::clamp(opacityPercent, 0, 100) / 100.0);
+        syncSelectedBoardComposite();
+        bindCanvasToSelectedBoard();
+        emit edited();
+    });
+    connect(m_layerPanel, &LayerPanel::addRequested, this,
+            [this] { addPaintLayer(core::LayerRole::Normal); });
+    connect(m_layerPanel, &LayerPanel::duplicateRequested, this, &SettingBoardWindow::duplicatePaintLayer);
+    connect(m_layerPanel, &LayerPanel::removeRequested, this, &SettingBoardWindow::removePaintLayer);
+    connect(m_layerPanel, &LayerPanel::moveUpRequested, this, [this] { movePaintLayer(1); });
+    connect(m_layerPanel, &LayerPanel::moveDownRequested, this, [this] { movePaintLayer(-1); });
+    connect(m_layerPanel, &LayerPanel::renameRequested, this, &SettingBoardWindow::renamePaintLayer);
+    connect(m_layerPanel, &LayerPanel::roleChangeRequested, this, [this](int layerIndex, int role) {
+        core::LayerRole layerRole = core::LayerRole::Normal;
+        if (role == 1) layerRole = core::LayerRole::ColorTrace;
+        if (role == 2) layerRole = core::LayerRole::Correction;
+        setPaintLayerRole(layerIndex, layerRole);
+    });
 
     applyToolSettingsToCanvas();
 
@@ -294,12 +378,14 @@ void SettingBoardWindow::refresh() {
         m_updating = false;
         bindCanvasToSelectedBoard();
         refreshColorSpecList();
+        refreshLayerPanel();
         return;
     }
 
     auto& boards = m_project->settingBoards();
     m_list->clear();
-    for (const auto& board : boards) {
+    for (auto& board : boards) {
+        syncSettingBoardComposite(board);
         m_list->addItem(QString::fromStdString(board.name));
     }
 
@@ -316,6 +402,7 @@ void SettingBoardWindow::refresh() {
     m_canvas->clearTextureCache();
     bindCanvasToSelectedBoard();
     refreshColorSpecList();
+    refreshLayerPanel();
 }
 
 void SettingBoardWindow::onSelectionChanged() {
@@ -325,6 +412,7 @@ void SettingBoardWindow::onSelectionChanged() {
     m_selectedRow = row;
     bindCanvasToSelectedBoard();
     refreshColorSpecList();
+    refreshLayerPanel();
 }
 
 int SettingBoardWindow::selectedBoardIndex() const {
@@ -338,6 +426,7 @@ void SettingBoardWindow::addBoard() {
     core::SettingBoard board;
     board.image = core::Bitmap(kBoardWidth, kBoardHeight);
     board.image.fill({0, 0, 0, 0});
+    perapera::ui::ensurePaintLayers(board.layers, board.activeLayer, board.image, kBoardWidth, kBoardHeight, true);
     board.name = tr("設定ボード %1").arg(boards.size() + 1).toStdString();
     boards.push_back(std::move(board));
 
@@ -379,6 +468,7 @@ void SettingBoardWindow::renameBoard() {
 }
 
 void SettingBoardWindow::onStrokeFinished() {
+    syncSelectedBoardComposite();
     emit edited();
 }
 
@@ -403,7 +493,10 @@ void SettingBoardWindow::pasteImage() {
         board.image = core::Bitmap(source.width(), source.height());
         board.image.fill({0, 0, 0, 0});
     }
-    pasteImageOntoBoard(board.image, source);
+    perapera::ui::ensurePaintLayers(board.layers, board.activeLayer, board.image, board.image.width(),
+                                    board.image.height(), true);
+    pasteImageOntoBoard(board.layers[board.activeLayer].bitmap, source);
+    syncSettingBoardComposite(board);
 
     m_canvas->clearTextureCache();
     bindCanvasToSelectedBoard();
@@ -417,8 +510,10 @@ void SettingBoardWindow::resizeBoardCanvas() {
     if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
 
     core::SettingBoard& board = boards[static_cast<size_t>(row)];
-    const int currentW = board.image.isEmpty() ? kBoardWidth : board.image.width();
-    const int currentH = board.image.isEmpty() ? kBoardHeight : board.image.height();
+    syncSettingBoardComposite(board);
+    const QSize current = boardCanvasSize(board);
+    const int currentW = current.width();
+    const int currentH = current.height();
     CanvasSizeDialog dialog(currentW, currentH, this);
     if (dialog.exec() != QDialog::Accepted) return;
 
@@ -426,7 +521,8 @@ void SettingBoardWindow::resizeBoardCanvas() {
     const int newH = dialog.canvasHeight();
     if (newW == currentW && newH == currentH) return;
 
-    resizeBitmapCentered(board.image, newW, newH);
+    perapera::ui::resizePaintLayersCentered(board.layers, newW, newH);
+    board.image = perapera::ui::compositePaintLayers(board.layers, newW, newH);
     m_canvas->clearTextureCache();
     bindCanvasToSelectedBoard();
     emit edited();
@@ -454,8 +550,9 @@ void SettingBoardWindow::updateFinalStampOverlay() {
         return;
     }
     const core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
-    if (board.finalStamp && !board.image.isEmpty()) {
-        m_canvas->setOverlayImage(makeFinalStampOverlay(board.image.width(), board.image.height()));
+    const QSize size = boardCanvasSize(board);
+    if (board.finalStamp && size.width() > 0 && size.height() > 0) {
+        m_canvas->setOverlayImage(makeFinalStampOverlay(size.width(), size.height()));
     } else {
         m_canvas->clearOverlay();
     }
@@ -469,8 +566,7 @@ void SettingBoardWindow::detachCanvas() {
     auto* window = new FloatingCanvasWindow(tr("設定ボード キャンバス"), this);
     m_floatingCanvasWindow = window;
     perapera::ui::installRetroWindowFrame(window);
-    m_canvas = createCanvas(window);
-    window->setCentralWidget(m_canvas);
+    window->setCentralWidget(createFloatingCanvasPanel(window));
     bindCanvasToSelectedBoard();
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &SettingBoardWindow::restoreCanvas);
     connect(window, &QObject::destroyed, this, [this, window] {
@@ -482,11 +578,11 @@ void SettingBoardWindow::detachCanvas() {
 void SettingBoardWindow::restoreCanvas() {
     if (!m_floatingCanvasWindow || !m_canvasLayout) return;
     FloatingCanvasWindow* window = m_floatingCanvasWindow;
-    if (m_canvas) {
-        if (window->centralWidget() == m_canvas) window->takeCentralWidget();
-        m_canvas->deleteLater();
-        m_canvas = nullptr;
+    if (QWidget* floatingCentral = window->centralWidget()) {
+        window->takeCentralWidget();
+        floatingCentral->deleteLater();
     }
+    m_canvas = nullptr;
     m_canvas = createCanvas(m_canvasHost);
     m_canvasLayout->addWidget(m_canvas);
     bindCanvasToSelectedBoard();
@@ -505,41 +601,55 @@ FloatingCanvasWindow* SettingBoardWindow::debugFloatingCanvasWindow() const {
 void SettingBoardWindow::bindCanvasToSelectedBoard() {
     if (!m_project) {
         m_canvas->setBitmap(nullptr);
+        m_canvas->setFillBoundaryLayers({});
         m_canvas->clearOverlay();
         if (m_finalStampButton) {
             const QSignalBlocker blocker(m_finalStampButton);
             m_finalStampButton->setChecked(false);
             m_finalStampButton->setEnabled(false);
         }
+        refreshLayerPanel();
         return;
     }
     auto& boards = m_project->settingBoards();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) {
         m_canvas->setBitmap(nullptr);
+        m_canvas->setFillBoundaryLayers({});
         m_canvas->clearOverlay();
         if (m_finalStampButton) {
             const QSignalBlocker blocker(m_finalStampButton);
             m_finalStampButton->setChecked(false);
             m_finalStampButton->setEnabled(false);
         }
+        refreshLayerPanel();
         return;
     }
 
     core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
     // imageはボード全体(kBoardWidth x kBoardHeight)を覆う1枚のビットマップ。
     // 未確保またはサイズ不一致なら確保し直す(開発中につき旧サイズのデータは破棄してよい)
-    if (board.image.isEmpty()) {
-        board.image = core::Bitmap(kBoardWidth, kBoardHeight);
-        board.image.fill({0, 0, 0, 0});
+    syncSettingBoardComposite(board);
+    const QSize size = boardCanvasSize(board);
+    m_canvas->setCanvasSize(size.width(), size.height());
+
+    std::vector<GLCanvas::StackEntry> stack;
+    std::vector<const core::Bitmap*> boundary;
+    for (const core::PaintLayer& layer : board.layers) {
+        if (layer.visible && layer.opacity > 0.0) {
+            stack.push_back({&layer.bitmap, QPointF(), layer.opacity});
+            if (layer.role == core::LayerRole::ColorTrace) boundary.push_back(&layer.bitmap);
+        }
     }
-    m_canvas->setCanvasSize(board.image.width(), board.image.height());
-    m_canvas->setBitmap(&board.image);
+    core::Bitmap* editTarget = board.layers.empty() ? nullptr : &board.layers[board.activeLayer].bitmap;
+    m_canvas->setFillBoundaryLayers(std::move(boundary));
+    m_canvas->setLayerStack(std::move(stack), editTarget, QPointF());
     if (m_finalStampButton) {
         const QSignalBlocker blocker(m_finalStampButton);
         m_finalStampButton->setEnabled(true);
         m_finalStampButton->setChecked(board.finalStamp);
     }
     updateFinalStampOverlay();
+    refreshLayerPanel();
 }
 
 void SettingBoardWindow::onRadiusSliderChanged(int value) {
@@ -572,6 +682,8 @@ GLCanvas* SettingBoardWindow::createCanvas(QWidget* parent) {
     canvas->setCanvasSize(kBoardWidth, kBoardHeight);
     if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
         canvas->setTool(GLCanvas::Tool::Eyedropper);
+    } else if (m_fillButton && m_fillButton->isChecked()) {
+        canvas->setTool(GLCanvas::Tool::Fill);
     } else if (m_eraserButton && m_eraserButton->isChecked()) {
         canvas->setTool(GLCanvas::Tool::Eraser);
     } else {
@@ -588,6 +700,258 @@ GLCanvas* SettingBoardWindow::createCanvas(QWidget* parent) {
         m_penButton->setChecked(true);
     });
     return canvas;
+}
+
+QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
+    auto* panel = new QWidget(parent);
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(4, 4, 4, 4);
+
+    auto* row = new QHBoxLayout();
+    auto* penButton = new QPushButton(tr("ペン"), panel);
+    auto* eraserButton = new QPushButton(tr("消しゴム"), panel);
+    auto* fillButton = new QPushButton(tr("塗りつぶし"), panel);
+    auto* eyedropperButton = new QPushButton(tr("スポイト"), panel);
+    for (QPushButton* button : {penButton, eraserButton, fillButton, eyedropperButton}) {
+        button->setCheckable(true);
+        button->setAutoExclusive(true);
+        row->addWidget(button);
+    }
+    if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
+        eyedropperButton->setChecked(true);
+    } else if (m_fillButton && m_fillButton->isChecked()) {
+        fillButton->setChecked(true);
+    } else if (m_eraserButton && m_eraserButton->isChecked()) {
+        eraserButton->setChecked(true);
+    } else {
+        penButton->setChecked(true);
+    }
+
+    row->addWidget(new QLabel(tr("太さ"), panel));
+    auto* radiusSlider = new QSlider(Qt::Horizontal, panel);
+    radiusSlider->setRange(kRadiusMin, kRadiusMax);
+    radiusSlider->setValue(m_eraserButton && m_eraserButton->isChecked() ? static_cast<int>(m_eraserRadius)
+                                                                         : static_cast<int>(m_penRadius));
+    radiusSlider->setFixedWidth(140);
+    row->addWidget(radiusSlider);
+    auto* radiusLabel = new QLabel(QString::number(radiusSlider->value()), panel);
+    radiusLabel->setFixedWidth(28);
+    row->addWidget(radiusLabel);
+
+    auto* colorButton = new QPushButton(tr("色"), panel);
+    colorButton->setFixedWidth(48);
+    colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+    row->addWidget(colorButton);
+    row->addStretch();
+    layout->addLayout(row);
+
+    m_canvas = createCanvas(panel);
+    layout->addWidget(m_canvas, 1);
+
+    connect(penButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Pen));
+    });
+    connect(eraserButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Eraser));
+    });
+    connect(fillButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Fill));
+    });
+    connect(eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Eyedropper));
+    });
+    connect(radiusSlider, &QSlider::valueChanged, this, [this, radiusLabel](int value) {
+        if (m_eraserButton && m_eraserButton->isChecked()) {
+            m_eraserRadius = static_cast<float>(value);
+        } else {
+            m_penRadius = static_cast<float>(value);
+        }
+        radiusLabel->setText(QString::number(value));
+        if (m_radiusSlider) {
+            const QSignalBlocker blocker(m_radiusSlider);
+            m_radiusSlider->setValue(value);
+        }
+        if (m_radiusValueLabel) m_radiusValueLabel->setText(QString::number(value));
+        applyToolSettingsToCanvas();
+    });
+    connect(colorButton, &QPushButton::clicked, this, [this, colorButton] {
+        const QColor chosen = QColorDialog::getColor(m_penColor, this, tr("ペンの色"));
+        if (!chosen.isValid()) return;
+        m_penColor = chosen;
+        const QString style = QStringLiteral("background-color: %1;").arg(m_penColor.name());
+        colorButton->setStyleSheet(style);
+        if (m_colorButton) m_colorButton->setStyleSheet(style);
+        applyToolSettingsToCanvas();
+    });
+    return panel;
+}
+
+void SettingBoardWindow::setActiveTool(int tool) {
+    const auto canvasTool = static_cast<GLCanvas::Tool>(tool);
+    if (m_penButton && m_eraserButton && m_fillButton && m_eyedropperButton) {
+        const QSignalBlocker b1(m_penButton);
+        const QSignalBlocker b2(m_eraserButton);
+        const QSignalBlocker b3(m_fillButton);
+        const QSignalBlocker b4(m_eyedropperButton);
+        m_penButton->setChecked(canvasTool == GLCanvas::Tool::Pen);
+        m_eraserButton->setChecked(canvasTool == GLCanvas::Tool::Eraser);
+        m_fillButton->setChecked(canvasTool == GLCanvas::Tool::Fill);
+        m_eyedropperButton->setChecked(canvasTool == GLCanvas::Tool::Eyedropper);
+    }
+    if (m_canvas) m_canvas->setTool(canvasTool);
+    if (m_radiusSlider && m_radiusValueLabel) {
+        const int value = canvasTool == GLCanvas::Tool::Eraser ? static_cast<int>(m_eraserRadius)
+                                                               : static_cast<int>(m_penRadius);
+        const QSignalBlocker blocker(m_radiusSlider);
+        m_radiusSlider->setValue(value);
+        m_radiusValueLabel->setText(QString::number(value));
+    }
+}
+
+void SettingBoardWindow::syncSelectedBoardComposite() {
+    if (!m_project || m_selectedRow < 0) return;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    syncSettingBoardComposite(boards[static_cast<size_t>(m_selectedRow)]);
+}
+
+void SettingBoardWindow::refreshLayerPanel() {
+    if (!m_layerPanel) return;
+    QStringList names;
+    QList<bool> visible;
+    QList<int> opacity;
+    int active = -1;
+
+    if (m_project && m_selectedRow >= 0) {
+        auto& boards = m_project->settingBoards();
+        if (static_cast<size_t>(m_selectedRow) < boards.size()) {
+            core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+            perapera::ui::ensurePaintLayers(board.layers, board.activeLayer, board.image, kBoardWidth, kBoardHeight,
+                                            true);
+            active = static_cast<int>(board.activeLayer);
+            for (const core::PaintLayer& layer : board.layers) {
+                QString name = QString::fromStdString(layer.name);
+                if (layer.role == core::LayerRole::ColorTrace) name += tr(" [塗分け線]");
+                if (layer.role == core::LayerRole::Correction) name += tr(" [修正]");
+                names.append(name);
+                visible.append(layer.visible);
+                opacity.append(static_cast<int>(std::lround(std::clamp(layer.opacity, 0.0, 1.0) * 100.0)));
+            }
+        }
+    }
+
+    m_layerPanel->setLayers(names, visible, opacity, active);
+}
+
+void SettingBoardWindow::addPaintLayer(core::LayerRole role) {
+    if (!m_project || m_selectedRow < 0) return;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+    syncSettingBoardComposite(board);
+    const QSize size = boardCanvasSize(board);
+
+    core::PaintLayer layer;
+    layer.role = role;
+    layer.name = role == core::LayerRole::ColorTrace ? "塗分け線" : "レイヤー";
+    layer.bitmap = core::Bitmap(size.width(), size.height());
+    layer.bitmap.fill({0, 0, 0, 0});
+    const size_t insertAt = std::min(board.activeLayer + 1, board.layers.size());
+    board.layers.insert(board.layers.begin() + static_cast<ptrdiff_t>(insertAt), std::move(layer));
+    board.activeLayer = insertAt;
+    syncSettingBoardComposite(board);
+    m_canvas->clearTextureCache();
+    bindCanvasToSelectedBoard();
+    emit edited();
+}
+
+void SettingBoardWindow::duplicatePaintLayer(int layerIndex) {
+    if (!m_project || m_selectedRow < 0) return;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+    if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= board.layers.size()) return;
+    core::PaintLayer copy = board.layers[static_cast<size_t>(layerIndex)];
+    copy.name += " コピー";
+    board.layers.insert(board.layers.begin() + layerIndex + 1, std::move(copy));
+    board.activeLayer = static_cast<size_t>(layerIndex + 1);
+    syncSettingBoardComposite(board);
+    m_canvas->clearTextureCache();
+    bindCanvasToSelectedBoard();
+    emit edited();
+}
+
+void SettingBoardWindow::removePaintLayer() {
+    if (!m_project || m_selectedRow < 0) return;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+    if (board.layers.size() <= 1) return;
+    board.layers.erase(board.layers.begin() + static_cast<ptrdiff_t>(board.activeLayer));
+    board.activeLayer = std::min(board.activeLayer, board.layers.size() - 1);
+    syncSettingBoardComposite(board);
+    m_canvas->clearTextureCache();
+    bindCanvasToSelectedBoard();
+    emit edited();
+}
+
+void SettingBoardWindow::movePaintLayer(int delta) {
+    if (!m_project || m_selectedRow < 0) return;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+    const int from = static_cast<int>(board.activeLayer);
+    const int to = from + delta;
+    if (from < 0 || to < 0 || static_cast<size_t>(to) >= board.layers.size()) return;
+    std::swap(board.layers[static_cast<size_t>(from)], board.layers[static_cast<size_t>(to)]);
+    board.activeLayer = static_cast<size_t>(to);
+    syncSettingBoardComposite(board);
+    bindCanvasToSelectedBoard();
+    emit edited();
+}
+
+void SettingBoardWindow::renamePaintLayer(int layerIndex) {
+    if (!m_project || m_selectedRow < 0) return;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+    if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= board.layers.size()) return;
+
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("レイヤー名"), tr("名前:"), QLineEdit::Normal,
+                                               QString::fromStdString(board.layers[static_cast<size_t>(layerIndex)].name),
+                                               &ok);
+    if (!ok || name.isEmpty()) return;
+    board.layers[static_cast<size_t>(layerIndex)].name = name.toStdString();
+    refreshLayerPanel();
+    emit edited();
+}
+
+void SettingBoardWindow::setPaintLayerRole(int layerIndex, core::LayerRole role) {
+    if (!m_project || m_selectedRow < 0) return;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+    if (layerIndex < 0 || static_cast<size_t>(layerIndex) >= board.layers.size()) return;
+    board.layers[static_cast<size_t>(layerIndex)].role = role;
+    bindCanvasToSelectedBoard();
+    emit edited();
+}
+
+void SettingBoardWindow::exportBoardImage() {
+    if (!m_project || m_selectedRow < 0) return;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+
+    const QString path =
+        QFileDialog::getSaveFileName(this, tr("設定ボードを書き出し"), QString(), tr("PNG (*.png)"));
+    if (path.isEmpty()) return;
+    const QString pngPath = path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive) ? path : path + ".png";
+    const QImage image = boardExportImage(board);
+    if (image.isNull() || !image.save(pngPath)) {
+        QMessageBox::warning(this, tr("書き出しエラー"), tr("PNGを書き出せませんでした"));
+    }
 }
 
 int SettingBoardWindow::selectedColorSpecIndex() const {

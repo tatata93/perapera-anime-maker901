@@ -6,6 +6,7 @@
 
 #include "Bitmap.h"
 #include "Cut.h"
+#include "PaintLayer.h"
 
 namespace core {
 
@@ -16,6 +17,8 @@ struct StoryboardPanel {
     // 1枚のQImageとして下敷きに敷いた紙全体)への手描きインク。絵の枠内はもちろん、
     // 内容欄への効果音メモやセリフ欄への書き込み、枠をまたぐ矢印なども自由に描ける(空=未描画)
     Bitmap drawing;
+    std::vector<PaintLayer> layers;
+    size_t activeLayer = 0;
     std::string cutLabel;        // カット番号/名(自由記入)
     std::string action;          // 内容(アクション)
     std::string dialogue;        // セリフ

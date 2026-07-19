@@ -8,6 +8,7 @@ add_library(perapera_core STATIC
     Frame.h
     Layer.cpp
     Layer.h
+    PaintLayer.h
     Cel.cpp
     Cel.h
     Previz.h
