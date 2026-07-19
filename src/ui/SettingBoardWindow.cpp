@@ -573,6 +573,7 @@ void SettingBoardWindow::detachCanvas() {
         if (m_floatingCanvasWindow == window) m_floatingCanvasWindow = nullptr;
     });
     window->show();
+    perapera::ui::keepWindowOnScreen(window);
 }
 
 void SettingBoardWindow::restoreCanvas() {

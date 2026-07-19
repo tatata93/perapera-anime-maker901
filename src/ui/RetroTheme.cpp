@@ -695,6 +695,12 @@ QMenu::indicator:checked {
     border-right: 1px solid #ffffff;
     border-bottom: 1px solid #ffffff;
 }
+QMenu::right-arrow {
+    image: url(:/perapera/ui/arrow_right_95.svg);
+    width: 4px;
+    height: 7px;
+    margin-right: 6px;
+}
 QCheckBox::indicator, QGroupBox::indicator, QListView::indicator, QListWidget::indicator,
 QTreeView::indicator, QTableView::indicator {
     width: 13px;
@@ -735,6 +741,18 @@ QPushButton:pressed, QPushButton:checked, QToolButton:pressed, QToolButton:check
 QPushButton:disabled, QToolButton:disabled {
     color: #808080;
 }
+QToolButton::menu-indicator {
+    image: url(:/perapera/ui/arrow_down_95.svg);
+    width: 7px;
+    height: 4px;
+    subcontrol-origin: padding;
+    subcontrol-position: bottom right;
+    margin-right: 4px;
+    margin-bottom: 4px;
+}
+QToolButton::menu-indicator:disabled {
+    image: none;
+}
 QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QListView, QListWidget,
 QTreeView, QTableView, QAbstractScrollArea {
     background-color: #ffffff;
@@ -756,6 +774,43 @@ QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
     width: 18px;
+}
+QComboBox::down-arrow {
+    image: url(:/perapera/ui/arrow_down_95.svg);
+    width: 7px;
+    height: 4px;
+    margin-right: 5px;
+}
+QComboBox::down-arrow:disabled {
+    image: none;
+}
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 16px;
+    height: 10px;
+}
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 16px;
+    height: 10px;
+}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+    image: url(:/perapera/ui/arrow_up_95.svg);
+    width: 7px;
+    height: 4px;
+}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+    image: url(:/perapera/ui/arrow_down_95.svg);
+    width: 7px;
+    height: 4px;
+}
+QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {
+    image: none;
+}
+QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {
+    image: none;
 }
 QComboBox QAbstractItemView {
     background-color: #ffffff;
@@ -888,6 +943,12 @@ QMenu::indicator:checked {
     background-color: #316ac5;
     border: 1px solid #0a246a;
 }
+QMenu::right-arrow {
+    image: url(:/perapera/ui/arrow_right_xp.svg);
+    width: 4px;
+    height: 7px;
+    margin-right: 6px;
+}
 QCheckBox::indicator, QGroupBox::indicator, QListView::indicator, QListWidget::indicator,
 QTreeView::indicator, QTableView::indicator {
     width: 14px;
@@ -928,6 +989,18 @@ QPushButton:disabled, QToolButton:disabled {
     color: #8f8f8f;
     border-color: #aca899;
 }
+QToolButton::menu-indicator {
+    image: url(:/perapera/ui/arrow_down_xp.svg);
+    width: 7px;
+    height: 4px;
+    subcontrol-origin: padding;
+    subcontrol-position: bottom right;
+    margin-right: 4px;
+    margin-bottom: 4px;
+}
+QToolButton::menu-indicator:disabled {
+    image: none;
+}
 QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox, QListView, QListWidget,
 QTreeView, QTableView, QAbstractScrollArea {
     background-color: #ffffff;
@@ -943,6 +1016,43 @@ QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
     width: 20px;
+}
+QComboBox::down-arrow {
+    image: url(:/perapera/ui/arrow_down_xp.svg);
+    width: 7px;
+    height: 4px;
+    margin-right: 6px;
+}
+QComboBox::down-arrow:disabled {
+    image: none;
+}
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 17px;
+    height: 10px;
+}
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 17px;
+    height: 10px;
+}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+    image: url(:/perapera/ui/arrow_up_xp.svg);
+    width: 7px;
+    height: 4px;
+}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+    image: url(:/perapera/ui/arrow_down_xp.svg);
+    width: 7px;
+    height: 4px;
+}
+QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled {
+    image: none;
+}
+QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {
+    image: none;
 }
 QComboBox:hover {
     border: 1px solid #f2a300;
@@ -1121,11 +1231,15 @@ void keepWindowOnScreen(QWidget* window) {
     QRect frame = window->frameGeometry();
     if (frame.isEmpty()) frame = QRect(window->pos(), window->size());
 
-    const QSize minSize = effectiveMinimumSize(window).boundedTo(available.size());
-    const QSize maxSize = effectiveMaximumSize(window, available).expandedTo(minSize);
-    const QSize targetSize = frame.size().expandedTo(minSize).boundedTo(maxSize);
+    const QSize frameExtra(std::max(0, frame.width() - window->geometry().width()),
+                           std::max(0, frame.height() - window->geometry().height()));
+    const QSize availableClient(std::max(1, available.width() - frameExtra.width()),
+                                std::max(1, available.height() - frameExtra.height()));
+    const QSize minClient = effectiveMinimumSize(window).boundedTo(availableClient);
+    const QSize maxClient = window->maximumSize().boundedTo(availableClient).expandedTo(minClient);
+    const QSize targetClient = window->size().expandedTo(minClient).boundedTo(maxClient);
 
-    if (targetSize != frame.size()) window->resize(targetSize);
+    if (targetClient != window->size()) window->resize(targetClient);
 
     frame = window->frameGeometry();
     const QPoint topLeft = clampedTopLeft(frame, available);

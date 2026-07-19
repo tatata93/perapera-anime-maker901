@@ -7,6 +7,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "ui/DockScrollArea.h"
+
 TapPanel::TapPanel(QWidget* parent) : QDockWidget(tr("タップ"), parent) {
     setObjectName(QStringLiteral("TapPanel"));  // レイアウト保存用の識別子
 
@@ -24,7 +26,7 @@ TapPanel::TapPanel(QWidget* parent) : QDockWidget(tr("タップ"), parent) {
     buttonLayout->addWidget(removeButton);
     layout->addLayout(buttonLayout);
 
-    setWidget(container);
+    perapera::ui::setScrollableDockWidget(this, container);
 
     connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
         if (m_updating || row < 0) return;

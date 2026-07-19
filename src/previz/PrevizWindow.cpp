@@ -23,6 +23,8 @@
 
 #include "previz/PrevizSheetPanel.h"
 #include "previz/PrevizViewport.h"
+#include "ui/DockScrollArea.h"
+#include "ui/RetroTheme.h"
 
 namespace {
 
@@ -322,7 +324,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* removeButton = new QPushButton(tr("モデル削除"), container);
     layout->addWidget(removeButton);
-    dock->setWidget(container);
+    perapera::ui::setScrollableDockWidget(dock, container);
     addDockWidget(Qt::RightDockWidgetArea, dock);
 
     connect(addButton, &QPushButton::clicked, this, &PrevizWindow::addModel);
@@ -951,6 +953,7 @@ void PrevizWindow::openPoseWindow() {
     refreshPoseUi();
     if (m_posePanel) m_posePanel->show();
     m_poseDialog->show();
+    perapera::ui::keepWindowOnScreen(m_poseDialog);
     m_poseDialog->raise();
     m_poseDialog->activateWindow();
 }
@@ -974,6 +977,7 @@ void PrevizWindow::openBodyWindow() {
     refreshBodyUi();
     if (m_bodyPanel) m_bodyPanel->show();
     m_bodyDialog->show();
+    perapera::ui::keepWindowOnScreen(m_bodyDialog);
     m_bodyDialog->raise();
     m_bodyDialog->activateWindow();
 }

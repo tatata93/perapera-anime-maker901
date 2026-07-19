@@ -7,6 +7,8 @@
 #include <QWidget>
 #include <algorithm>
 
+#include "ui/DockScrollArea.h"
+
 FramePanel::FramePanel(QWidget* parent) : QDockWidget(tr("動画"), parent) {
     setObjectName(QStringLiteral("FramePanel"));  // レイアウト保存用の識別子
 
@@ -31,7 +33,7 @@ FramePanel::FramePanel(QWidget* parent) : QDockWidget(tr("動画"), parent) {
     m_deleteButton = new QPushButton(tr("動画削除"), container);
     layout->addWidget(m_deleteButton);
 
-    setWidget(container);
+    perapera::ui::setScrollableDockWidget(this, container);
 
     connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
         if (m_updating || row < 0 || row >= m_displayOrder.size()) return;

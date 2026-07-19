@@ -10,6 +10,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "ui/DockScrollArea.h"
+
 namespace {
 constexpr int kSwatchSize = 24;
 }  // namespace
@@ -35,7 +37,7 @@ PalettePanel::PalettePanel(QWidget* parent) : QDockWidget(tr("カラーパレッ
     buttonLayout->addWidget(removeButton);
     layout->addLayout(buttonLayout);
 
-    setWidget(container);
+    perapera::ui::setScrollableDockWidget(this, container);
 
     connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
         if (m_updating || row < 0) return;

@@ -42,6 +42,7 @@
 #include "core/Project.h"
 #include "render/GLCanvas.h"
 #include "FilmCurveWidget.h"
+#include "ui/RetroTheme.h"
 
 namespace {
 
@@ -991,6 +992,7 @@ void ShootingWindow::openMaskEditDialog(int effectIndex) {
     });
 
     dialog->show();
+    perapera::ui::keepWindowOnScreen(dialog);
     dialog->raise();
     dialog->activateWindow();
 }
@@ -1221,6 +1223,7 @@ void ShootingWindow::openDistanceBrushDialog(int planeIndex) {
     });
 
     dialog->show();
+    perapera::ui::keepWindowOnScreen(dialog);
     dialog->raise();
     dialog->activateWindow();
 }
@@ -2581,6 +2584,7 @@ void ShootingWindow::openBacklightMaskEditDialog() {
     });
 
     dialog->show();
+    perapera::ui::keepWindowOnScreen(dialog);
     dialog->raise();
     dialog->activateWindow();
 }

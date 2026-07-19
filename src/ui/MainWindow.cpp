@@ -110,6 +110,14 @@ Window* createSecondaryWindow() {
     return window;
 }
 
+void showTopLevelOnScreen(QWidget* window) {
+    if (!window) return;
+    window->show();
+    perapera::ui::keepWindowOnScreen(window);
+    window->raise();
+    window->activateWindow();
+}
+
 // プリビズなぞり作画用: 筆圧ペンで点列(ポリライン)をBitmapへ描く。debugSimulateStroke
 // (GLCanvas)の筆圧の付け方に倣い、ストローク全体の弧長を媒介変数化して両端が細く・
 // 中央が太くなる筆圧プロファイル(sinカーブ)にすることで、コードの均一な図形ではなく
@@ -827,6 +835,7 @@ void MainWindow::detachMainCanvas() {
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &MainWindow::restoreMainCanvas);
     connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
     window->show();
+    perapera::ui::keepWindowOnScreen(window);
 }
 
 void MainWindow::restoreMainCanvas() {
@@ -3926,9 +3935,7 @@ void MainWindow::openPrevizWindow() {
     }
     m_previzWindow->setScene(&activeCut().previz());
     m_previzWindow->setTimeline(m_currentFrame, activeCut().frameCount());
-    m_previzWindow->show();
-    m_previzWindow->raise();
-    m_previzWindow->activateWindow();
+    showTopLevelOnScreen(m_previzWindow);
 }
 
 void MainWindow::openStoryboardWindow() {
@@ -3956,9 +3963,7 @@ void MainWindow::openStoryboardWindow() {
     }
     m_storyboardWindow->setProject(m_project.get());
     m_storyboardWindow->refresh();
-    m_storyboardWindow->show();
-    m_storyboardWindow->raise();
-    m_storyboardWindow->activateWindow();
+    showTopLevelOnScreen(m_storyboardWindow);
 }
 
 void MainWindow::debugSetupStoryboardDemo() {
@@ -4026,9 +4031,7 @@ void MainWindow::openSettingBoardWindow() {
     }
     m_settingBoardWindow->setProject(m_project.get());
     m_settingBoardWindow->refresh();
-    m_settingBoardWindow->show();
-    m_settingBoardWindow->raise();
-    m_settingBoardWindow->activateWindow();
+    showTopLevelOnScreen(m_settingBoardWindow);
 }
 
 void MainWindow::updateReferencePanel() {
@@ -4118,9 +4121,7 @@ void MainWindow::openEditWindow() {
     m_editWindow->setCanvasSize(canvasWidth(), canvasHeight());
     m_editWindow->setProject(m_project.get());
     m_editWindow->refresh();
-    m_editWindow->show();
-    m_editWindow->raise();
-    m_editWindow->activateWindow();
+    showTopLevelOnScreen(m_editWindow);
 }
 
 void MainWindow::refreshEditWindowIfOpen() {
@@ -4170,9 +4171,7 @@ void MainWindow::openProjectManagerWindow() {
     m_projectManagerWindow->setProject(m_project.get());
     m_projectManagerWindow->setFps(m_fpsSpin ? m_fpsSpin->value() : 24);
     m_projectManagerWindow->refresh();
-    m_projectManagerWindow->show();
-    m_projectManagerWindow->raise();
-    m_projectManagerWindow->activateWindow();
+    showTopLevelOnScreen(m_projectManagerWindow);
 }
 
 void MainWindow::openShootingWindow() {
@@ -4191,9 +4190,7 @@ void MainWindow::openShootingWindow() {
     m_shootingWindow->setProject(m_project.get());
     m_shootingWindow->setCutIndex(static_cast<int>(m_activeCut));
     m_shootingWindow->refresh();
-    m_shootingWindow->show();
-    m_shootingWindow->raise();
-    m_shootingWindow->activateWindow();
+    showTopLevelOnScreen(m_shootingWindow);
 }
 
 void MainWindow::refreshShootingWindowIfOpen() {
@@ -4335,6 +4332,7 @@ QImage MainWindow::renderPrevizExportImage(core::Cut& cut, size_t frame, int out
     if (!m_previzWindow->isVisible()) {
         m_previzWindow->show();  // QOpenGLWidgetのGLコンテキスト初期化を確実にする
     }
+    if (m_previzWindow->isVisible()) perapera::ui::keepWindowOnScreen(m_previzWindow);
     m_previzWindow->setScene(&cut.previz());
     PrevizViewport* vp = m_previzWindow->viewport();
     vp->setFrame(frame);

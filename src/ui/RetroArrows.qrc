@@ -1,0 +1,10 @@
+<RCC>
+  <qresource prefix="/perapera/ui">
+    <file alias="arrow_down_95.svg">resources/arrow_down_95.svg</file>
+    <file alias="arrow_up_95.svg">resources/arrow_up_95.svg</file>
+    <file alias="arrow_right_95.svg">resources/arrow_right_95.svg</file>
+    <file alias="arrow_down_xp.svg">resources/arrow_down_xp.svg</file>
+    <file alias="arrow_up_xp.svg">resources/arrow_up_xp.svg</file>
+    <file alias="arrow_right_xp.svg">resources/arrow_right_xp.svg</file>
+  </qresource>
+</RCC>

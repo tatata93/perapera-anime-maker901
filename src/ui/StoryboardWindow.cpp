@@ -1384,6 +1384,7 @@ void StoryboardWindow::openPreview() {
     m_previewDialog = dialog;
     connect(dialog, &QObject::destroyed, this, [this] { m_previewDialog = nullptr; });
     dialog->show();
+    perapera::ui::keepWindowOnScreen(dialog);
 }
 
 void StoryboardWindow::detachCanvas() {
@@ -1401,6 +1402,7 @@ void StoryboardWindow::detachCanvas() {
         if (m_floatingCanvasWindow == window) m_floatingCanvasWindow = nullptr;
     });
     window->show();
+    perapera::ui::keepWindowOnScreen(window);
 }
 
 void StoryboardWindow::restoreCanvas() {

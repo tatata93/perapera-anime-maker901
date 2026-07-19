@@ -212,6 +212,7 @@ int main(int argc, char* argv[]) {
     window.resize(1280, 800);
     window.show();
     perapera::ui::keepWindowOnScreen(&window);
+    QTimer::singleShot(0, &window, [&window] { perapera::ui::keepWindowOnScreen(&window); });
 
     // "--"で始まる動作確認用フックが1つもない場合のみクラッシュリカバリ確認を行う。
     // ヘッドレステスト実行時に復元ダイアログが出て止まってしまうのを防ぐ

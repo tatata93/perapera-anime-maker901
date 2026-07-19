@@ -11,6 +11,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "ui/DockScrollArea.h"
+
 LayerPanel::LayerPanel(QWidget* parent) : QDockWidget(tr("レイヤー"), parent) {
     setObjectName(QStringLiteral("LayerPanel"));
     auto* container = new QWidget(this);
@@ -46,7 +48,7 @@ LayerPanel::LayerPanel(QWidget* parent) : QDockWidget(tr("レイヤー"), parent
     buttonLayout->addWidget(downButton);
     layout->addLayout(buttonLayout);
 
-    setWidget(container);
+    perapera::ui::setScrollableDockWidget(this, container);
 
     connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
         if (!m_updating && row >= 0) emit layerSelected(rowToLayerIndex(row));
