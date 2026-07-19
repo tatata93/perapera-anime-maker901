@@ -16,4 +16,7 @@ signals:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+
+private:
+    bool m_restoreQueued = false;
 };
