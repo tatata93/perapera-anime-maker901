@@ -3,8 +3,10 @@
 #include <QAction>
 #include <QColorDialog>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFont>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QImage>
@@ -17,11 +19,14 @@
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSize>
 #include <QSlider>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QStringList>
+#include <QTextOption>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -136,6 +141,155 @@ QImage makeFinalStampOverlay(int width, int height) {
     return overlay;
 }
 
+QColor colorFromPixel(core::Bitmap::Pixel pixel) {
+    return QColor(pixel.r, pixel.g, pixel.b, pixel.a);
+}
+
+core::Bitmap::Pixel pixelFromColor(const QColor& color) {
+    return {static_cast<uint8_t>(color.red()), static_cast<uint8_t>(color.green()),
+            static_cast<uint8_t>(color.blue()), static_cast<uint8_t>(color.alpha())};
+}
+
+QRect textBoxRect(const core::SettingBoardTextBox& box, int width, int height) {
+    if (width <= 0 || height <= 0) return QRect();
+    const int boxW = std::clamp(box.width, 1, width);
+    const int boxH = std::clamp(box.height, 1, height);
+    const int x = std::clamp(box.x, 0, std::max(0, width - boxW));
+    const int y = std::clamp(box.y, 0, std::max(0, height - boxH));
+    return QRect(x, y, boxW, boxH);
+}
+
+void drawBoardTextBoxes(QPainter& painter, const std::vector<core::SettingBoardTextBox>& boxes, int width,
+                        int height) {
+    QTextOption option;
+    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    option.setAlignment(Qt::AlignLeft | Qt::AlignTop);
+
+    for (const core::SettingBoardTextBox& box : boxes) {
+        if (box.text.empty()) continue;
+        const QRect rect = textBoxRect(box, width, height);
+        if (rect.isEmpty()) continue;
+
+        QFont font = painter.font();
+        font.setPixelSize(std::clamp(box.fontPixelSize, 1, std::max(1, height)));
+        painter.setFont(font);
+        painter.setPen(colorFromPixel(box.color));
+        painter.drawText(rect.adjusted(6, 4, -6, -4), QString::fromStdString(box.text), option);
+    }
+}
+
+QImage makeBoardDecorationsOverlay(const core::SettingBoard& board, int width, int height) {
+    QImage overlay(width, height, QImage::Format_RGBA8888);
+    overlay.fill(Qt::transparent);
+    if (width <= 0 || height <= 0) return overlay;
+
+    QPainter painter(&overlay);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    drawBoardTextBoxes(painter, board.textBoxes, width, height);
+    if (board.finalStamp) painter.drawImage(0, 0, makeFinalStampOverlay(width, height));
+    painter.end();
+    return overlay;
+}
+
+bool hasBoardDecorations(const core::SettingBoard& board) {
+    if (board.finalStamp) return true;
+    return std::any_of(board.textBoxes.begin(), board.textBoxes.end(),
+                       [](const core::SettingBoardTextBox& box) { return !box.text.empty(); });
+}
+
+QString textBoxPreview(const core::SettingBoardTextBox& box, int index) {
+    QString text = QString::fromStdString(box.text).simplified();
+    if (text.isEmpty()) text = QObject::tr("(空の文字)");
+    if (text.size() > 24) text = text.left(24) + QStringLiteral("...");
+    return QObject::tr("%1: %2").arg(index + 1).arg(text);
+}
+
+bool editSettingBoardTextBox(QWidget* parent, const QSize& canvasSize, core::SettingBoardTextBox* box) {
+    if (!box) return false;
+
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QObject::tr("文字ボックス"));
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* textEdit = new QPlainTextEdit(&dialog);
+    textEdit->setPlainText(QString::fromStdString(box->text));
+    textEdit->setMinimumHeight(100);
+    layout->addWidget(new QLabel(QObject::tr("文字"), &dialog));
+    layout->addWidget(textEdit);
+
+    auto* form = new QFormLayout();
+    auto* xSpin = new QSpinBox(&dialog);
+    auto* ySpin = new QSpinBox(&dialog);
+    auto* widthSpin = new QSpinBox(&dialog);
+    auto* heightSpin = new QSpinBox(&dialog);
+    auto* sizeSpin = new QSpinBox(&dialog);
+    const int canvasW = std::max(1, canvasSize.width());
+    const int canvasH = std::max(1, canvasSize.height());
+    xSpin->setRange(0, canvasW - 1);
+    ySpin->setRange(0, canvasH - 1);
+    widthSpin->setRange(1, canvasW);
+    heightSpin->setRange(1, canvasH);
+    sizeSpin->setRange(6, std::max(6, canvasH));
+    widthSpin->setValue(std::clamp(box->width, 1, canvasW));
+    heightSpin->setValue(std::clamp(box->height, 1, canvasH));
+    xSpin->setValue(std::clamp(box->x, 0, std::max(0, canvasW - widthSpin->value())));
+    ySpin->setValue(std::clamp(box->y, 0, std::max(0, canvasH - heightSpin->value())));
+    sizeSpin->setValue(std::clamp(box->fontPixelSize, 6, std::max(6, canvasH)));
+
+    QColor textColor = colorFromPixel(box->color);
+    auto* colorButton = new QPushButton(QObject::tr("色を選ぶ"), &dialog);
+    const auto applyColorButton = [&] {
+        colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(textColor.name()));
+    };
+    applyColorButton();
+    QObject::connect(colorButton, &QPushButton::clicked, &dialog, [&] {
+        const QColor chosen = QColorDialog::getColor(textColor, &dialog, QObject::tr("文字の色"));
+        if (!chosen.isValid()) return;
+        textColor = chosen;
+        applyColorButton();
+    });
+
+    form->addRow(QObject::tr("左"), xSpin);
+    form->addRow(QObject::tr("上"), ySpin);
+    form->addRow(QObject::tr("幅"), widthSpin);
+    form->addRow(QObject::tr("高さ"), heightSpin);
+    form->addRow(QObject::tr("文字サイズ"), sizeSpin);
+    form->addRow(QObject::tr("色"), colorButton);
+    layout->addLayout(form);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) return false;
+    const QString text = textEdit->toPlainText();
+    if (text.trimmed().isEmpty()) return false;
+
+    box->text = text.toStdString();
+    box->x = xSpin->value();
+    box->y = ySpin->value();
+    box->width = widthSpin->value();
+    box->height = heightSpin->value();
+    box->fontPixelSize = sizeSpin->value();
+    box->color = pixelFromColor(textColor);
+    return true;
+}
+
+void moveTextBoxesForCenteredResize(std::vector<core::SettingBoardTextBox>& boxes, int oldW, int oldH, int newW,
+                                    int newH) {
+    const int dx = (newW - oldW) / 2;
+    const int dy = (newH - oldH) / 2;
+    for (core::SettingBoardTextBox& box : boxes) {
+        box.width = std::clamp(box.width, 1, std::max(1, newW));
+        box.height = std::clamp(box.height, 1, std::max(1, newH));
+        box.x = std::clamp(box.x + dx, 0, std::max(0, newW - box.width));
+        box.y = std::clamp(box.y + dy, 0, std::max(0, newH - box.height));
+        box.fontPixelSize = std::clamp(box.fontPixelSize, 1, std::max(1, newH));
+    }
+}
+
 QSize boardCanvasSize(const core::SettingBoard& board) {
     return perapera::ui::paintLayerCanvasSize(board.layers, board.image, kBoardWidth, kBoardHeight);
 }
@@ -148,10 +302,19 @@ void syncSettingBoardComposite(core::SettingBoard& board) {
 
 QImage boardExportImage(core::SettingBoard& board) {
     syncSettingBoardComposite(board);
-    QImage image = perapera::ui::bitmapToImageCopy(board.image).convertToFormat(QImage::Format_RGBA8888);
-    if (board.finalStamp && !image.isNull()) {
+    const QImage boardImage = perapera::ui::bitmapToImageCopy(board.image).convertToFormat(QImage::Format_RGBA8888);
+    if (boardImage.isNull()) return QImage();
+
+    QImage image(boardImage.size(), QImage::Format_RGBA8888);
+    image.fill(Qt::white);
+    {
         QPainter painter(&image);
-        painter.drawImage(0, 0, makeFinalStampOverlay(image.width(), image.height()));
+        painter.drawImage(0, 0, boardImage);
+        painter.end();
+    }
+    if (!image.isNull() && hasBoardDecorations(board)) {
+        QPainter painter(&image);
+        painter.drawImage(0, 0, makeBoardDecorationsOverlay(board, image.width(), image.height()));
         painter.end();
     }
     return image;
@@ -222,6 +385,8 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     m_colorButton->setFixedWidth(48);
     m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
     toolRow->addWidget(m_colorButton);
+    auto* textButton = new QPushButton(tr("文字"), rightContainer);
+    toolRow->addWidget(textButton);
 
     auto* pasteButton = new QPushButton(tr("画像を貼る"), rightContainer);
     toolRow->addWidget(pasteButton);
@@ -292,6 +457,7 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(m_radiusSlider, &QSlider::valueChanged, this, &SettingBoardWindow::onRadiusSliderChanged);
     connect(m_colorButton, &QPushButton::clicked, this, &SettingBoardWindow::chooseColor);
+    connect(textButton, &QPushButton::clicked, this, &SettingBoardWindow::editTextBoxes);
     connect(pasteButton, &QPushButton::clicked, this, &SettingBoardWindow::pasteImage);
     connect(resizeButton, &QPushButton::clicked, this, &SettingBoardWindow::resizeBoardCanvas);
     connect(exportButton, &QPushButton::clicked, this, &SettingBoardWindow::exportBoardImage);
@@ -522,10 +688,103 @@ void SettingBoardWindow::resizeBoardCanvas() {
     if (newW == currentW && newH == currentH) return;
 
     perapera::ui::resizePaintLayersCentered(board.layers, newW, newH);
+    moveTextBoxesForCenteredResize(board.textBoxes, currentW, currentH, newW, newH);
     board.image = perapera::ui::compositePaintLayers(board.layers, newW, newH);
     m_canvas->clearTextureCache();
     bindCanvasToSelectedBoard();
     emit edited();
+}
+
+void SettingBoardWindow::editTextBoxes() {
+    if (!m_project) return;
+    auto& boards = m_project->settingBoards();
+    const int row = selectedBoardIndex();
+    if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
+
+    core::SettingBoard& board = boards[static_cast<size_t>(row)];
+    syncSettingBoardComposite(board);
+    const QSize canvasSize = boardCanvasSize(board);
+
+    const auto makeDefaultBox = [&] {
+        core::SettingBoardTextBox box;
+        box.x = std::max(0, canvasSize.width() / 16);
+        box.y = std::max(0, canvasSize.height() / 16);
+        box.width = std::max(1, canvasSize.width() / 3);
+        box.height = std::max(1, canvasSize.height() / 7);
+        box.fontPixelSize = std::clamp(canvasSize.height() / 24, 24, 72);
+        box.color = pixelFromColor(m_penColor);
+        return box;
+    };
+
+    const auto commitDecorations = [this] {
+        updateFinalStampOverlay();
+        emit edited();
+    };
+
+    if (board.textBoxes.empty()) {
+        core::SettingBoardTextBox box = makeDefaultBox();
+        if (!editSettingBoardTextBox(this, canvasSize, &box)) return;
+        board.textBoxes.push_back(std::move(box));
+        commitDecorations();
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("文字ボックス"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* list = new QListWidget(&dialog);
+    layout->addWidget(list);
+
+    const auto refreshList = [&] {
+        list->clear();
+        for (int i = 0; i < static_cast<int>(board.textBoxes.size()); ++i) {
+            list->addItem(textBoxPreview(board.textBoxes[static_cast<size_t>(i)], i));
+        }
+        if (list->count() > 0 && list->currentRow() < 0) list->setCurrentRow(0);
+    };
+    refreshList();
+
+    auto* buttonRow = new QHBoxLayout();
+    auto* addButton = new QPushButton(tr("追加"), &dialog);
+    auto* editButton = new QPushButton(tr("編集"), &dialog);
+    auto* removeButton = new QPushButton(tr("削除"), &dialog);
+    buttonRow->addWidget(addButton);
+    buttonRow->addWidget(editButton);
+    buttonRow->addWidget(removeButton);
+    layout->addLayout(buttonRow);
+
+    const auto editCurrent = [&] {
+        const int selected = list->currentRow();
+        if (selected < 0 || static_cast<size_t>(selected) >= board.textBoxes.size()) return;
+        if (!editSettingBoardTextBox(&dialog, canvasSize, &board.textBoxes[static_cast<size_t>(selected)])) return;
+        refreshList();
+        list->setCurrentRow(selected);
+        commitDecorations();
+    };
+
+    connect(addButton, &QPushButton::clicked, &dialog, [&] {
+        core::SettingBoardTextBox box = makeDefaultBox();
+        if (!editSettingBoardTextBox(&dialog, canvasSize, &box)) return;
+        board.textBoxes.push_back(std::move(box));
+        refreshList();
+        list->setCurrentRow(static_cast<int>(board.textBoxes.size()) - 1);
+        commitDecorations();
+    });
+    connect(editButton, &QPushButton::clicked, &dialog, editCurrent);
+    connect(list, &QListWidget::itemDoubleClicked, &dialog, [&](QListWidgetItem*) { editCurrent(); });
+    connect(removeButton, &QPushButton::clicked, &dialog, [&] {
+        const int selected = list->currentRow();
+        if (selected < 0 || static_cast<size_t>(selected) >= board.textBoxes.size()) return;
+        board.textBoxes.erase(board.textBoxes.begin() + selected);
+        refreshList();
+        if (list->count() > 0) list->setCurrentRow(std::min(selected, list->count() - 1));
+        commitDecorations();
+    });
+
+    auto* closeButtons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    connect(closeButtons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(closeButtons);
+    dialog.exec();
 }
 
 void SettingBoardWindow::toggleFinalStamp(bool checked) {
@@ -551,8 +810,8 @@ void SettingBoardWindow::updateFinalStampOverlay() {
     }
     const core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
     const QSize size = boardCanvasSize(board);
-    if (board.finalStamp && size.width() > 0 && size.height() > 0) {
-        m_canvas->setOverlayImage(makeFinalStampOverlay(size.width(), size.height()));
+    if (hasBoardDecorations(board) && size.width() > 0 && size.height() > 0) {
+        m_canvas->setOverlayImage(makeBoardDecorationsOverlay(board, size.width(), size.height()));
     } else {
         m_canvas->clearOverlay();
     }
@@ -598,6 +857,15 @@ void SettingBoardWindow::debugDetachCanvas() {
 
 FloatingCanvasWindow* SettingBoardWindow::debugFloatingCanvasWindow() const {
     return m_floatingCanvasWindow;
+}
+
+bool SettingBoardWindow::debugExportSelectedBoardImage(const QString& path) {
+    if (!m_project || m_selectedRow < 0) return false;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return false;
+    const QString pngPath = path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive) ? path : path + ".png";
+    const QImage image = boardExportImage(boards[static_cast<size_t>(m_selectedRow)]);
+    return !image.isNull() && image.save(pngPath);
 }
 
 void SettingBoardWindow::bindCanvasToSelectedBoard() {
@@ -744,6 +1012,8 @@ QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
     colorButton->setFixedWidth(48);
     colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
     row->addWidget(colorButton);
+    auto* textButton = new QPushButton(tr("文字"), panel);
+    row->addWidget(textButton);
     row->addStretch();
     layout->addLayout(row);
 
@@ -785,6 +1055,7 @@ QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
         if (m_colorButton) m_colorButton->setStyleSheet(style);
         applyToolSettingsToCanvas();
     });
+    connect(textButton, &QPushButton::clicked, this, &SettingBoardWindow::editTextBoxes);
     return panel;
 }
 

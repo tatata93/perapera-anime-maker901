@@ -417,6 +417,15 @@ TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]"
     board1.layers.push_back(boardPaint);
     board1.layers.push_back(boardTrace);
     board1.activeLayer = 1;
+    core::SettingBoardTextBox label;
+    label.text = "height note";
+    label.x = 2;
+    label.y = 1;
+    label.width = 8;
+    label.height = 3;
+    label.fontPixelSize = 12;
+    label.color = {15, 25, 35, 245};
+    board1.textBoxes.push_back(label);
     project.settingBoards().push_back(std::move(board1));
 
     // 色指定(色指定書)2色
@@ -463,9 +472,19 @@ TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]"
     REQUIRE(boards[0].layers[1].opacity < 0.26);
     REQUIRE(boards[0].layers[1].role == core::LayerRole::ColorTrace);
     REQUIRE(boards[0].layers[1].bitmap.pixel(6, 6).a == 64);
+    REQUIRE(boards[0].textBoxes.size() == 1);
+    REQUIRE(boards[0].textBoxes[0].text == "height note");
+    REQUIRE(boards[0].textBoxes[0].x == 2);
+    REQUIRE(boards[0].textBoxes[0].y == 1);
+    REQUIRE(boards[0].textBoxes[0].width == 8);
+    REQUIRE(boards[0].textBoxes[0].height == 3);
+    REQUIRE(boards[0].textBoxes[0].fontPixelSize == 12);
+    REQUIRE(boards[0].textBoxes[0].color.b == 35);
+    REQUIRE(boards[0].textBoxes[0].color.a == 245);
     REQUIRE(boards[1].name == "美術: 教室");
     REQUIRE_FALSE(boards[1].finalStamp);
     REQUIRE(boards[1].image.isEmpty());
+    REQUIRE(boards[1].textBoxes.empty());
 
     // 色指定の往復確認
     REQUIRE(boards[0].colorSpecs.size() == 2);

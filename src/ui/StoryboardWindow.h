@@ -13,6 +13,7 @@ class QPushButton;
 class QSlider;
 class QPlainTextEdit;
 class QDialog;
+class QString;
 class QVBoxLayout;
 class QWidget;
 class FloatingCanvasWindow;
@@ -52,6 +53,7 @@ public:
     // 動作確認用: キャンバスを別窓へ移す
     void debugDetachCanvas();
     FloatingCanvasWindow* debugFloatingCanvasWindow() const;
+    bool debugExportStoryboardPdf(const QString& path);
 
 signals:
     void edited();  // カット番号/内容/セリフ/尺またはコンテ絵が編集された
@@ -84,6 +86,7 @@ private:
     void setActiveTool(int tool);
     void resizeStoryboardCanvas();
     void exportStoryboardPdf();
+    bool writeStoryboardPdf(const QString& pdfPath);
     void refreshLayerPanel();
     void addPaintLayer(core::LayerRole role);
     void duplicatePaintLayer(int layerIndex);

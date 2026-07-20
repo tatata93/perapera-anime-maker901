@@ -999,6 +999,22 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& folder
                 }
                 jBoard["colorSpecs"] = std::move(jColorSpecs);
             }
+            if (!board.textBoxes.empty()) {
+                json jTextBoxes = json::array();
+                for (const SettingBoardTextBox& box : board.textBoxes) {
+                    jTextBoxes.push_back({{"text", box.text},
+                                          {"x", box.x},
+                                          {"y", box.y},
+                                          {"width", box.width},
+                                          {"height", box.height},
+                                          {"fontPixelSize", box.fontPixelSize},
+                                          {"r", box.color.r},
+                                          {"g", box.color.g},
+                                          {"b", box.color.b},
+                                          {"a", box.color.a}});
+                }
+                jBoard["textBoxes"] = std::move(jTextBoxes);
+            }
             jBoards.push_back(std::move(jBoard));
         }
 
@@ -1133,6 +1149,22 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                             spec.color.b = jSpec.value("b", static_cast<uint8_t>(0));
                             spec.color.a = jSpec.value("a", static_cast<uint8_t>(255));
                             board.colorSpecs.push_back(std::move(spec));
+                        }
+                    }
+                    if (jBoard.contains("textBoxes")) {
+                        for (const json& jBox : jBoard.at("textBoxes")) {
+                            SettingBoardTextBox box;
+                            box.text = jBox.value("text", std::string());
+                            box.x = jBox.value("x", 120);
+                            box.y = jBox.value("y", 120);
+                            box.width = std::max(1, jBox.value("width", 640));
+                            box.height = std::max(1, jBox.value("height", 160));
+                            box.fontPixelSize = std::max(1, jBox.value("fontPixelSize", 48));
+                            box.color.r = jBox.value("r", static_cast<uint8_t>(0));
+                            box.color.g = jBox.value("g", static_cast<uint8_t>(0));
+                            box.color.b = jBox.value("b", static_cast<uint8_t>(0));
+                            box.color.a = jBox.value("a", static_cast<uint8_t>(255));
+                            board.textBoxes.push_back(std::move(box));
                         }
                     }
                     project->settingBoards().push_back(std::move(board));

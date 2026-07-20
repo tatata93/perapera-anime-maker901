@@ -9,11 +9,13 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFont>
 #include <QImage>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
+#include <QPen>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProcess>
@@ -26,6 +28,7 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTemporaryDir>
+#include <QTextOption>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
@@ -70,6 +73,54 @@ constexpr int kDefaultFps = 24;  // タイムシートは24fps基準
 // 自動保存: フォルダ名と保存間隔(3分)
 const QString kAutosaveFileName = QStringLiteral("autosave.ppproj");
 constexpr int kAutosaveIntervalMs = 180 * 1000;
+
+void drawSettingBoardDecorations(QImage& image, const core::SettingBoard& board) {
+    if (image.isNull()) return;
+    const bool hasText = std::any_of(board.textBoxes.begin(), board.textBoxes.end(),
+                                    [](const core::SettingBoardTextBox& box) { return !box.text.empty(); });
+    if (!board.finalStamp && !hasText) return;
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+
+    QTextOption option;
+    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    option.setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    for (const core::SettingBoardTextBox& box : board.textBoxes) {
+        if (box.text.empty()) continue;
+        const int boxW = std::clamp(box.width, 1, image.width());
+        const int boxH = std::clamp(box.height, 1, image.height());
+        const int x = std::clamp(box.x, 0, std::max(0, image.width() - boxW));
+        const int y = std::clamp(box.y, 0, std::max(0, image.height() - boxH));
+
+        QFont font = painter.font();
+        font.setPixelSize(std::clamp(box.fontPixelSize, 1, std::max(1, image.height())));
+        painter.setFont(font);
+        painter.setPen(QColor(box.color.r, box.color.g, box.color.b, box.color.a));
+        painter.drawText(QRectF(QRect(x, y, boxW, boxH).adjusted(6, 4, -6, -4)),
+                         QString::fromStdString(box.text), option);
+    }
+
+    if (board.finalStamp) {
+        const int shortSide = std::min(image.width(), image.height());
+        const int stampW = std::clamp(image.width() / 5, 180, 620);
+        const int stampH = std::clamp(image.height() / 10, 70, 220);
+        const int margin = std::clamp(shortSide / 28, 28, 160);
+        const QRectF rect(image.width() - stampW - margin, image.height() - stampH - margin, stampW, stampH);
+
+        QPen pen(QColor(190, 24, 24, 230), std::max(4, shortSide / 260));
+        painter.setPen(pen);
+        painter.setBrush(QColor(255, 255, 255, 28));
+        painter.drawRoundedRect(rect, 6, 6);
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPixelSize(std::clamp(stampH / 2, 30, 96));
+        painter.setFont(font);
+        painter.setPen(QColor(190, 24, 24, 235));
+        painter.drawText(rect, Qt::AlignCenter, QStringLiteral("決定稿"));
+    }
+}
 
 // 透明なセル(作画用紙)。紙の白はGLCanvasが背景として描画する。
 // width/heightは呼び出し側でプロジェクトのキャンバスサイズ(MainWindow::canvasWidth/Height())を渡す
@@ -4063,6 +4114,7 @@ void MainWindow::updateReferencePanel() {
             image = QImage(selectedBoard.image.data(), selectedBoard.image.width(), selectedBoard.image.height(),
                             QImage::Format_RGBA8888)
                         .copy();
+            drawSettingBoardDecorations(image, selectedBoard);
         }
         for (const core::ColorSpec& spec : selectedBoard.colorSpecs) {
             colorSpecs.append({QString::fromStdString(spec.name),
@@ -4096,6 +4148,16 @@ void MainWindow::debugSetupSettingBoardDemo() {
     board1.colorSpecs.push_back({"肌", {255, 224, 196, 255}});
     board1.colorSpecs.push_back({"肌 影", {233, 183, 150, 255}});
     board1.colorSpecs.push_back({"髪", {80, 60, 120, 255}});
+    board1.finalStamp = true;
+    core::SettingBoardTextBox note;
+    note.text = "身長 142cm\n決定色";
+    note.x = canvasWidth() * 0.08;
+    note.y = canvasHeight() * 0.08;
+    note.width = canvasWidth() * 0.28;
+    note.height = canvasHeight() * 0.18;
+    note.fontPixelSize = std::max(24, canvasHeight() / 24);
+    note.color = {30, 30, 30, 255};
+    board1.textBoxes.push_back(std::move(note));
 
     core::SettingBoard board2;
     board2.name = "美術: 教室";

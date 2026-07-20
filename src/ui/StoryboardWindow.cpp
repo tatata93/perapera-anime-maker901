@@ -1257,15 +1257,10 @@ void StoryboardWindow::resizeStoryboardCanvas() {
     emit edited();
 }
 
-void StoryboardWindow::exportStoryboardPdf() {
-    if (!m_project || m_project->sceneCount() == 0) return;
+bool StoryboardWindow::writeStoryboardPdf(const QString& pdfPath) {
+    if (!m_project || m_project->sceneCount() == 0) return false;
     auto& panels = m_project->scene(0).storyboard();
-    if (panels.empty()) return;
-
-    const QString path =
-        QFileDialog::getSaveFileName(this, tr("絵コンテを書き出し"), QString(), tr("PDF (*.pdf)"));
-    if (path.isEmpty()) return;
-    const QString pdfPath = path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive) ? path : path + ".pdf";
+    if (panels.empty() || pdfPath.isEmpty()) return false;
 
     QPdfWriter writer(pdfPath);
     writer.setResolution(300);
@@ -1273,26 +1268,39 @@ void StoryboardWindow::exportStoryboardPdf() {
                                      QPageLayout::Millimeter));
     QPainter painter(&writer);
     if (!painter.isActive()) {
-        QMessageBox::warning(this, tr("書き出しエラー"), tr("PDFを書き出せませんでした"));
-        return;
+        return false;
     }
 
     const QRect page = writer.pageLayout().paintRectPixels(writer.resolution());
-    constexpr int panelsPerPage = 4;
+    constexpr int panelsPerPage = 5;
     const int slotHeight = page.height() / panelsPerPage;
     for (int i = 0; i < static_cast<int>(panels.size()); ++i) {
         if (i > 0 && i % panelsPerPage == 0) writer.newPage();
         core::StoryboardPanel& panel = panels[static_cast<size_t>(i)];
         syncStoryboardPanelComposite(panel);
         const QImage sheet = renderStoryboardSheetImage(panel, i + 1);
-        const QRect slot(page.left(), page.top() + (i % panelsPerPage) * slotHeight, page.width(), slotHeight);
-        QSize target = sheet.size();
-        target.scale(slot.size(), Qt::KeepAspectRatio);
-        const QRect dest(slot.left() + (slot.width() - target.width()) / 2,
-                         slot.top() + (slot.height() - target.height()) / 2, target.width(), target.height());
-        painter.drawImage(dest, sheet);
+        const int slotTop = page.top() + (i % panelsPerPage) * slotHeight;
+        const int slotBottom = (i % panelsPerPage == panelsPerPage - 1) ? page.bottom() + 1 : slotTop + slotHeight;
+        const QRect slot(page.left(), slotTop, page.width(), slotBottom - slotTop);
+        painter.drawImage(slot, sheet);
     }
     painter.end();
+    return true;
+}
+
+void StoryboardWindow::exportStoryboardPdf() {
+    const QString path =
+        QFileDialog::getSaveFileName(this, tr("絵コンテを書き出し"), QString(), tr("PDF (*.pdf)"));
+    if (path.isEmpty()) return;
+    const QString pdfPath = path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive) ? path : path + ".pdf";
+    if (!writeStoryboardPdf(pdfPath)) {
+        QMessageBox::warning(this, tr("書き出しエラー"), tr("PDFを書き出せませんでした"));
+    }
+}
+
+bool StoryboardWindow::debugExportStoryboardPdf(const QString& path) {
+    const QString pdfPath = path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive) ? path : path + ".pdf";
+    return writeStoryboardPdf(pdfPath);
 }
 
 void StoryboardWindow::onActionTextChanged() {

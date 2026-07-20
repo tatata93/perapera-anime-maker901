@@ -8,6 +8,7 @@ class QListWidgetItem;
 class QPushButton;
 class QSlider;
 class QLabel;
+class QString;
 class QVBoxLayout;
 class QWidget;
 class FloatingCanvasWindow;
@@ -36,6 +37,7 @@ public:
     void refresh();
     void debugDetachCanvas();
     FloatingCanvasWindow* debugFloatingCanvasWindow() const;
+    bool debugExportSelectedBoardImage(const QString& path);
 
 signals:
     void edited();  // ボードの追加/削除/名前変更/手描き/画像貼付が行われた
@@ -51,6 +53,7 @@ private:
     void pasteImage();
     void resizeBoardCanvas();
     void exportBoardImage();
+    void editTextBoxes();
     void toggleFinalStamp(bool checked);
     void updateFinalStampOverlay();
     void detachCanvas();

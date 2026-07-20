@@ -17,6 +17,16 @@ struct ColorSpec {
     Bitmap::Pixel color{0, 0, 0, 255};
 };
 
+struct SettingBoardTextBox {
+    std::string text;
+    int x = 120;
+    int y = 120;
+    int width = 640;
+    int height = 160;
+    int fontPixelSize = 48;
+    Bitmap::Pixel color{0, 0, 0, 255};
+};
+
 // 設定ボード1枚(キャラ設定・美術設定などの資料)。手描きと画像貼り付けを1枚のビットマップに合成する。
 // カット/シーンとは独立して存在し、作画中にいつでも参照できる資料集(プロジェクト直下で管理)
 struct SettingBoard {
@@ -25,6 +35,7 @@ struct SettingBoard {
     std::vector<PaintLayer> layers;
     size_t activeLayer = 0;
     std::vector<ColorSpec> colorSpecs;  // 色指定書(肌/髪/影など名前付きの色見本)。既定は空
+    std::vector<SettingBoardTextBox> textBoxes;
     bool finalStamp = false;
 };
 

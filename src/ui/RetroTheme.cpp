@@ -702,6 +702,7 @@ QMenu::indicator {
 }
 QMenu::indicator:checked {
     background: #d4d0c8;
+    image: url(:/perapera/ui/check_95.svg);
     border-top: 1px solid #404040;
     border-left: 1px solid #404040;
     border-right: 1px solid #ffffff;
@@ -725,8 +726,12 @@ QTreeView::indicator, QTableView::indicator {
 }
 QCheckBox::indicator:checked, QGroupBox::indicator:checked, QListView::indicator:checked,
 QListWidget::indicator:checked, QTreeView::indicator:checked, QTableView::indicator:checked {
-    background-color: #000080;
-    border: 2px solid #ffffff;
+    background-color: #ffffff;
+    image: url(:/perapera/ui/check_95.svg);
+    border-top: 1px solid #404040;
+    border-left: 1px solid #404040;
+    border-right: 1px solid #ffffff;
+    border-bottom: 1px solid #ffffff;
 }
 QCheckBox::indicator:disabled, QGroupBox::indicator:disabled, QListView::indicator:disabled,
 QListWidget::indicator:disabled, QTreeView::indicator:disabled, QTableView::indicator:disabled {
@@ -952,7 +957,8 @@ QMenu::indicator {
     height: 14px;
 }
 QMenu::indicator:checked {
-    background-color: #316ac5;
+    background-color: #ffffff;
+    image: url(:/perapera/ui/check_xp.svg);
     border: 1px solid #0a246a;
 }
 QMenu::right-arrow {
@@ -970,8 +976,9 @@ QTreeView::indicator, QTableView::indicator {
 }
 QCheckBox::indicator:checked, QGroupBox::indicator:checked, QListView::indicator:checked,
 QListWidget::indicator:checked, QTreeView::indicator:checked, QTableView::indicator:checked {
-    background-color: #316ac5;
-    border: 2px solid #ffffff;
+    background-color: #ffffff;
+    image: url(:/perapera/ui/check_xp.svg);
+    border: 1px solid #7f9db9;
 }
 QCheckBox::indicator:disabled, QGroupBox::indicator:disabled, QListView::indicator:disabled,
 QListWidget::indicator:disabled, QTreeView::indicator:disabled, QTableView::indicator:disabled {

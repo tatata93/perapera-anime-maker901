@@ -999,6 +999,20 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    const int storyboardPdfIndex = args.indexOf("--storyboard-pdf-test");
+    if (storyboardPdfIndex >= 0 && storyboardPdfIndex + 1 < args.size()) {
+        const QString outputPath = args.at(storyboardPdfIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupStoryboardDemo();
+            window.debugOpenStoryboard();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                const bool ok = window.storyboardWindow() &&
+                                window.storyboardWindow()->debugExportStoryboardPdf(outputPath);
+                QApplication::exit(ok ? 0 : 1);
+            });
+        });
+    }
+
     // 動作確認用: --storyboard-zoom-test <出力PNG> で絵コンテデモを組んで絵コンテウィンドウを開き、
     // debugZoomToFrame()で絵の枠を拡大表示させた状態のウィンドウ全体を保存して終了する
     const int storyboardZoomIndex = args.indexOf("--storyboard-zoom-test");
@@ -1082,6 +1096,20 @@ int main(int argc, char* argv[]) {
                 window.settingBoardWindow()->grab().save(outputPath);
                 window.grab().save(mainOutputPath);  // 参照ドック(色指定含む)を確認するためメインウィンドウも保存
                 QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
+    const int settingBoardExportIndex = args.indexOf("--settingboard-export-test");
+    if (settingBoardExportIndex >= 0 && settingBoardExportIndex + 1 < args.size()) {
+        const QString outputPath = args.at(settingBoardExportIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupSettingBoardDemo();
+            window.debugOpenSettingBoard();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                const bool ok = window.settingBoardWindow() &&
+                                window.settingBoardWindow()->debugExportSelectedBoardImage(outputPath);
+                QApplication::exit(ok ? 0 : 1);
             });
         });
     }
