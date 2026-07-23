@@ -113,6 +113,7 @@ CanvasSizeDialog::CanvasSizeDialog(int currentW, int currentH, QWidget* parent, 
 
         const perapera::ui::ShortcutScope scopes[] = {
             perapera::ui::ShortcutScope::MainCanvas,
+            perapera::ui::ShortcutScope::Xsheet,
             perapera::ui::ShortcutScope::Storyboard,
             perapera::ui::ShortcutScope::SettingBoard,
         };

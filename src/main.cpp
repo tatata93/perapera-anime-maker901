@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QPixmap>
+#include <QSize>
 #include <QTabWidget>
 #include <QTimer>
 #include <algorithm>
@@ -210,7 +211,7 @@ int main(int argc, char* argv[]) {
     }
 
     MainWindow window;
-    window.resize(1280, 800);
+    window.resize(args.contains(QStringLiteral("--compact-window-test")) ? QSize(1024, 700) : QSize(1280, 800));
     window.show();
     perapera::ui::keepWindowOnScreen(&window);
     QTimer::singleShot(0, &window, [&window] { perapera::ui::keepWindowOnScreen(&window); });
@@ -520,7 +521,7 @@ int main(int argc, char* argv[]) {
     }
 
     // 動作確認用: --cels-ui-test <出力PNG> でセルデモ(セルA/セルB)のウィンドウ全体を保存する。
-    // タイムシートの列反転確認用(セルB列が左、セルA列が右に表示されるはず)
+    // タイムシートのセル列と合成順確認用
     const int celsUiIndex = args.indexOf("--cels-ui-test");
     if (celsUiIndex >= 0 && celsUiIndex + 1 < args.size()) {
         const QString outputPath = args.at(celsUiIndex + 1);
@@ -530,6 +531,27 @@ int main(int argc, char* argv[]) {
                 window.grab().save(outputPath);
                 QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
             });
+        });
+    }
+
+    // 動作確認用: --xsheet-ui-test <出力PNG> で2秒分の業界標準表示
+    // (A/B列、秒+コマ、6コマ区切り、止め表示)を保存する。
+    const int xsheetUiIndex = args.indexOf("--xsheet-ui-test");
+    if (xsheetUiIndex >= 0 && xsheetUiIndex + 1 < args.size()) {
+        const QString outputPath = args.at(xsheetUiIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupXsheetUiDemo();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                window.grab().save(outputPath);
+                QApplication::exit(0);
+            });
+        });
+    }
+
+    // 動作確認用: 範囲の止め割付が1回のUndo/Redoとして往復することを検証する。
+    if (args.contains(QStringLiteral("--xsheet-edit-test"))) {
+        QTimer::singleShot(500, &window, [&window] {
+            QApplication::exit(window.debugXsheetEditUndoRedo());
         });
     }
 

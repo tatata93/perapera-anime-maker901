@@ -3,6 +3,7 @@ find_package(Catch2 3 CONFIG REQUIRED)
 add_executable(perapera_core_tests
     CoreModelTests.cpp
     CommandStackTests.cpp
+    ExposureSheetCommandTests.cpp
     BrushEngineTests.cpp
     CompositorTests.cpp
     EffectTests.cpp

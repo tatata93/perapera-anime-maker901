@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QList>
 #include <QMainWindow>
 #include <QPointF>
 #include <QStringList>
@@ -85,6 +86,9 @@ public:
     void debugSetLayerVisible(int layerIndex, bool visible);
     // タイムシート確認用: オニオンデモの後、尺6コマ・2コマ打ち(動画1,1,2,2,3,3)を設定する
     void debugSetupXsheetDemo();
+    // タイムシートUI確認用: 2秒分・A/Bセルの割付を作る
+    void debugSetupXsheetUiDemo();
+    int debugXsheetEditUndoRedo();
     // タイムシート確認用: setCurrentFrame()の公開ラッパー
     void debugSetCurrentFrame(size_t frame) { setCurrentFrame(frame); }
     // セル管理確認用: セルBを追加し、セルAに赤縦線・セルBに青横線を描く(共にコマ1に動画1を割付)
@@ -266,6 +270,9 @@ private:
     void updateFrameLabel();
     // コマ打ちパターン適用(1/2/3コマ打ち)。XsheetPanelのボタンと「操作」メニューのショートカット(1/2/3)で共有する
     void applyStepPattern(int step);
+    void applyStepPatternRange(int step, int startFrame, int endFrame);
+    void applyExposureEdits(const QList<int>& celIndices, const QList<int>& frames,
+                            const QList<int>& drawings);
 
     // 動画(絵)管理操作
     void deleteDrawing(int idx);
@@ -411,6 +418,7 @@ private:
     QAction* m_undoAction = nullptr;
     QAction* m_redoAction = nullptr;
     QAction* m_pressureAction = nullptr;   // 表示メニューの筆圧検知トグル(ツールバーの筆圧チェックと同期)
+    QList<QAction*> m_xsheetConflictingActions;
     QAction* m_standardUiAction = nullptr;
     QAction* m_retro95Action = nullptr;
     QAction* m_retroXpAction = nullptr;

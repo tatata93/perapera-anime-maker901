@@ -11,6 +11,7 @@ namespace perapera::ui {
 
 enum class ShortcutScope {
     MainCanvas,
+    Xsheet,
     Storyboard,
     SettingBoard,
 };

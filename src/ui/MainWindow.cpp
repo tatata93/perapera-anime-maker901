@@ -40,6 +40,7 @@
 
 #include "core/BrushEngine.h"
 #include "core/Compositor.h"
+#include "core/ExposureSheetCommand.h"
 #include "core/ProjectIO.h"
 #include "core/StrokeCommand.h"
 #include "previz/PrevizViewport.h"
@@ -146,13 +147,6 @@ void initializeCut(core::Cut& cut, int canvasW, int canvasH) {
     layer.addFrame().bitmap() = makeTransparentCel(canvasW, canvasH);
     cut.setFrameCount(1);
     cel.setExposure(0, 0);
-}
-
-size_t stepPatternStartFrame(const core::Cel& cel, size_t frameCount, size_t currentFrame) {
-    for (size_t f = 0; f < frameCount; ++f) {
-        if (cel.exposure(f) >= 0) return f;
-    }
-    return std::min(currentFrame, frameCount);
 }
 
 template <typename Window>
@@ -641,29 +635,77 @@ void MainWindow::addFrameAfterCurrent() {
 
 void MainWindow::deleteCurrentFrame() {
     if (m_playing) return;
-    // 現在コマの割付を空にする(動画自体は残る=シート上のセル欄を消す操作)
-    activeCel().setExposure(m_currentFrame, -1);
-    updateCanvasLayers();
-    updateOnionSkin();
-    updateFrameLabel();
-    updateXsheetPanel();
-    markCutDirty(activeCut());
-    updateWindowTitle();
+    applyExposureEdits({static_cast<int>(m_activeCel)}, {static_cast<int>(m_currentFrame)}, {-1});
 }
 
-// コマ打ちパターン適用(1/2/3コマ打ち)。XsheetPanelのボタンと「操作」メニューの数字キーで共有する
+// 現在コマ以降へ動画1から順に割り付ける。既存の前半は触らない。
 void MainWindow::applyStepPattern(int step) {
+    applyStepPatternRange(step, static_cast<int>(m_currentFrame), static_cast<int>(activeCut().frameCount()) - 1);
+}
+
+void MainWindow::applyStepPatternRange(int step, int startFrame, int endFrame) {
     if (m_playing) return;
     core::Cut& cut = activeCut();
     core::Cel& cel = activeCel();
-    const size_t startFrame = stepPatternStartFrame(cel, cut.frameCount(), m_currentFrame);
-    cel.applyStepPattern(step, cut.frameCount(), startFrame);
+    if (cut.frameCount() == 0 || cel.drawingCount() == 0) return;
+
+    step = std::clamp(step, 1, 3);
+    startFrame = std::clamp(startFrame, 0, static_cast<int>(cut.frameCount()) - 1);
+    endFrame = std::clamp(endFrame, startFrame, static_cast<int>(cut.frameCount()) - 1);
+
+    QList<int> cels;
+    QList<int> frames;
+    QList<int> drawings;
+    for (int frame = startFrame; frame <= endFrame; ++frame) {
+        const int drawing = (frame - startFrame) / step;
+        cels.append(static_cast<int>(m_activeCel));
+        frames.append(frame);
+        drawings.append(drawing < static_cast<int>(cel.drawingCount()) ? drawing : -1);
+    }
+    applyExposureEdits(cels, frames, drawings);
+}
+
+void MainWindow::applyExposureEdits(const QList<int>& celIndices, const QList<int>& frames,
+                                    const QList<int>& drawings) {
+    if (m_playing || celIndices.size() != frames.size() || frames.size() != drawings.size()) return;
+
+    core::Cut& cut = activeCut();
+    std::vector<core::ExposureChange> changes;
+    changes.reserve(static_cast<size_t>(celIndices.size()));
+    bool invalidDrawing = false;
+    for (qsizetype i = 0; i < celIndices.size(); ++i) {
+        const int celIndex = celIndices.at(i);
+        const int frame = frames.at(i);
+        if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount() || frame < 0 ||
+            static_cast<size_t>(frame) >= cut.frameCount()) {
+            continue;
+        }
+
+        core::Cel& cel = cut.cel(static_cast<size_t>(celIndex));
+        int drawing = drawings.at(i);
+        if (drawing >= static_cast<int>(cel.drawingCount())) {
+            invalidDrawing = true;
+            continue;
+        }
+        const int before = cel.exposure(static_cast<size_t>(frame));
+        if (before == drawing) continue;
+        changes.push_back({&cel, static_cast<size_t>(frame), before, drawing});
+    }
+    if (changes.empty()) {
+        updateXsheetPanel();
+        if (invalidDrawing) statusBar()->showMessage(tr("存在しない動画番号は割り付けできません"), 4000);
+        return;
+    }
+
+    m_commands.push(std::make_unique<core::ExposureSheetCommand>(std::move(changes)));
     markCutDirty(cut);
     updateCanvasLayers();
     updateOnionSkin();
     updateFrameLabel();
     updateXsheetPanel();
     updateWindowTitle();
+    updateUndoActions();
+    if (invalidDrawing) statusBar()->showMessage(tr("存在しない動画番号は割り付けできません"), 4000);
 }
 
 void MainWindow::togglePlayback() {
@@ -1129,30 +1171,11 @@ void MainWindow::setupPanels() {
         setCurrentFrame(static_cast<size_t>(frame));
         if (celChanged) updateLayerPanel();  // アクティブセルが変わったのでレイヤーパネルも追従させる
     });
-    connect(m_xsheetPanel, &XsheetPanel::exposureEdited, this, [this](int celIndex, int frame, int drawing) {
-        if (m_playing) return;
-        core::Cut& cut = activeCut();
-        if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount()) return;
-        if (frame < 0 || static_cast<size_t>(frame) >= cut.frameCount()) return;
-        core::Cel& cel = cut.cel(static_cast<size_t>(celIndex));
-        int clampedDrawing = drawing;
-        if (clampedDrawing >= 0) {
-            // 動画番号として無効な大きい値はここでクランプする(セルに動画が1枚もなければ空欄扱い)
-            clampedDrawing = cel.drawingCount() == 0
-                                 ? -1
-                                 : std::min(clampedDrawing, static_cast<int>(cel.drawingCount()) - 1);
-        }
-        cel.setExposure(static_cast<size_t>(frame), clampedDrawing);
-        markCutDirty(cut);
-        updateCanvasLayers();
-        updateOnionSkin();
-        updateFrameLabel();
-        updateXsheetPanel();
-        updateWindowTitle();
-    });
+    connect(m_xsheetPanel, &XsheetPanel::exposureEditsRequested, this, &MainWindow::applyExposureEdits);
     connect(m_xsheetPanel, &XsheetPanel::frameCountChanged, this, [this](int frameCount) {
         if (m_playing || frameCount < 1) return;
         core::Cut& cut = activeCut();
+        clearUndoHistory();  // 尺を縮めると履歴内のコマ位置が無効になるため破棄する
         cut.setFrameCount(static_cast<size_t>(frameCount));
         if (m_currentFrame >= cut.frameCount()) m_currentFrame = cut.frameCount() - 1;
         markCutDirty(cut);
@@ -1162,7 +1185,12 @@ void MainWindow::setupPanels() {
         updateXsheetPanel();
         updateWindowTitle();
     });
-    connect(m_xsheetPanel, &XsheetPanel::stepPatternRequested, this, &MainWindow::applyStepPattern);
+    connect(m_xsheetPanel, &XsheetPanel::stepPatternRequested, this, &MainWindow::applyStepPatternRange);
+    connect(m_xsheetPanel, &XsheetPanel::tableFocusChanged, this, [this](bool focused) {
+        for (QAction* action : m_xsheetConflictingActions) {
+            if (action) action->setEnabled(!focused);
+        }
+    });
     // 動画追加/削除: FramePanel(動画パネル)の動画追加/動画削除ボタンと同じ処理を呼ぶ。
     // 削除は動画パネルと違い一覧選択がないため、現在コマに割り付いている動画を対象にする
     connect(m_xsheetPanel, &XsheetPanel::addDrawingRequested, this, &MainWindow::addFrameAfterCurrent);
@@ -1450,7 +1478,8 @@ void MainWindow::updateXsheetPanel() {
     }
 
     m_xsheetPanel->setSheet(celNames, celVisible, exposures, static_cast<int>(cut.frameCount()),
-                             static_cast<int>(m_currentFrame), static_cast<int>(m_activeCel));
+                             static_cast<int>(m_currentFrame), static_cast<int>(m_activeCel),
+                             m_fpsSpin ? m_fpsSpin->value() : kDefaultFps);
 
     updateCelPanel();  // セルの構成・可視状態・アクティブセルはXsheetと同じ元データなのでここで一緒に更新する
     updateTapPanel();  // 位置キーの一覧・現在コマの選択もアクティブセルに追従させる
@@ -1641,6 +1670,7 @@ void MainWindow::openCanvasSizeDialog() {
     if (dialog.exec() != QDialog::Accepted) return;
 
     perapera::ui::reloadShortcutActions(this, perapera::ui::ShortcutScope::MainCanvas);
+    perapera::ui::reloadShortcutActions(m_xsheetPanel, perapera::ui::ShortcutScope::Xsheet);
     perapera::ui::reloadShortcutActions(m_storyboardWindow, perapera::ui::ShortcutScope::Storyboard);
     perapera::ui::reloadShortcutActions(m_settingBoardWindow, perapera::ui::ShortcutScope::SettingBoard);
 
@@ -1673,6 +1703,7 @@ QDialog* MainWindow::debugOpenCanvasSizeDialog() {
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     connect(dialog, &QDialog::accepted, this, [this] {
         perapera::ui::reloadShortcutActions(this, perapera::ui::ShortcutScope::MainCanvas);
+        perapera::ui::reloadShortcutActions(m_xsheetPanel, perapera::ui::ShortcutScope::Xsheet);
         perapera::ui::reloadShortcutActions(m_storyboardWindow, perapera::ui::ShortcutScope::Storyboard);
         perapera::ui::reloadShortcutActions(m_settingBoardWindow, perapera::ui::ShortcutScope::SettingBoard);
     });
@@ -2053,6 +2084,11 @@ void MainWindow::undo() {
     // 変更矩形が分かるコマンドは部分転送のみで済ませる(全テクスチャ破棄はカクつきの原因)
     if (auto* stroke = dynamic_cast<core::StrokeCommand*>(command)) {
         m_canvas->notifyBitmapRegionChanged(stroke->bitmap(), stroke->region());
+    } else if (dynamic_cast<core::ExposureSheetCommand*>(command)) {
+        updateCanvasLayers();
+        updateOnionSkin();
+        updateFrameLabel();
+        updateXsheetPanel();
     } else if (command) {
         m_canvas->clearTextureCache();
     }
@@ -2069,6 +2105,11 @@ void MainWindow::redo() {
     core::Command* command = m_commands.redo();
     if (auto* stroke = dynamic_cast<core::StrokeCommand*>(command)) {
         m_canvas->notifyBitmapRegionChanged(stroke->bitmap(), stroke->region());
+    } else if (dynamic_cast<core::ExposureSheetCommand*>(command)) {
+        updateCanvasLayers();
+        updateOnionSkin();
+        updateFrameLabel();
+        updateXsheetPanel();
     } else if (command) {
         m_canvas->clearTextureCache();
     }
@@ -2454,6 +2495,7 @@ void MainWindow::setupToolBar() {
     m_fpsSpin->setFocusPolicy(Qt::ClickFocus);
     connect(m_fpsSpin, &QSpinBox::valueChanged, this, [this](int fps) {
         if (m_playing) m_playTimer->start(1000 / std::max(1, fps));
+        updateXsheetPanel();
         if (m_projectManagerWindow) {  // 秒換算・総尺の集計をfps変更に追従させる
             m_projectManagerWindow->setFps(fps);
             m_projectManagerWindow->refresh();
@@ -2480,7 +2522,7 @@ void MainWindow::setupToolBar() {
 
     operationMenu->addSeparator();
 
-    QAction* prevCelKeyAction = operationMenu->addAction(tr("上のセル"));
+    QAction* prevCelKeyAction = operationMenu->addAction(tr("左（奥）のセル"));
     perapera::ui::bindShortcut(prevCelKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("previousCel"));
     connect(prevCelKeyAction, &QAction::triggered, this, [this] {
@@ -2488,7 +2530,7 @@ void MainWindow::setupToolBar() {
         setActiveCel(static_cast<int>(m_activeCel) - 1);
     });
 
-    QAction* nextCelKeyAction = operationMenu->addAction(tr("下のセル"));
+    QAction* nextCelKeyAction = operationMenu->addAction(tr("右（手前）のセル"));
     perapera::ui::bindShortcut(nextCelKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("nextCel"));
     connect(nextCelKeyAction, &QAction::triggered, this, [this] {
@@ -2508,16 +2550,19 @@ void MainWindow::setupToolBar() {
     perapera::ui::bindShortcut(step1KeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("step1"));
     connect(step1KeyAction, &QAction::triggered, this, [this] { applyStepPattern(1); });
+    m_xsheetConflictingActions.append(step1KeyAction);
 
     QAction* step2KeyAction = operationMenu->addAction(tr("2コマ打ち"));
     perapera::ui::bindShortcut(step2KeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("step2"));
     connect(step2KeyAction, &QAction::triggered, this, [this] { applyStepPattern(2); });
+    m_xsheetConflictingActions.append(step2KeyAction);
 
     QAction* step3KeyAction = operationMenu->addAction(tr("3コマ打ち"));
     perapera::ui::bindShortcut(step3KeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("step3"));
     connect(step3KeyAction, &QAction::triggered, this, [this] { applyStepPattern(3); });
+    m_xsheetConflictingActions.append(step3KeyAction);
 
     operationMenu->addSeparator();
 
@@ -3914,6 +3959,64 @@ void MainWindow::debugSetupXsheetDemo() {
 
     // 露出(割付)だけの変更なのでテクスチャキャッシュの破棄は不要
     setCurrentFrame(0);  // コマ1(動画1)を表示
+}
+
+void MainWindow::debugSetupXsheetUiDemo() {
+    debugSetupCelDemo();
+    core::Cut& cut = activeCut();
+    cut.setFrameCount(48);
+
+    for (size_t celIndex = 0; celIndex < cut.celCount(); ++celIndex) {
+        core::Cel& cel = cut.cel(celIndex);
+        while (cel.drawingCount() < 4) {
+            for (size_t layerIndex = 0; layerIndex < cel.layerCount(); ++layerIndex) {
+                cel.layer(layerIndex).addFrame().bitmap() =
+                    makeTransparentCelForCel(cel, canvasWidth(), canvasHeight());
+            }
+        }
+        for (size_t frame = 0; frame < cut.frameCount(); ++frame) cel.setExposure(frame, -1);
+    }
+
+    core::Cel& celA = cut.cel(0);
+    core::Cel& celB = cut.cel(1);
+    for (int drawing = 0; drawing < 4; ++drawing) {
+        const int start = drawing * 6;
+        for (int frame = start; frame < start + 6; ++frame) {
+            celA.setExposure(static_cast<size_t>(frame), drawing);
+        }
+    }
+    for (int frame = 8; frame < 16; ++frame) celB.setExposure(static_cast<size_t>(frame), 0);
+    for (int frame = 16; frame < 24; ++frame) celB.setExposure(static_cast<size_t>(frame), 1);
+    for (int frame = 24; frame < 36; ++frame) celB.setExposure(static_cast<size_t>(frame), 2);
+    for (int frame = 36; frame < 48; ++frame) celB.setExposure(static_cast<size_t>(frame), 3);
+
+    m_activeCel = 0;
+    clearUndoHistory();
+    markCutDirty(cut);
+    setCurrentFrame(7);
+}
+
+int MainWindow::debugXsheetEditUndoRedo() {
+    debugSetupXsheetUiDemo();
+    core::Cel& cel = activeCut().cel(0);
+    cel.setExposure(0, 0);
+    for (size_t frame = 1; frame < 4; ++frame) cel.setExposure(frame, -1);
+    clearUndoHistory();
+    updateXsheetPanel();
+
+    m_xsheetPanel->debugSelectExposureRange(0, 0, 3);
+    m_xsheetPanel->debugFillHoldSelection();
+    const bool filled = cel.exposure(0) == 0 && cel.exposure(1) == 0 && cel.exposure(2) == 0 &&
+                        cel.exposure(3) == 0;
+
+    undo();
+    const bool undone = cel.exposure(0) == 0 && cel.exposure(1) == -1 && cel.exposure(2) == -1 &&
+                        cel.exposure(3) == -1;
+
+    redo();
+    const bool redone = cel.exposure(0) == 0 && cel.exposure(1) == 0 && cel.exposure(2) == 0 &&
+                        cel.exposure(3) == 0;
+    return filled && undone && redone ? 0 : 1;
 }
 
 void MainWindow::debugSetupCelDemo() {

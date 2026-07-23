@@ -11,6 +11,8 @@ QString scopeKey(ShortcutScope scope) {
     switch (scope) {
         case ShortcutScope::MainCanvas:
             return QStringLiteral("main");
+        case ShortcutScope::Xsheet:
+            return QStringLiteral("xsheet");
         case ShortcutScope::Storyboard:
             return QStringLiteral("storyboard");
         case ShortcutScope::SettingBoard:
@@ -38,6 +40,8 @@ QString shortcutScopeLabel(ShortcutScope scope) {
     switch (scope) {
         case ShortcutScope::MainCanvas:
             return QObject::tr("作画キャンバス");
+        case ShortcutScope::Xsheet:
+            return QObject::tr("タイムシート");
         case ShortcutScope::Storyboard:
             return QObject::tr("絵コンテ");
         case ShortcutScope::SettingBoard:
@@ -58,8 +62,8 @@ const QList<ShortcutDefinition>& shortcutDefinitions(ShortcutScope scope) {
         {QStringLiteral("eyedropper"), QObject::tr("スポイト"), QKeySequence(QStringLiteral("I"))},
         {QStringLiteral("previousFrame"), QObject::tr("前のコマ"), QKeySequence(QStringLiteral("A"))},
         {QStringLiteral("nextFrame"), QObject::tr("次のコマ"), QKeySequence(QStringLiteral("D"))},
-        {QStringLiteral("previousCel"), QObject::tr("上のセル"), QKeySequence(QStringLiteral("W"))},
-        {QStringLiteral("nextCel"), QObject::tr("下のセル"), QKeySequence(QStringLiteral("S"))},
+        {QStringLiteral("previousCel"), QObject::tr("左（奥）のセル"), QKeySequence(QStringLiteral("W"))},
+        {QStringLiteral("nextCel"), QObject::tr("右（手前）のセル"), QKeySequence(QStringLiteral("S"))},
         {QStringLiteral("play"), QObject::tr("再生・停止"), QKeySequence(QStringLiteral("Space"))},
         {QStringLiteral("step1"), QObject::tr("1コマ打ち"), QKeySequence(QStringLiteral("1"))},
         {QStringLiteral("step2"), QObject::tr("2コマ打ち"), QKeySequence(QStringLiteral("2"))},
@@ -75,6 +79,13 @@ const QList<ShortcutDefinition>& shortcutDefinitions(ShortcutScope scope) {
         {QStringLiteral("lassoFill"), QObject::tr("投げ縄塗り"), QKeySequence(QStringLiteral("L"))},
         {QStringLiteral("eyedropper"), QObject::tr("スポイト"), QKeySequence(QStringLiteral("I"))},
     };
+    static const QList<ShortcutDefinition> xsheetDefinitions{
+        {QStringLiteral("copy"), QObject::tr("割付をコピー"), QKeySequence(QStringLiteral("Ctrl+C"))},
+        {QStringLiteral("cut"), QObject::tr("割付を切り取り"), QKeySequence(QStringLiteral("Ctrl+X"))},
+        {QStringLiteral("paste"), QObject::tr("割付を貼り付け"), QKeySequence(QStringLiteral("Ctrl+V"))},
+        {QStringLiteral("clear"), QObject::tr("割付を空セルにする"), QKeySequence(QStringLiteral("Delete"))},
+        {QStringLiteral("hold"), QObject::tr("同じ絵を延長"), QKeySequence(QStringLiteral("H"))},
+    };
     static const QList<ShortcutDefinition> settingBoardDefinitions{
         {QStringLiteral("undo"), QObject::tr("元に戻す"), QKeySequence(QStringLiteral("Ctrl+Z"))},
         {QStringLiteral("redo"), QObject::tr("やり直す"), QKeySequence(QStringLiteral("Ctrl+Y"))},
@@ -89,6 +100,8 @@ const QList<ShortcutDefinition>& shortcutDefinitions(ShortcutScope scope) {
     switch (scope) {
         case ShortcutScope::MainCanvas:
             return mainDefinitions;
+        case ShortcutScope::Xsheet:
+            return xsheetDefinitions;
         case ShortcutScope::Storyboard:
             return storyboardDefinitions;
         case ShortcutScope::SettingBoard:

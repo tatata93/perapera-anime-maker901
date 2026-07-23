@@ -21,6 +21,8 @@ add_library(perapera_core STATIC
     Project.cpp
     Project.h
     Command.h
+    ExposureSheetCommand.cpp
+    ExposureSheetCommand.h
     Compositor.cpp
     Compositor.h
     Effect.cpp
