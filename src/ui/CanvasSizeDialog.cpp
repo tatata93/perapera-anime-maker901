@@ -3,11 +3,21 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QGroupBox>
+#include <QKeySequenceEdit>
 #include <QLabel>
+#include <QMap>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QScrollArea>
 #include <QSpinBox>
+#include <QTabWidget>
 #include <QVBoxLayout>
+#include <QWidget>
 #include <numeric>
 #include <vector>
+
+#include "ui/ShortcutSettings.h"
 
 namespace {
 constexpr int kMinCanvasSize = 16;
@@ -37,9 +47,12 @@ const std::vector<Preset>& presets() {
 }
 }  // namespace
 
-CanvasSizeDialog::CanvasSizeDialog(int currentW, int currentH, QWidget* parent) : QDialog(parent) {
+CanvasSizeDialog::CanvasSizeDialog(int currentW, int currentH, QWidget* parent, bool includeShortcutSettings)
+    : QDialog(parent), m_includeShortcutSettings(includeShortcutSettings) {
     setWindowTitle(tr("プロジェクト設定"));
 
+    auto* canvasPage = new QWidget(this);
+    auto* canvasPageLayout = new QVBoxLayout(canvasPage);
     auto* formLayout = new QFormLayout();
 
     m_presetCombo = new QComboBox(this);
@@ -78,17 +91,93 @@ CanvasSizeDialog::CanvasSizeDialog(int currentW, int currentH, QWidget* parent) 
     auto* warningLabel =
         new QLabel(tr("注意: 既存の作画セルのサイズは変わりません。"
                        "ここでの変更は新規セル・合成・書き出しに反映されます。"),
-                    this);
+                    canvasPage);
     warningLabel->setWordWrap(true);
+    canvasPageLayout->addLayout(formLayout);
+    canvasPageLayout->addWidget(warningLabel);
+    canvasPageLayout->addStretch();
 
     auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::accepted, this, &CanvasSizeDialog::accept);
     connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->addLayout(formLayout);
-    mainLayout->addWidget(warningLabel);
+    if (m_includeShortcutSettings) {
+        auto* tabs = new QTabWidget(this);
+        tabs->addTab(canvasPage, tr("キャンバス"));
+
+        auto* shortcutScroll = new QScrollArea(tabs);
+        shortcutScroll->setWidgetResizable(true);
+        auto* shortcutPage = new QWidget(shortcutScroll);
+        auto* shortcutLayout = new QVBoxLayout(shortcutPage);
+
+        const perapera::ui::ShortcutScope scopes[] = {
+            perapera::ui::ShortcutScope::MainCanvas,
+            perapera::ui::ShortcutScope::Storyboard,
+            perapera::ui::ShortcutScope::SettingBoard,
+        };
+        for (const perapera::ui::ShortcutScope scope : scopes) {
+            auto* group = new QGroupBox(perapera::ui::shortcutScopeLabel(scope), shortcutPage);
+            auto* form = new QFormLayout(group);
+            for (const perapera::ui::ShortcutDefinition& definition :
+                 perapera::ui::shortcutDefinitions(scope)) {
+                auto* edit = new QKeySequenceEdit(perapera::ui::shortcutSequence(scope, definition.id), group);
+                edit->setMaximumSequenceLength(1);
+                edit->setClearButtonEnabled(true);
+                edit->setProperty("shortcutScope", static_cast<int>(scope));
+                edit->setProperty("shortcutId", definition.id);
+                edit->setProperty("defaultShortcut",
+                                  definition.defaultSequence.toString(QKeySequence::PortableText));
+                form->addRow(definition.label + tr(":"), edit);
+                m_shortcutEdits.append(edit);
+            }
+            shortcutLayout->addWidget(group);
+        }
+
+        auto* resetButton = new QPushButton(tr("初期設定に戻す"), shortcutPage);
+        connect(resetButton, &QPushButton::clicked, this, [this] {
+            for (QKeySequenceEdit* edit : m_shortcutEdits) {
+                edit->setKeySequence(
+                    QKeySequence(edit->property("defaultShortcut").toString(), QKeySequence::PortableText));
+            }
+        });
+        shortcutLayout->addWidget(resetButton, 0, Qt::AlignLeft);
+        shortcutLayout->addStretch();
+        shortcutScroll->setWidget(shortcutPage);
+        tabs->addTab(shortcutScroll, tr("ショートカット"));
+        mainLayout->addWidget(tabs);
+        resize(620, 680);
+    } else {
+        mainLayout->addWidget(canvasPage);
+    }
     mainLayout->addWidget(buttonBox);
+}
+
+void CanvasSizeDialog::accept() {
+    if (m_includeShortcutSettings && !saveShortcutSettings()) return;
+    QDialog::accept();
+}
+
+bool CanvasSizeDialog::saveShortcutSettings() {
+    QMap<QString, QKeySequenceEdit*> assigned;
+    for (QKeySequenceEdit* edit : m_shortcutEdits) {
+        const QString sequence = edit->keySequence().toString(QKeySequence::PortableText);
+        if (sequence.isEmpty()) continue;
+        const QString uniqueKey = QStringLiteral("%1/%2").arg(edit->property("shortcutScope").toInt()).arg(sequence);
+        if (assigned.contains(uniqueKey)) {
+            QMessageBox::warning(this, tr("ショートカットが重複しています"),
+                                 tr("同じウインドウ内では、同じキーを複数の操作に割り当てられません。"));
+            edit->setFocus();
+            return false;
+        }
+        assigned.insert(uniqueKey, edit);
+    }
+
+    for (QKeySequenceEdit* edit : m_shortcutEdits) {
+        const auto scope = static_cast<perapera::ui::ShortcutScope>(edit->property("shortcutScope").toInt());
+        perapera::ui::saveShortcutSequence(scope, edit->property("shortcutId").toString(), edit->keySequence());
+    }
+    return true;
 }
 
 void CanvasSizeDialog::applyPreset(int index) {

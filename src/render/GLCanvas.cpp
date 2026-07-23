@@ -1,10 +1,14 @@
 #include "GLCanvas.h"
 
 #include <QImage>
+#include <QLineF>
 #include <QMouseEvent>
 #include <QOpenGLContext>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPen>
 #include <QTabletEvent>
 #include <QVector3D>
 #include <QVector4D>
@@ -13,6 +17,7 @@
 #include <cmath>
 
 #include "core/FillTool.h"
+#include "core/LassoFillTool.h"
 #include "core/StrokeCommand.h"
 
 namespace {
@@ -237,9 +242,13 @@ void GLCanvas::clearOverlay() {
 }
 
 void GLCanvas::setTool(Tool tool) {
+    if (m_lassoActive) {
+        m_lassoActive = false;
+        m_lassoPoints.clear();
+    }
     m_tool = tool;
     applyToolSettings();
-    if (m_tool == Tool::Eyedropper) {
+    if (m_tool == Tool::Eyedropper || m_tool == Tool::LassoFill) {
         setCursor(Qt::CrossCursor);
     } else if (!m_panning) {
         unsetCursor();
@@ -691,6 +700,28 @@ void GLCanvas::paintGL() {
     m_vbo.release();
     m_program->release();
 
+    if (m_lassoActive && !m_lassoPoints.empty()) {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setTransform(viewTransform());
+
+        QPainterPath path;
+        const QPointF first = m_lassoPoints.front() + m_activeOffset;
+        path.moveTo(first);
+        for (size_t i = 1; i < m_lassoPoints.size(); ++i) {
+            path.lineTo(m_lassoPoints[i] + m_activeOffset);
+        }
+
+        QColor previewColor = m_penColor;
+        previewColor.setAlpha(45);
+        painter.fillPath(path, previewColor);
+        QPen outline(QColor(0, 0, 0, 220), 1.5, Qt::DashLine);
+        outline.setCosmetic(true);
+        painter.setPen(outline);
+        painter.drawPath(path);
+        painter.drawLine(m_lassoPoints.back() + m_activeOffset, first);
+    }
+
     recordTime();
 }
 
@@ -717,6 +748,32 @@ void GLCanvas::performFill(QPointF widgetPos) {
     }
     queueUpload(m_bitmap, dirty);
     update();
+}
+
+void GLCanvas::performLassoFill() {
+    if (!m_bitmap || m_lassoPoints.size() < 3) return;
+
+    core::Bitmap before;
+    if (m_strokeCommandSink) before = *m_bitmap;
+
+    std::vector<core::LassoPoint> points;
+    points.reserve(m_lassoPoints.size());
+    for (const QPointF& point : m_lassoPoints) {
+        points.push_back({static_cast<float>(point.x()), static_cast<float>(point.y())});
+    }
+    const core::Bitmap::Pixel color{static_cast<uint8_t>(m_penColor.red()),
+                                    static_cast<uint8_t>(m_penColor.green()),
+                                    static_cast<uint8_t>(m_penColor.blue()), 255};
+    const core::DirtyRect dirty = core::fillLasso(*m_bitmap, points, color);
+    if (dirty.isEmpty()) return;
+
+    if (m_strokeCommandSink) {
+        auto beforeRegion = core::StrokeCommand::copyRegion(before, dirty);
+        auto afterRegion = core::StrokeCommand::copyRegion(*m_bitmap, dirty);
+        m_strokeCommandSink(
+            std::make_unique<core::StrokeCommand>(m_bitmap, dirty, std::move(beforeRegion), std::move(afterRegion)));
+    }
+    queueUpload(m_bitmap, dirty);
 }
 
 bool GLCanvas::pickColor(QPointF widgetPos) {
@@ -760,6 +817,13 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
         performFill(widgetPos);
         return;
     }
+    if (m_tool == Tool::LassoFill) {
+        m_lassoPoints.clear();
+        m_lassoPoints.push_back(widgetToImage(widgetPos) - m_activeOffset);
+        m_lassoActive = true;
+        update();
+        return;
+    }
     if (m_tool == Tool::Move) {
         // タップ/ペグ移動: オフセット補正なしの画像座標を開始点として記録する(ストロークは行わない)
         m_moveStartImg = widgetToImage(widgetPos);
@@ -779,6 +843,14 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
 }
 
 void GLCanvas::pointerMove(QPointF widgetPos, float pressure) {
+    if (m_lassoActive) {
+        const QPointF point = widgetToImage(widgetPos) - m_activeOffset;
+        if (m_lassoPoints.empty() || QLineF(m_lassoPoints.back(), point).length() >= 1.0) {
+            m_lassoPoints.push_back(point);
+            update();
+        }
+        return;
+    }
     if (m_movingCel) {
         // 開始点からのトータル差分を渡す(累積誤差を避けるため、毎回開始点からの差分を計算する)
         emit celMoveDelta(widgetToImage(widgetPos) - m_moveStartImg);
@@ -801,6 +873,13 @@ void GLCanvas::pointerMove(QPointF widgetPos, float pressure) {
 }
 
 void GLCanvas::pointerEnd() {
+    if (m_lassoActive) {
+        m_lassoActive = false;
+        performLassoFill();
+        m_lassoPoints.clear();
+        update();
+        return;
+    }
     if (m_movingCel) {
         m_movingCel = false;
         emit celMoveFinished();
@@ -870,7 +949,7 @@ void GLCanvas::mouseMoveEvent(QMouseEvent* event) {
 void GLCanvas::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::MiddleButton) {
         m_panning = false;
-        if (m_tool == Tool::Eyedropper) {
+        if (m_tool == Tool::Eyedropper || m_tool == Tool::LassoFill) {
             setCursor(Qt::CrossCursor);
         } else {
             unsetCursor();
@@ -921,6 +1000,14 @@ void GLCanvas::wheelEvent(QWheelEvent* event) {
 void GLCanvas::debugFillAt(QPointF widgetPos) {
     if (!m_bitmap) return;
     performFill(widgetPos);
+}
+
+void GLCanvas::debugLassoFill(const std::vector<QPointF>& imagePoints) {
+    if (!m_bitmap) return;
+    m_lassoPoints = imagePoints;
+    performLassoFill();
+    m_lassoPoints.clear();
+    update();
 }
 
 void GLCanvas::debugSimulateMoveDrag(QPointF widgetDelta) {

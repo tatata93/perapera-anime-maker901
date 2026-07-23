@@ -28,18 +28,21 @@
 #include <QStringList>
 #include <QTextOption>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
 #include <utility>
 
 #include "core/Project.h"
+#include "core/StrokeCommand.h"
 #include "render/GLCanvas.h"
 #include "ui/CanvasSizeDialog.h"
 #include "ui/FloatingCanvasWindow.h"
 #include "ui/LayerPanel.h"
 #include "ui/PaintLayerUtils.h"
 #include "ui/RetroTheme.h"
+#include "ui/ShortcutSettings.h"
 
 namespace {
 // 設定ボード1枚のサイズ(作画キャンバスと同じ1920x1080)
@@ -326,6 +329,16 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(tr("設定ボード - perapera-anime-maker901"));
     resize(1200, 760);
 
+    m_undoAction = new QAction(tr("元に戻す"), this);
+    m_redoAction = new QAction(tr("やり直す"), this);
+    perapera::ui::bindShortcut(m_undoAction, perapera::ui::ShortcutScope::SettingBoard, QStringLiteral("undo"));
+    perapera::ui::bindShortcut(m_redoAction, perapera::ui::ShortcutScope::SettingBoard, QStringLiteral("redo"));
+    connect(m_undoAction, &QAction::triggered, this, &SettingBoardWindow::undo);
+    connect(m_redoAction, &QAction::triggered, this, &SettingBoardWindow::redo);
+    addAction(m_undoAction);
+    addAction(m_redoAction);
+    updateUndoActions();
+
     auto* central = new QWidget(this);
     auto* mainLayout = new QHBoxLayout(central);
 
@@ -353,6 +366,14 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     rightLayout->setContentsMargins(0, 0, 0, 0);
 
     auto* toolRow = new QHBoxLayout();
+    auto* undoButton = new QToolButton(rightContainer);
+    undoButton->setDefaultAction(m_undoAction);
+    undoButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    auto* redoButton = new QToolButton(rightContainer);
+    redoButton->setDefaultAction(m_redoAction);
+    redoButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    toolRow->addWidget(undoButton);
+    toolRow->addWidget(redoButton);
     m_penButton = new QPushButton(tr("ペン"), rightContainer);
     m_eraserButton = new QPushButton(tr("消しゴム"), rightContainer);
     m_eyedropperButton = new QPushButton(tr("スポイト"), rightContainer);
@@ -360,15 +381,19 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     m_eraserButton->setCheckable(true);
     m_fillButton = new QPushButton(tr("塗りつぶし"), rightContainer);
     m_fillButton->setCheckable(true);
+    m_lassoButton = new QPushButton(tr("投げ縄塗り"), rightContainer);
+    m_lassoButton->setCheckable(true);
     m_eyedropperButton->setCheckable(true);
     m_penButton->setAutoExclusive(true);
     m_eraserButton->setAutoExclusive(true);
     m_fillButton->setAutoExclusive(true);
+    m_lassoButton->setAutoExclusive(true);
     m_eyedropperButton->setAutoExclusive(true);
     m_penButton->setChecked(true);
     toolRow->addWidget(m_penButton);
     toolRow->addWidget(m_eraserButton);
     toolRow->addWidget(m_fillButton);
+    toolRow->addWidget(m_lassoButton);
     toolRow->addWidget(m_eyedropperButton);
 
     toolRow->addWidget(new QLabel(tr("太さ"), rightContainer));
@@ -451,6 +476,10 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
         if (!checked) return;
         if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Fill);
     });
+    connect(m_lassoButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (!checked) return;
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::LassoFill);
+    });
     connect(m_eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
         if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Eyedropper);
@@ -468,6 +497,24 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(addButton, &QPushButton::clicked, this, &SettingBoardWindow::addBoard);
     connect(removeButton, &QPushButton::clicked, this, &SettingBoardWindow::removeBoard);
     connect(renameButton, &QPushButton::clicked, this, &SettingBoardWindow::renameBoard);
+
+    const auto addToolShortcut = [this](const QString& id, GLCanvas::Tool tool) {
+        auto* action = new QAction(this);
+        perapera::ui::bindShortcut(action, perapera::ui::ShortcutScope::SettingBoard, id);
+        connect(action, &QAction::triggered, this,
+                [this, tool] { setActiveTool(static_cast<int>(tool)); });
+        addAction(action);
+    };
+    addToolShortcut(QStringLiteral("pen"), GLCanvas::Tool::Pen);
+    addToolShortcut(QStringLiteral("eraser"), GLCanvas::Tool::Eraser);
+    addToolShortcut(QStringLiteral("fill"), GLCanvas::Tool::Fill);
+    addToolShortcut(QStringLiteral("lassoFill"), GLCanvas::Tool::LassoFill);
+    addToolShortcut(QStringLiteral("eyedropper"), GLCanvas::Tool::Eyedropper);
+    auto* textShortcut = new QAction(this);
+    perapera::ui::bindShortcut(textShortcut, perapera::ui::ShortcutScope::SettingBoard,
+                               QStringLiteral("text"));
+    connect(textShortcut, &QAction::triggered, this, &SettingBoardWindow::editTextBoxes);
+    addAction(textShortcut);
 
     connect(m_colorSpecList, &QListWidget::itemDoubleClicked, this, &SettingBoardWindow::onColorSpecActivated);
     connect(addColorSpecButton, &QPushButton::clicked, this, &SettingBoardWindow::addColorSpec);
@@ -530,8 +577,45 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 void SettingBoardWindow::setProject(core::Project* project) {
+    clearUndoHistory();
     m_project = project;
     m_selectedRow = -1;
+}
+
+void SettingBoardWindow::updateUndoActions() {
+    if (m_undoAction) m_undoAction->setEnabled(m_commands.canUndo());
+    if (m_redoAction) m_redoAction->setEnabled(m_commands.canRedo());
+}
+
+void SettingBoardWindow::clearUndoHistory() {
+    m_commands.clear();
+    updateUndoActions();
+}
+
+void SettingBoardWindow::undo() {
+    core::Command* command = m_commands.undo();
+    if (!command) return;
+    if (auto* stroke = dynamic_cast<core::StrokeCommand*>(command)) {
+        m_canvas->notifyBitmapRegionChanged(stroke->bitmap(), stroke->region());
+    } else {
+        m_canvas->clearTextureCache();
+    }
+    syncSelectedBoardComposite();
+    updateUndoActions();
+    emit edited();
+}
+
+void SettingBoardWindow::redo() {
+    core::Command* command = m_commands.redo();
+    if (!command) return;
+    if (auto* stroke = dynamic_cast<core::StrokeCommand*>(command)) {
+        m_canvas->notifyBitmapRegionChanged(stroke->bitmap(), stroke->region());
+    } else {
+        m_canvas->clearTextureCache();
+    }
+    syncSelectedBoardComposite();
+    updateUndoActions();
+    emit edited();
 }
 
 void SettingBoardWindow::refresh() {
@@ -575,6 +659,7 @@ void SettingBoardWindow::onSelectionChanged() {
     if (m_updating) return;
     const int row = selectedBoardIndex();
     if (row < 0) return;
+    if (row != m_selectedRow) clearUndoHistory();
     m_selectedRow = row;
     bindCanvasToSelectedBoard();
     refreshColorSpecList();
@@ -587,6 +672,7 @@ int SettingBoardWindow::selectedBoardIndex() const {
 
 void SettingBoardWindow::addBoard() {
     if (!m_project) return;
+    clearUndoHistory();
     auto& boards = m_project->settingBoards();
 
     core::SettingBoard board;
@@ -603,6 +689,7 @@ void SettingBoardWindow::addBoard() {
 
 void SettingBoardWindow::removeBoard() {
     if (!m_project) return;
+    clearUndoHistory();
     auto& boards = m_project->settingBoards();
     const int row = selectedBoardIndex();
     if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
@@ -653,6 +740,7 @@ void SettingBoardWindow::pasteImage() {
         QMessageBox::warning(this, tr("読み込みエラー"), tr("画像を読み込めませんでした"));
         return;
     }
+    clearUndoHistory();
 
     core::SettingBoard& board = boards[static_cast<size_t>(row)];
     if (board.image.isEmpty()) {
@@ -686,6 +774,7 @@ void SettingBoardWindow::resizeBoardCanvas() {
     const int newW = dialog.canvasWidth();
     const int newH = dialog.canvasHeight();
     if (newW == currentW && newH == currentH) return;
+    clearUndoHistory();
 
     perapera::ui::resizePaintLayersCentered(board.layers, newW, newH);
     moveTextBoxesForCenteredResize(board.textBoxes, currentW, currentH, newW, newH);
@@ -952,6 +1041,8 @@ GLCanvas* SettingBoardWindow::createCanvas(QWidget* parent) {
     canvas->setCanvasSize(kBoardWidth, kBoardHeight);
     if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
         canvas->setTool(GLCanvas::Tool::Eyedropper);
+    } else if (m_lassoButton && m_lassoButton->isChecked()) {
+        canvas->setTool(GLCanvas::Tool::LassoFill);
     } else if (m_fillButton && m_fillButton->isChecked()) {
         canvas->setTool(GLCanvas::Tool::Fill);
     } else if (m_eraserButton && m_eraserButton->isChecked()) {
@@ -962,7 +1053,11 @@ GLCanvas* SettingBoardWindow::createCanvas(QWidget* parent) {
     canvas->setPenRadius(m_penRadius);
     canvas->setPenColor(m_penColor);
     canvas->setEraserRadius(m_eraserRadius);
-    canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command>) { onStrokeFinished(); });
+    canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
+        m_commands.push(std::move(command));
+        updateUndoActions();
+        onStrokeFinished();
+    });
     connect(canvas, &GLCanvas::colorPicked, this, [this](QColor color) {
         m_penColor = color;
         m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
@@ -978,17 +1073,36 @@ QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
     layout->setContentsMargins(4, 4, 4, 4);
 
     auto* row = new QHBoxLayout();
+    panel->addAction(m_undoAction);
+    panel->addAction(m_redoAction);
+    for (QAction* action : findChildren<QAction*>()) {
+        if (action->property("peraperaShortcutScope").toInt() ==
+            static_cast<int>(perapera::ui::ShortcutScope::SettingBoard)) {
+            panel->addAction(action);
+        }
+    }
+    auto* undoButton = new QToolButton(panel);
+    undoButton->setDefaultAction(m_undoAction);
+    undoButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    auto* redoButton = new QToolButton(panel);
+    redoButton->setDefaultAction(m_redoAction);
+    redoButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    row->addWidget(undoButton);
+    row->addWidget(redoButton);
     auto* penButton = new QPushButton(tr("ペン"), panel);
     auto* eraserButton = new QPushButton(tr("消しゴム"), panel);
     auto* fillButton = new QPushButton(tr("塗りつぶし"), panel);
+    auto* lassoButton = new QPushButton(tr("投げ縄塗り"), panel);
     auto* eyedropperButton = new QPushButton(tr("スポイト"), panel);
-    for (QPushButton* button : {penButton, eraserButton, fillButton, eyedropperButton}) {
+    for (QPushButton* button : {penButton, eraserButton, fillButton, lassoButton, eyedropperButton}) {
         button->setCheckable(true);
         button->setAutoExclusive(true);
         row->addWidget(button);
     }
     if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
         eyedropperButton->setChecked(true);
+    } else if (m_lassoButton && m_lassoButton->isChecked()) {
+        lassoButton->setChecked(true);
     } else if (m_fillButton && m_fillButton->isChecked()) {
         fillButton->setChecked(true);
     } else if (m_eraserButton && m_eraserButton->isChecked()) {
@@ -1029,6 +1143,9 @@ QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
     connect(fillButton, &QPushButton::toggled, this, [this](bool checked) {
         if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Fill));
     });
+    connect(lassoButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::LassoFill));
+    });
     connect(eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
         if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Eyedropper));
     });
@@ -1061,14 +1178,16 @@ QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
 
 void SettingBoardWindow::setActiveTool(int tool) {
     const auto canvasTool = static_cast<GLCanvas::Tool>(tool);
-    if (m_penButton && m_eraserButton && m_fillButton && m_eyedropperButton) {
+    if (m_penButton && m_eraserButton && m_fillButton && m_lassoButton && m_eyedropperButton) {
         const QSignalBlocker b1(m_penButton);
         const QSignalBlocker b2(m_eraserButton);
         const QSignalBlocker b3(m_fillButton);
-        const QSignalBlocker b4(m_eyedropperButton);
+        const QSignalBlocker b4(m_lassoButton);
+        const QSignalBlocker b5(m_eyedropperButton);
         m_penButton->setChecked(canvasTool == GLCanvas::Tool::Pen);
         m_eraserButton->setChecked(canvasTool == GLCanvas::Tool::Eraser);
         m_fillButton->setChecked(canvasTool == GLCanvas::Tool::Fill);
+        m_lassoButton->setChecked(canvasTool == GLCanvas::Tool::LassoFill);
         m_eyedropperButton->setChecked(canvasTool == GLCanvas::Tool::Eyedropper);
     }
     if (m_canvas) m_canvas->setTool(canvasTool);
@@ -1118,6 +1237,7 @@ void SettingBoardWindow::refreshLayerPanel() {
 
 void SettingBoardWindow::addPaintLayer(core::LayerRole role) {
     if (!m_project || m_selectedRow < 0) return;
+    clearUndoHistory();
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
     core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
@@ -1140,6 +1260,7 @@ void SettingBoardWindow::addPaintLayer(core::LayerRole role) {
 
 void SettingBoardWindow::duplicatePaintLayer(int layerIndex) {
     if (!m_project || m_selectedRow < 0) return;
+    clearUndoHistory();
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
     core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
@@ -1156,6 +1277,7 @@ void SettingBoardWindow::duplicatePaintLayer(int layerIndex) {
 
 void SettingBoardWindow::removePaintLayer() {
     if (!m_project || m_selectedRow < 0) return;
+    clearUndoHistory();
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
     core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
@@ -1170,6 +1292,7 @@ void SettingBoardWindow::removePaintLayer() {
 
 void SettingBoardWindow::movePaintLayer(int delta) {
     if (!m_project || m_selectedRow < 0) return;
+    clearUndoHistory();
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
     core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];

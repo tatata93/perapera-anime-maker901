@@ -1,8 +1,10 @@
 #pragma once
 
 #include <QDialog>
+#include <QList>
 
 class QComboBox;
+class QKeySequenceEdit;
 class QSpinBox;
 class QLabel;
 
@@ -15,20 +17,24 @@ class CanvasSizeDialog : public QDialog {
 
 public:
     // currentW/currentH: 現在のプロジェクトのキャンバスサイズ
-    CanvasSizeDialog(int currentW, int currentH, QWidget* parent = nullptr);
+    CanvasSizeDialog(int currentW, int currentH, QWidget* parent = nullptr, bool includeShortcutSettings = false);
 
     int canvasWidth() const;
     int canvasHeight() const;
 
 private:
+    void accept() override;
     void applyPreset(int index);
     void onSpinEdited();
     void updateAspectLabel();
+    bool saveShortcutSettings();
 
     QComboBox* m_presetCombo = nullptr;
     QSpinBox* m_widthSpin = nullptr;
     QSpinBox* m_heightSpin = nullptr;
     QLabel* m_aspectLabel = nullptr;
+    QList<QKeySequenceEdit*> m_shortcutEdits;
+    bool m_includeShortcutSettings = false;
     // プリセット側からスピンの値を書き換えている間、onSpinEdited()の
     // 「カスタムへ切替」ロジックを止めるためのガード
     bool m_updatingFromPreset = false;

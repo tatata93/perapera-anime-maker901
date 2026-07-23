@@ -30,6 +30,7 @@ class TapPanel;
 class XsheetPanel;
 class QCheckBox;
 class QCloseEvent;
+class QAction;
 class QImage;
 class QComboBox;
 class QDialog;
@@ -240,6 +241,8 @@ private:
     void updateWindowTitle();
     void undo();
     void redo();
+    void updateUndoActions();
+    void clearUndoHistory();
 
     // 保存スコープ(部分保存)の管理: markXxxDirty系ヘルパーで変更箇所を記録し、
     // 上書き保存(save())時にどのファイルだけ書き直せばよいか判断する。
@@ -405,6 +408,8 @@ private:
     QSpinBox* m_fpsSpin = nullptr;
     QAction* m_playAction = nullptr;
     QAction* m_onionAction = nullptr;
+    QAction* m_undoAction = nullptr;
+    QAction* m_redoAction = nullptr;
     QAction* m_pressureAction = nullptr;   // 表示メニューの筆圧検知トグル(ツールバーの筆圧チェックと同期)
     QAction* m_standardUiAction = nullptr;
     QAction* m_retro95Action = nullptr;

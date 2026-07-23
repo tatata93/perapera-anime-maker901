@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QPixmap>
+#include <QTabWidget>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
@@ -879,6 +880,45 @@ int main(int argc, char* argv[]) {
                 QTimer::singleShot(300, &window, [&window, outputPath] {
                     window.previzWindow()->viewport()->grabFramebuffer().save(outputPath);
                     QApplication::exit(0);
+                });
+            });
+        });
+    }
+
+    // 動作確認用: --shortcut-settings-test <PNG> でウインドウ別ショートカット設定を保存する
+    const int shortcutSettingsIndex = args.indexOf("--shortcut-settings-test");
+    if (shortcutSettingsIndex >= 0 && shortcutSettingsIndex + 1 < args.size()) {
+        const QString outputPath = args.at(shortcutSettingsIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            QDialog* dialog = window.debugOpenCanvasSizeDialog();
+            if (auto* tabs = dialog->findChild<QTabWidget*>()) tabs->setCurrentIndex(1);
+            QTimer::singleShot(300, &window, [dialog, outputPath] {
+                dialog->grab().save(outputPath);
+                QApplication::exit(0);
+            });
+        });
+    }
+
+    // 動作確認用: --lasso-test <PNG1> <PNG2> <PNG3> で投げ縄塗り→Undo→Redoを保存する
+    const int lassoIndex = args.indexOf("--lasso-test");
+    if (lassoIndex >= 0 && lassoIndex + 3 < args.size()) {
+        const QString out1 = args.at(lassoIndex + 1);
+        const QString out2 = args.at(lassoIndex + 2);
+        const QString out3 = args.at(lassoIndex + 3);
+        QTimer::singleShot(500, &window, [&window, out1, out2, out3] {
+            window.canvas()->setPenColor(QColor(30, 150, 230));
+            window.canvas()->debugLassoFill(
+                {{420, 220}, {1500, 180}, {1720, 540}, {1320, 900}, {520, 820}, {260, 500}});
+            QTimer::singleShot(100, &window, [&window, out1, out2, out3] {
+                window.canvas()->grabFramebuffer().save(out1);
+                window.debugUndo();
+                QTimer::singleShot(100, &window, [&window, out2, out3] {
+                    window.canvas()->grabFramebuffer().save(out2);
+                    window.debugRedo();
+                    QTimer::singleShot(100, &window, [&window, out3] {
+                        window.canvas()->grabFramebuffer().save(out3);
+                        QApplication::exit(0);
+                    });
                 });
             });
         });

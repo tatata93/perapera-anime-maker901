@@ -25,7 +25,7 @@ class GLCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 
 public:
-    enum class Tool { Pen, Eraser, Fill, Move, Eyedropper };
+    enum class Tool { Pen, Eraser, Fill, LassoFill, Move, Eyedropper };
 
     explicit GLCanvas(QWidget* parent = nullptr);
     ~GLCanvas() override;
@@ -147,6 +147,8 @@ public:
     void debugSimulateStroke();
     // 指定ウィジェット座標を塗りつぶす(動作確認用フック)
     void debugFillAt(QPointF widgetPos);
+    // Image-local polygon fill used by automated UI verification.
+    void debugLassoFill(const std::vector<QPointF>& imagePoints);
     // 移動ツールでウィジェット座標のドラッグ(widgetDelta分)を再現する(動作確認用フック)。
     // 中央から開始し、元のツールへ戻して終了する
     void debugSimulateMoveDrag(QPointF widgetDelta);
@@ -185,6 +187,7 @@ private:
     void pointerMove(QPointF widgetPos, float pressure);
     void pointerEnd();
     void performFill(QPointF widgetPos);
+    void performLassoFill();
     bool pickColor(QPointF widgetPos);
 
     // 画像座標→ウィジェット座標の変換(フィット×ズーム×回転×パン)
@@ -212,6 +215,8 @@ private:
     core::BrushEngine m_brush;
     Tool m_tool = Tool::Pen;
     bool m_strokeActive = false;
+    bool m_lassoActive = false;
+    std::vector<QPointF> m_lassoPoints;
     bool m_inputEnabled = true;
 
     // 移動ツール(タップ/ペグ移動)のドラッグ状態

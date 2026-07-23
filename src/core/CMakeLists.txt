@@ -5,6 +5,8 @@ add_library(perapera_core STATIC
     BrushEngine.h
     FillTool.cpp
     FillTool.h
+    LassoFillTool.cpp
+    LassoFillTool.h
     Frame.h
     Layer.cpp
     Layer.h

@@ -62,6 +62,7 @@
 #include "ui/ReferencePanel.h"
 #include "ui/RetroTheme.h"
 #include "ui/SettingBoardWindow.h"
+#include "ui/ShortcutSettings.h"
 #include "ui/ShootingWindow.h"
 #include "ui/StoryboardWindow.h"
 #include "ui/TapPanel.h"
@@ -418,6 +419,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setCentralWidget(m_canvas);
     m_canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
         m_commands.push(std::move(command));  // pushは冪等なexecute(after画素の再書き込み)を伴う
+        updateUndoActions();
         markCutDirty(activeCut());
         updateWindowTitle();
     });
@@ -630,7 +632,7 @@ void MainWindow::addFrameAfterCurrent() {
     if (target >= cut.frameCount()) cut.setFrameCount(target + 1);
     cel.setExposure(target, newDrawing);
 
-    m_commands.clear();             // 構造変更のためUndo履歴を破棄
+    clearUndoHistory();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 動画構造が変わったため
     setCurrentFrame(target);
     markCutDirty(cut);
@@ -667,18 +669,19 @@ void MainWindow::applyStepPattern(int step) {
 void MainWindow::togglePlayback() {
     m_playing = !m_playing;
     if (m_playing) {
-        m_playAction->setText(tr("停止 (Space)"));
+        m_playAction->setText(tr("停止"));
         m_canvas->setInputEnabled(false);
         updateOnionSkin();          // 再生中はオニオンスキンを消す
         m_canvas->setLightTable({});  // 再生中はライトテーブルも消す
         m_playTimer->start(1000 / std::max(1, m_fpsSpin->value()));
     } else {
         m_playTimer->stop();
-        m_playAction->setText(tr("再生 (Space)"));
+        m_playAction->setText(tr("再生"));
         m_canvas->setInputEnabled(true);
         updateOnionSkin();
         updateLightTable();  // 再生停止でライトテーブルを復元する
     }
+    updateUndoActions();
 }
 
 void MainWindow::onPlaybackTick() {
@@ -883,6 +886,10 @@ void MainWindow::detachMainCanvas() {
     auto* window = new FloatingCanvasWindow(tr("メインキャンバス"), this);
     m_floatingCanvasWindow = window;
     perapera::ui::installRetroWindowFrame(window);
+    auto* canvasToolBar = window->addToolBar(tr("キャンバス操作"));
+    canvasToolBar->setMovable(false);
+    canvasToolBar->addAction(m_undoAction);
+    canvasToolBar->addAction(m_redoAction);
     window->setCentralWidget(m_canvas);
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &MainWindow::restoreMainCanvas);
     connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
@@ -949,7 +956,7 @@ void MainWindow::setActiveCut(int index) {
     m_currentFrame = 0;
     m_activeCel = 0;
     m_activeLayer = 0;
-    m_commands.clear();             // 別カットのBitmapを参照するUndoを破棄
+    clearUndoHistory();             // 別カットのBitmapを参照するUndoを破棄
     m_canvas->clearTextureCache();
     if (m_previzWindow) {
         m_previzWindow->setScene(&activeCut().previz());
@@ -1320,7 +1327,7 @@ void MainWindow::addLayerToActiveCel() {
         layer.addFrame().bitmap() = makeTransparentCelForCel(cel, canvasWidth(), canvasHeight());  // 既存レイヤーとコマ数(・用紙サイズ)を揃える
     }
     m_activeLayer = cel.layerCount() - 1;
-    m_commands.clear();
+    clearUndoHistory();
     m_canvas->clearTextureCache();
     markCutDirty(activeCut());
     updateCanvasLayers();
@@ -1339,7 +1346,7 @@ void MainWindow::duplicateLayer(int layerIndex) {
     cel.duplicateLayer(static_cast<size_t>(layerIndex), name.toStdString());
     m_activeLayer = static_cast<size_t>(layerIndex + 1);
 
-    m_commands.clear();
+    clearUndoHistory();
     m_canvas->clearTextureCache();
     markCutDirty(activeCut());
     updateCanvasLayers();
@@ -1354,7 +1361,7 @@ void MainWindow::removeActiveLayer() {
     if (cel.layerCount() <= 1) return;  // 最後の1枚は消さない
     cel.removeLayer(m_activeLayer);
     m_activeLayer = std::min(m_activeLayer, cel.layerCount() - 1);
-    m_commands.clear();
+    clearUndoHistory();
     m_canvas->clearTextureCache();
     markCutDirty(activeCut());
     updateCanvasLayers();
@@ -1371,7 +1378,7 @@ void MainWindow::moveActiveLayer(int delta) {
     if (to < 0 || static_cast<size_t>(to) >= cel.layerCount()) return;
     cel.moveLayer(static_cast<size_t>(from), static_cast<size_t>(to));
     m_activeLayer = static_cast<size_t>(to);
-    m_commands.clear();
+    clearUndoHistory();
     m_canvas->clearTextureCache();
     markCutDirty(activeCut());
     updateCanvasLayers();
@@ -1551,7 +1558,7 @@ void MainWindow::duplicateCel(int celIndex) {
     m_activeCel = static_cast<size_t>(celIndex + 1);
     m_activeLayer = copy.layerCount() == 0 ? 0 : std::min(m_activeLayer, copy.layerCount() - 1);
 
-    m_commands.clear();
+    clearUndoHistory();
     m_canvas->clearTextureCache();
     markCutDirty(cut);
     updateCanvasLayers();
@@ -1569,7 +1576,7 @@ void MainWindow::removeActiveCel() {
     cut.removeCel(m_activeCel);
     m_activeCel = std::min(m_activeCel, cut.celCount() - 1);
 
-    m_commands.clear();             // 構造変更のためUndo履歴を破棄
+    clearUndoHistory();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // セルのBitmapが破棄されたため
     markCutDirty(cut);
     updateCanvasLayers();
@@ -1615,7 +1622,7 @@ void MainWindow::openCelSizeDialog() {
 
     cel.resizePaper(newW, newH);
 
-    m_commands.clear();             // 全ビットマップが再確保されたためUndo履歴を破棄
+    clearUndoHistory();             // 全ビットマップが再確保されたためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 同上、テクスチャキャッシュも破棄
     markCutDirty(activeCut());
     updateCanvasLayers();
@@ -1629,9 +1636,13 @@ void MainWindow::openCelSizeDialog() {
 void MainWindow::openCanvasSizeDialog() {
     if (!m_project) return;
 
-    CanvasSizeDialog dialog(canvasWidth(), canvasHeight(), this);
+    CanvasSizeDialog dialog(canvasWidth(), canvasHeight(), this, true);
     QTimer::singleShot(0, &dialog, [&dialog] { perapera::ui::keepWindowOnScreen(&dialog); });
     if (dialog.exec() != QDialog::Accepted) return;
+
+    perapera::ui::reloadShortcutActions(this, perapera::ui::ShortcutScope::MainCanvas);
+    perapera::ui::reloadShortcutActions(m_storyboardWindow, perapera::ui::ShortcutScope::Storyboard);
+    perapera::ui::reloadShortcutActions(m_settingBoardWindow, perapera::ui::ShortcutScope::SettingBoard);
 
     const int newW = dialog.canvasWidth();
     const int newH = dialog.canvasHeight();
@@ -1658,8 +1669,13 @@ void MainWindow::debugSetCanvasSize(int width, int height) {
 // 解像度設定確認用: 「プロジェクト設定...」ダイアログを非モーダルで開き、そのポインタを返す
 // (呼び出し側でウィンドウ全体+ダイアログを合成してスクリーンショットするために使う)
 QDialog* MainWindow::debugOpenCanvasSizeDialog() {
-    auto* dialog = new CanvasSizeDialog(canvasWidth(), canvasHeight(), this);
+    auto* dialog = new CanvasSizeDialog(canvasWidth(), canvasHeight(), this, true);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dialog, &QDialog::accepted, this, [this] {
+        perapera::ui::reloadShortcutActions(this, perapera::ui::ShortcutScope::MainCanvas);
+        perapera::ui::reloadShortcutActions(m_storyboardWindow, perapera::ui::ShortcutScope::Storyboard);
+        perapera::ui::reloadShortcutActions(m_settingBoardWindow, perapera::ui::ShortcutScope::SettingBoard);
+    });
     dialog->show();
     perapera::ui::keepWindowOnScreen(dialog);
     return dialog;
@@ -1708,7 +1724,7 @@ void MainWindow::deleteDrawing(int idx) {
         }
     }
 
-    m_commands.clear();             // 動画のBitmapが破棄されたためUndo履歴を破棄
+    clearUndoHistory();             // 動画のBitmapが破棄されたためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 同上、テクスチャキャッシュも破棄
     markCutDirty(cut);
     updateCanvasLayers();
@@ -1738,7 +1754,7 @@ void MainWindow::duplicateDrawing(int idx) {
     if (target >= cut.frameCount()) cut.setFrameCount(target + 1);
     cel.setExposure(target, newDrawing);
 
-    m_commands.clear();             // 構造変更のためUndo履歴を破棄
+    clearUndoHistory();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 動画構造が変わったため
     setCurrentFrame(target);
     markCutDirty(cut);
@@ -1906,12 +1922,15 @@ void MainWindow::setupMenus() {
 
     // 編集メニュー
     QMenu* editMenu = menuBar()->addMenu(tr("編集(&E)"));
-    QAction* undoAction = editMenu->addAction(tr("元に戻す(&U)"));
-    undoAction->setShortcut(QKeySequence::Undo);
-    connect(undoAction, &QAction::triggered, this, &MainWindow::undo);
-    QAction* redoAction = editMenu->addAction(tr("やり直す(&R)"));
-    redoAction->setShortcut(QKeySequence::Redo);
-    connect(redoAction, &QAction::triggered, this, &MainWindow::redo);
+    m_undoAction = editMenu->addAction(tr("元に戻す(&U)"));
+    m_redoAction = editMenu->addAction(tr("やり直す(&R)"));
+    perapera::ui::bindShortcut(m_undoAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("undo"));
+    perapera::ui::bindShortcut(m_redoAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("redo"));
+    connect(m_undoAction, &QAction::triggered, this, &MainWindow::undo);
+    connect(m_redoAction, &QAction::triggered, this, &MainWindow::redo);
+    updateUndoActions();
 
     // プリビズメニュー(別ウィンドウ)
     QMenu* previzMenu = menuBar()->addMenu(tr("プリビズ(&P)"));
@@ -2042,6 +2061,7 @@ void MainWindow::undo() {
         markAllDirty();
         updateWindowTitle();
     }
+    updateUndoActions();
 }
 
 void MainWindow::redo() {
@@ -2056,6 +2076,17 @@ void MainWindow::redo() {
         markAllDirty();
         updateWindowTitle();
     }
+    updateUndoActions();
+}
+
+void MainWindow::updateUndoActions() {
+    if (m_undoAction) m_undoAction->setEnabled(!m_playing && m_commands.canUndo());
+    if (m_redoAction) m_redoAction->setEnabled(!m_playing && m_commands.canRedo());
+}
+
+void MainWindow::clearUndoHistory() {
+    m_commands.clear();
+    updateUndoActions();
 }
 
 void MainWindow::updateWindowTitle() {
@@ -2077,7 +2108,7 @@ void MainWindow::updateWindowTitle() {
 
 void MainWindow::newDocument() {
     if (m_playing) togglePlayback();
-    m_commands.clear();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
+    clearUndoHistory();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
     createNewDocument();
     finishProjectReplacement();
 }
@@ -2089,7 +2120,7 @@ void MainWindow::onNewProject() {
     if (dlg.exec() != QDialog::Accepted) return;
 
     if (m_playing) togglePlayback();
-    m_commands.clear();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
+    clearUndoHistory();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
 
     m_project = std::make_unique<core::Project>(dlg.projectName().toStdString());
     m_project->setCanvasSize(dlg.canvasWidth(), dlg.canvasHeight());
@@ -2174,7 +2205,7 @@ bool MainWindow::loadFromFile(const QString& path) {
     }
 
     if (m_playing) togglePlayback();
-    m_commands.clear();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
+    clearUndoHistory();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
     m_project = std::move(project);
     m_activeCut = 0;
     m_activeCel = 0;
@@ -2262,6 +2293,10 @@ void MainWindow::setupToolBar() {
     QToolBar* toolBar = addToolBar(tr("Tools"));
     toolBar->setMovable(false);
 
+    toolBar->addAction(m_undoAction);
+    toolBar->addAction(m_redoAction);
+    toolBar->addSeparator();
+
     // --- 描画ツール ---
     auto* group = new QActionGroup(this);
     group->setExclusive(true);
@@ -2269,7 +2304,6 @@ void MainWindow::setupToolBar() {
     QAction* penAction = toolBar->addAction(tr("ペン"));
     penAction->setCheckable(true);
     penAction->setChecked(true);
-    penAction->setShortcut(QKeySequence(Qt::Key_P));
     group->addAction(penAction);
     connect(penAction, &QAction::triggered, this, [this] {
         m_canvas->setTool(GLCanvas::Tool::Pen);
@@ -2278,7 +2312,6 @@ void MainWindow::setupToolBar() {
 
     QAction* eraserAction = toolBar->addAction(tr("消しゴム"));
     eraserAction->setCheckable(true);
-    eraserAction->setShortcut(QKeySequence(Qt::Key_E));
     group->addAction(eraserAction);
     connect(eraserAction, &QAction::triggered, this, [this] {
         m_canvas->setTool(GLCanvas::Tool::Eraser);
@@ -2287,19 +2320,22 @@ void MainWindow::setupToolBar() {
 
     QAction* fillAction = toolBar->addAction(tr("塗りつぶし"));
     fillAction->setCheckable(true);
-    fillAction->setShortcut(QKeySequence(Qt::Key_F));
     group->addAction(fillAction);
     connect(fillAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Fill); });
 
+    QAction* lassoAction = toolBar->addAction(tr("投げ縄塗り"));
+    lassoAction->setCheckable(true);
+    group->addAction(lassoAction);
+    connect(lassoAction, &QAction::triggered, this,
+            [this] { m_canvas->setTool(GLCanvas::Tool::LassoFill); });
+
     QAction* moveAction = toolBar->addAction(tr("移動"));
     moveAction->setCheckable(true);
-    moveAction->setShortcut(QKeySequence(Qt::Key_V));
     group->addAction(moveAction);
     connect(moveAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Move); });
 
     QAction* eyedropperAction = toolBar->addAction(tr("スポイト"));
     eyedropperAction->setCheckable(true);
-    eyedropperAction->setShortcut(QKeySequence(Qt::Key_I));
     group->addAction(eyedropperAction);
     connect(eyedropperAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Eyedropper); });
 
@@ -2370,13 +2406,11 @@ void MainWindow::setupToolBar() {
 
     // --- フレーム操作 ---
     QAction* prevAction = toolBar->addAction(tr("前のコマ"));
-    prevAction->setShortcut(QKeySequence(Qt::Key_Comma));
     connect(prevAction, &QAction::triggered, this, [this] {
         if (!m_playing && m_currentFrame > 0) setCurrentFrame(m_currentFrame - 1);
     });
 
     QAction* nextAction = toolBar->addAction(tr("次のコマ"));
-    nextAction->setShortcut(QKeySequence(Qt::Key_Period));
     connect(nextAction, &QAction::triggered, this, [this] {
         if (!m_playing) setCurrentFrame(m_currentFrame + 1);
     });
@@ -2398,7 +2432,8 @@ void MainWindow::setupToolBar() {
     m_onionAction = toolBar->addAction(tr("オニオンスキン"));
     m_onionAction->setCheckable(true);
     m_onionAction->setChecked(m_onionEnabled);
-    m_onionAction->setShortcut(QKeySequence(Qt::Key_O));
+    perapera::ui::bindShortcut(m_onionAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("onion"));
     connect(m_onionAction, &QAction::toggled, this, [this](bool checked) {
         m_onionEnabled = checked;
         updateOnionSkin();
@@ -2407,8 +2442,9 @@ void MainWindow::setupToolBar() {
     toolBar->addSeparator();
 
     // --- 再生 ---
-    m_playAction = toolBar->addAction(tr("再生 (Space)"));
-    m_playAction->setShortcut(QKeySequence(Qt::Key_Space));
+    m_playAction = toolBar->addAction(tr("再生"));
+    perapera::ui::bindShortcut(m_playAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("play"));
     connect(m_playAction, &QAction::triggered, this, &MainWindow::togglePlayback);
 
     toolBar->addWidget(new QLabel(tr(" FPS: "), this));
@@ -2432,25 +2468,29 @@ void MainWindow::setupToolBar() {
     // 新規ショートカットを持たせず既存アクションをそのままtrigger()する(表示は一覧化のためテキストにキーを明記)
     QMenu* operationMenu = menuBar()->addMenu(tr("操作(&K)"));
 
-    QAction* prevFrameKeyAction = operationMenu->addAction(tr("前のコマ (A)"));
-    prevFrameKeyAction->setShortcut(QKeySequence(Qt::Key_A));
+    QAction* prevFrameKeyAction = operationMenu->addAction(tr("前のコマ"));
+    perapera::ui::bindShortcut(prevFrameKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("previousFrame"));
     connect(prevFrameKeyAction, &QAction::triggered, prevAction, &QAction::trigger);
 
-    QAction* nextFrameKeyAction = operationMenu->addAction(tr("次のコマ (D)"));
-    nextFrameKeyAction->setShortcut(QKeySequence(Qt::Key_D));
+    QAction* nextFrameKeyAction = operationMenu->addAction(tr("次のコマ"));
+    perapera::ui::bindShortcut(nextFrameKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("nextFrame"));
     connect(nextFrameKeyAction, &QAction::triggered, nextAction, &QAction::trigger);
 
     operationMenu->addSeparator();
 
-    QAction* prevCelKeyAction = operationMenu->addAction(tr("上のセル (W)"));
-    prevCelKeyAction->setShortcut(QKeySequence(Qt::Key_W));
+    QAction* prevCelKeyAction = operationMenu->addAction(tr("上のセル"));
+    perapera::ui::bindShortcut(prevCelKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("previousCel"));
     connect(prevCelKeyAction, &QAction::triggered, this, [this] {
         if (m_playing) return;
         setActiveCel(static_cast<int>(m_activeCel) - 1);
     });
 
-    QAction* nextCelKeyAction = operationMenu->addAction(tr("下のセル (S)"));
-    nextCelKeyAction->setShortcut(QKeySequence(Qt::Key_S));
+    QAction* nextCelKeyAction = operationMenu->addAction(tr("下のセル"));
+    perapera::ui::bindShortcut(nextCelKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("nextCel"));
     connect(nextCelKeyAction, &QAction::triggered, this, [this] {
         if (m_playing) return;
         setActiveCel(static_cast<int>(m_activeCel) + 1);
@@ -2458,41 +2498,58 @@ void MainWindow::setupToolBar() {
 
     operationMenu->addSeparator();
 
-    QAction* playKeyAction = operationMenu->addAction(tr("再生/停止 (Space)"));
+    QAction* playKeyAction = operationMenu->addAction(tr("再生/停止"));
     // Spaceは既にm_playActionが持っているため、新規ショートカットは持たせず同じアクションをtriggerする
     connect(playKeyAction, &QAction::triggered, m_playAction, &QAction::trigger);
 
     operationMenu->addSeparator();
 
-    QAction* step1KeyAction = operationMenu->addAction(tr("1コマ打ち (1)"));
-    step1KeyAction->setShortcut(QKeySequence(Qt::Key_1));
+    QAction* step1KeyAction = operationMenu->addAction(tr("1コマ打ち"));
+    perapera::ui::bindShortcut(step1KeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("step1"));
     connect(step1KeyAction, &QAction::triggered, this, [this] { applyStepPattern(1); });
 
-    QAction* step2KeyAction = operationMenu->addAction(tr("2コマ打ち (2)"));
-    step2KeyAction->setShortcut(QKeySequence(Qt::Key_2));
+    QAction* step2KeyAction = operationMenu->addAction(tr("2コマ打ち"));
+    perapera::ui::bindShortcut(step2KeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("step2"));
     connect(step2KeyAction, &QAction::triggered, this, [this] { applyStepPattern(2); });
 
-    QAction* step3KeyAction = operationMenu->addAction(tr("3コマ打ち (3)"));
-    step3KeyAction->setShortcut(QKeySequence(Qt::Key_3));
+    QAction* step3KeyAction = operationMenu->addAction(tr("3コマ打ち"));
+    perapera::ui::bindShortcut(step3KeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("step3"));
     connect(step3KeyAction, &QAction::triggered, this, [this] { applyStepPattern(3); });
 
     operationMenu->addSeparator();
 
-    QAction* penKeyAction = operationMenu->addAction(tr("ペン (B)"));
-    penKeyAction->setShortcut(QKeySequence(Qt::Key_B));
+    QAction* penKeyAction = operationMenu->addAction(tr("ペン"));
+    perapera::ui::bindShortcut(penKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("pen"));
     connect(penKeyAction, &QAction::triggered, penAction, &QAction::trigger);
 
-    QAction* eraserKeyAction = operationMenu->addAction(tr("消しゴム (E)"));
-    // Eは既にeraserActionが持っているため、新規ショートカットは持たせず同じアクションをtriggerする
+    QAction* eraserKeyAction = operationMenu->addAction(tr("消しゴム"));
+    perapera::ui::bindShortcut(eraserKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("eraser"));
     connect(eraserKeyAction, &QAction::triggered, eraserAction, &QAction::trigger);
 
-    QAction* fillKeyAction = operationMenu->addAction(tr("塗りつぶし (G)"));
-    fillKeyAction->setShortcut(QKeySequence(Qt::Key_G));
+    QAction* fillKeyAction = operationMenu->addAction(tr("塗りつぶし"));
+    perapera::ui::bindShortcut(fillKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("fill"));
     connect(fillKeyAction, &QAction::triggered, fillAction, &QAction::trigger);
 
-    QAction* moveKeyAction = operationMenu->addAction(tr("移動 (V)"));
-    // Vは既にmoveActionが持っているため、新規ショートカットは持たせず同じアクションをtriggerする
+    QAction* moveKeyAction = operationMenu->addAction(tr("移動"));
+    perapera::ui::bindShortcut(moveKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("move"));
     connect(moveKeyAction, &QAction::triggered, moveAction, &QAction::trigger);
+
+    QAction* lassoKeyAction = operationMenu->addAction(tr("投げ縄塗り"));
+    perapera::ui::bindShortcut(lassoKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("lassoFill"));
+    connect(lassoKeyAction, &QAction::triggered, lassoAction, &QAction::trigger);
+
+    QAction* eyedropperKeyAction = operationMenu->addAction(tr("スポイト"));
+    perapera::ui::bindShortcut(eyedropperKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("eyedropper"));
+    connect(eyedropperKeyAction, &QAction::triggered, eyedropperAction, &QAction::trigger);
 }
 
 void MainWindow::debugSetupOnionDemo() {

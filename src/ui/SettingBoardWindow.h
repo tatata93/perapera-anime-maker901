@@ -3,6 +3,9 @@
 #include <QColor>
 #include <QMainWindow>
 
+#include "core/CommandStack.h"
+
+class QAction;
 class QListWidget;
 class QListWidgetItem;
 class QPushButton;
@@ -70,6 +73,10 @@ private:
     GLCanvas* createCanvas(QWidget* parent);
     QWidget* createFloatingCanvasPanel(QWidget* parent);
     void setActiveTool(int tool);
+    void undo();
+    void redo();
+    void updateUndoActions();
+    void clearUndoHistory();
     int selectedBoardIndex() const;
     void refreshLayerPanel();
     void addPaintLayer(core::LayerRole role);
@@ -99,6 +106,7 @@ private:
     QPushButton* m_penButton = nullptr;
     QPushButton* m_eraserButton = nullptr;
     QPushButton* m_fillButton = nullptr;
+    QPushButton* m_lassoButton = nullptr;
     QPushButton* m_eyedropperButton = nullptr;
     QPushButton* m_finalStampButton = nullptr;
     QSlider* m_radiusSlider = nullptr;
@@ -114,4 +122,7 @@ private:
     float m_penRadius = 6.0f;
     float m_eraserRadius = 24.0f;
     QColor m_penColor = Qt::black;
+    core::CommandStack m_commands;
+    QAction* m_undoAction = nullptr;
+    QAction* m_redoAction = nullptr;
 };

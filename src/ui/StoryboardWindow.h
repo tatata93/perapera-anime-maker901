@@ -6,6 +6,9 @@
 #include <QPointF>
 #include <memory>
 
+#include "core/CommandStack.h"
+
+class QAction;
 class QTableWidgetItem;
 class QTableWidget;
 class QLabel;
@@ -84,6 +87,10 @@ private:
     GLCanvas* createCanvas(QWidget* parent);
     QWidget* createFloatingCanvasPanel(QWidget* parent);
     void setActiveTool(int tool);
+    void undo();
+    void redo();
+    void updateUndoActions();
+    void clearUndoHistory();
     void resizeStoryboardCanvas();
     void exportStoryboardPdf();
     bool writeStoryboardPdf(const QString& pdfPath);
@@ -116,6 +123,7 @@ private:
     QPushButton* m_penButton = nullptr;
     QPushButton* m_eraserButton = nullptr;
     QPushButton* m_fillButton = nullptr;
+    QPushButton* m_lassoButton = nullptr;
     QPushButton* m_eyedropperButton = nullptr;
     QSlider* m_radiusSlider = nullptr;
     QLabel* m_radiusValueLabel = nullptr;
@@ -136,7 +144,10 @@ private:
 
     // 直近のストロークコマンドと受領時刻。ダブルクリックの1回目で打たれてしまった点を、
     // ダブルクリック検出時に取り消す(undo)ために保持する
-    std::unique_ptr<core::Command> m_lastStroke;
+    core::CommandStack m_commands;
+    QAction* m_undoAction = nullptr;
+    QAction* m_redoAction = nullptr;
+    bool m_lastStrokeRecorded = false;
     QElapsedTimer m_lastStrokeTimer;
 
     QDialog* m_previewDialog = nullptr;  // プレビュー(ビデオコンテ再生)ダイアログ(未使用時はnullptr)

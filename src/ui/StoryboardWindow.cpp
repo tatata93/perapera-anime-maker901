@@ -31,6 +31,7 @@
 #include <QTextOption>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -44,6 +45,7 @@
 #include "ui/LayerPanel.h"
 #include "ui/PaintLayerUtils.h"
 #include "ui/RetroTheme.h"
+#include "ui/ShortcutSettings.h"
 
 namespace {
 // 「よくあるコンテ用紙テンプレート」を模した1枚の紙のサイズ。全カット共通。
@@ -420,6 +422,16 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(tr("絵コンテ - perapera-anime-maker901"));
     resize(1200, 700);
 
+    m_undoAction = new QAction(tr("元に戻す"), this);
+    m_redoAction = new QAction(tr("やり直す"), this);
+    perapera::ui::bindShortcut(m_undoAction, perapera::ui::ShortcutScope::Storyboard, QStringLiteral("undo"));
+    perapera::ui::bindShortcut(m_redoAction, perapera::ui::ShortcutScope::Storyboard, QStringLiteral("redo"));
+    connect(m_undoAction, &QAction::triggered, this, &StoryboardWindow::undo);
+    connect(m_redoAction, &QAction::triggered, this, &StoryboardWindow::redo);
+    addAction(m_undoAction);
+    addAction(m_redoAction);
+    updateUndoActions();
+
     auto* central = new QWidget(this);
     auto* mainLayout = new QHBoxLayout(central);
 
@@ -465,6 +477,14 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     rightLayout->setContentsMargins(0, 0, 0, 0);
 
     auto* toolRow = new QHBoxLayout();
+    auto* undoButton = new QToolButton(rightContainer);
+    undoButton->setDefaultAction(m_undoAction);
+    undoButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    auto* redoButton = new QToolButton(rightContainer);
+    redoButton->setDefaultAction(m_redoAction);
+    redoButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    toolRow->addWidget(undoButton);
+    toolRow->addWidget(redoButton);
     m_penButton = new QPushButton(tr("ペン"), rightContainer);
     m_eraserButton = new QPushButton(tr("消しゴム"), rightContainer);
     m_eyedropperButton = new QPushButton(tr("スポイト"), rightContainer);
@@ -472,15 +492,19 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_eraserButton->setCheckable(true);
     m_fillButton = new QPushButton(tr("塗りつぶし"), rightContainer);
     m_fillButton->setCheckable(true);
+    m_lassoButton = new QPushButton(tr("投げ縄塗り"), rightContainer);
+    m_lassoButton->setCheckable(true);
     m_eyedropperButton->setCheckable(true);
     m_penButton->setAutoExclusive(true);
     m_eraserButton->setAutoExclusive(true);
     m_fillButton->setAutoExclusive(true);
+    m_lassoButton->setAutoExclusive(true);
     m_eyedropperButton->setAutoExclusive(true);
     m_penButton->setChecked(true);
     toolRow->addWidget(m_penButton);
     toolRow->addWidget(m_eraserButton);
     toolRow->addWidget(m_fillButton);
+    toolRow->addWidget(m_lassoButton);
     toolRow->addWidget(m_eyedropperButton);
 
     // 太さ(選択中ツールの半径。ペン/消しゴムそれぞれの値をメンバで記憶し、トグル切替時に表示も切替)
@@ -587,6 +611,10 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
         if (!checked) return;
         if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Fill);
     });
+    connect(m_lassoButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (!checked) return;
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::LassoFill);
+    });
     connect(m_eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
         if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Eyedropper);
@@ -607,6 +635,19 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(createCutButton, &QPushButton::clicked, this, &StoryboardWindow::createCutFromPanel);
     connect(m_actionEdit, &QPlainTextEdit::textChanged, this, &StoryboardWindow::onActionTextChanged);
     connect(m_dialogueEdit, &QPlainTextEdit::textChanged, this, &StoryboardWindow::onDialogueTextChanged);
+
+    const auto addToolShortcut = [this](const QString& id, GLCanvas::Tool tool) {
+        auto* action = new QAction(this);
+        perapera::ui::bindShortcut(action, perapera::ui::ShortcutScope::Storyboard, id);
+        connect(action, &QAction::triggered, this,
+                [this, tool] { setActiveTool(static_cast<int>(tool)); });
+        addAction(action);
+    };
+    addToolShortcut(QStringLiteral("pen"), GLCanvas::Tool::Pen);
+    addToolShortcut(QStringLiteral("eraser"), GLCanvas::Tool::Eraser);
+    addToolShortcut(QStringLiteral("fill"), GLCanvas::Tool::Fill);
+    addToolShortcut(QStringLiteral("lassoFill"), GLCanvas::Tool::LassoFill);
+    addToolShortcut(QStringLiteral("eyedropper"), GLCanvas::Tool::Eyedropper);
 
     connect(m_layerPanel, &LayerPanel::layerSelected, this, [this](int layerIndex) {
         if (!m_project || m_project->sceneCount() == 0) return;
@@ -670,8 +711,52 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 void StoryboardWindow::setProject(core::Project* project) {
+    clearUndoHistory();
     m_project = project;
     m_selectedRow = -1;
+}
+
+void StoryboardWindow::updateUndoActions() {
+    if (m_undoAction) m_undoAction->setEnabled(m_commands.canUndo());
+    if (m_redoAction) m_redoAction->setEnabled(m_commands.canRedo());
+}
+
+void StoryboardWindow::clearUndoHistory() {
+    m_commands.clear();
+    m_lastStrokeRecorded = false;
+    updateUndoActions();
+}
+
+void StoryboardWindow::undo() {
+    m_lastStrokeRecorded = false;
+    core::Command* command = m_commands.undo();
+    if (!command) return;
+    if (auto* stroke = dynamic_cast<core::StrokeCommand*>(command)) {
+        m_canvas->notifyBitmapRegionChanged(stroke->bitmap(), stroke->region());
+    } else {
+        m_canvas->clearTextureCache();
+    }
+    syncSelectedPanelComposite();
+    const int row = selectedPanelIndex();
+    if (row >= 0) updateThumbnail(row);
+    updateUndoActions();
+    emit edited();
+}
+
+void StoryboardWindow::redo() {
+    m_lastStrokeRecorded = false;
+    core::Command* command = m_commands.redo();
+    if (!command) return;
+    if (auto* stroke = dynamic_cast<core::StrokeCommand*>(command)) {
+        m_canvas->notifyBitmapRegionChanged(stroke->bitmap(), stroke->region());
+    } else {
+        m_canvas->clearTextureCache();
+    }
+    syncSelectedPanelComposite();
+    const int row = selectedPanelIndex();
+    if (row >= 0) updateThumbnail(row);
+    updateUndoActions();
+    emit edited();
 }
 
 void StoryboardWindow::refresh() {
@@ -790,6 +875,7 @@ void StoryboardWindow::onSelectionChanged() {
     if (m_updating) return;
     const int row = selectedPanelIndex();
     if (row < 0) return;
+    if (row != m_selectedRow) clearUndoHistory();
     m_selectedRow = row;
     bindCanvasToSelectedPanel();
 }
@@ -800,6 +886,7 @@ int StoryboardWindow::selectedPanelIndex() const {
 
 void StoryboardWindow::addPanel() {
     if (!m_project || m_project->sceneCount() == 0) return;
+    clearUndoHistory();
     auto& panels = m_project->scene(0).storyboard();
 
     core::StoryboardPanel panel;
@@ -816,6 +903,7 @@ void StoryboardWindow::addPanel() {
 
 void StoryboardWindow::removePanel() {
     if (!m_project || m_project->sceneCount() == 0) return;
+    clearUndoHistory();
     auto& panels = m_project->scene(0).storyboard();
     const int row = selectedPanelIndex();
     if (row < 0 || static_cast<size_t>(row) >= panels.size()) return;
@@ -832,6 +920,7 @@ void StoryboardWindow::movePanel(int delta) {
     const int row = selectedPanelIndex();
     const int target = row + delta;
     if (row < 0 || target < 0 || static_cast<size_t>(target) >= panels.size()) return;
+    clearUndoHistory();
 
     std::swap(panels[static_cast<size_t>(row)], panels[static_cast<size_t>(target)]);
     m_selectedRow = target;
@@ -970,6 +1059,8 @@ GLCanvas* StoryboardWindow::createCanvas(QWidget* parent) {
     canvas->setCanvasSize(kSheetWidth, kSheetHeight);
     if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
         canvas->setTool(GLCanvas::Tool::Eyedropper);
+    } else if (m_lassoButton && m_lassoButton->isChecked()) {
+        canvas->setTool(GLCanvas::Tool::LassoFill);
     } else if (m_fillButton && m_fillButton->isChecked()) {
         canvas->setTool(GLCanvas::Tool::Fill);
     } else if (m_eraserButton && m_eraserButton->isChecked()) {
@@ -978,8 +1069,10 @@ GLCanvas* StoryboardWindow::createCanvas(QWidget* parent) {
         canvas->setTool(GLCanvas::Tool::Pen);
     }
     canvas->setStrokeCommandSink([this](std::unique_ptr<core::Command> command) {
-        m_lastStroke = std::move(command);
+        m_commands.push(std::move(command));
+        m_lastStrokeRecorded = true;
         m_lastStrokeTimer.restart();
+        updateUndoActions();
         onStrokeFinished();
     });
     connect(canvas, &GLCanvas::doubleClickedOnCanvas, this, &StoryboardWindow::onCanvasDoubleClicked);
@@ -1001,17 +1094,36 @@ QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
     layout->setContentsMargins(4, 4, 4, 4);
 
     auto* row = new QHBoxLayout();
+    panel->addAction(m_undoAction);
+    panel->addAction(m_redoAction);
+    for (QAction* action : findChildren<QAction*>()) {
+        if (action->property("peraperaShortcutScope").toInt() ==
+            static_cast<int>(perapera::ui::ShortcutScope::Storyboard)) {
+            panel->addAction(action);
+        }
+    }
+    auto* undoButton = new QToolButton(panel);
+    undoButton->setDefaultAction(m_undoAction);
+    undoButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    auto* redoButton = new QToolButton(panel);
+    redoButton->setDefaultAction(m_redoAction);
+    redoButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    row->addWidget(undoButton);
+    row->addWidget(redoButton);
     auto* penButton = new QPushButton(tr("ペン"), panel);
     auto* eraserButton = new QPushButton(tr("消しゴム"), panel);
     auto* fillButton = new QPushButton(tr("塗りつぶし"), panel);
+    auto* lassoButton = new QPushButton(tr("投げ縄塗り"), panel);
     auto* eyedropperButton = new QPushButton(tr("スポイト"), panel);
-    for (QPushButton* button : {penButton, eraserButton, fillButton, eyedropperButton}) {
+    for (QPushButton* button : {penButton, eraserButton, fillButton, lassoButton, eyedropperButton}) {
         button->setCheckable(true);
         button->setAutoExclusive(true);
         row->addWidget(button);
     }
     if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
         eyedropperButton->setChecked(true);
+    } else if (m_lassoButton && m_lassoButton->isChecked()) {
+        lassoButton->setChecked(true);
     } else if (m_fillButton && m_fillButton->isChecked()) {
         fillButton->setChecked(true);
     } else if (m_eraserButton && m_eraserButton->isChecked()) {
@@ -1050,6 +1162,9 @@ QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
     connect(fillButton, &QPushButton::toggled, this, [this](bool checked) {
         if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Fill));
     });
+    connect(lassoButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::LassoFill));
+    });
     connect(eyedropperButton, &QPushButton::toggled, this, [this](bool checked) {
         if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Eyedropper));
     });
@@ -1081,14 +1196,16 @@ QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
 
 void StoryboardWindow::setActiveTool(int tool) {
     const auto canvasTool = static_cast<GLCanvas::Tool>(tool);
-    if (m_penButton && m_eraserButton && m_fillButton && m_eyedropperButton) {
+    if (m_penButton && m_eraserButton && m_fillButton && m_lassoButton && m_eyedropperButton) {
         const QSignalBlocker b1(m_penButton);
         const QSignalBlocker b2(m_eraserButton);
         const QSignalBlocker b3(m_fillButton);
-        const QSignalBlocker b4(m_eyedropperButton);
+        const QSignalBlocker b4(m_lassoButton);
+        const QSignalBlocker b5(m_eyedropperButton);
         m_penButton->setChecked(canvasTool == GLCanvas::Tool::Pen);
         m_eraserButton->setChecked(canvasTool == GLCanvas::Tool::Eraser);
         m_fillButton->setChecked(canvasTool == GLCanvas::Tool::Fill);
+        m_lassoButton->setChecked(canvasTool == GLCanvas::Tool::LassoFill);
         m_eyedropperButton->setChecked(canvasTool == GLCanvas::Tool::Eyedropper);
     }
     if (m_canvas) m_canvas->setTool(canvasTool);
@@ -1138,6 +1255,7 @@ void StoryboardWindow::refreshLayerPanel() {
 
 void StoryboardWindow::addPaintLayer(core::LayerRole role) {
     if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    clearUndoHistory();
     auto& panels = m_project->scene(0).storyboard();
     if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
     core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
@@ -1161,6 +1279,7 @@ void StoryboardWindow::addPaintLayer(core::LayerRole role) {
 
 void StoryboardWindow::duplicatePaintLayer(int layerIndex) {
     if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    clearUndoHistory();
     auto& panels = m_project->scene(0).storyboard();
     if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
     core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
@@ -1178,6 +1297,7 @@ void StoryboardWindow::duplicatePaintLayer(int layerIndex) {
 
 void StoryboardWindow::removePaintLayer() {
     if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    clearUndoHistory();
     auto& panels = m_project->scene(0).storyboard();
     if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
     core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
@@ -1193,6 +1313,7 @@ void StoryboardWindow::removePaintLayer() {
 
 void StoryboardWindow::movePaintLayer(int delta) {
     if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    clearUndoHistory();
     auto& panels = m_project->scene(0).storyboard();
     if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
     core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
@@ -1237,6 +1358,7 @@ void StoryboardWindow::setPaintLayerRole(int layerIndex, core::LayerRole role) {
 
 void StoryboardWindow::resizeStoryboardCanvas() {
     if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return;
+    clearUndoHistory();
     auto& panels = m_project->scene(0).storyboard();
     if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
     core::StoryboardPanel& panel = panels[static_cast<size_t>(m_selectedRow)];
@@ -1352,16 +1474,11 @@ void StoryboardWindow::updateTotalDurationLabel() {
 void StoryboardWindow::onCanvasDoubleClicked(QPointF imagePos) {
     // ダブルクリックの1回目のクリックで既に点が打たれてしまっているため、直近のストロークが
     // ダブルクリック判定時間(+余裕100ms)以内に受領されたものならundoして取り消す
-    if (m_lastStroke && m_lastStrokeTimer.isValid() &&
+    if (m_lastStrokeRecorded && m_lastStrokeTimer.isValid() &&
         m_lastStrokeTimer.elapsed() <= QApplication::doubleClickInterval() + 100) {
-        if (auto* stroke = dynamic_cast<core::StrokeCommand*>(m_lastStroke.get())) {
-            stroke->undo();
-            m_canvas->notifyBitmapRegionChanged(stroke->bitmap(), stroke->region());
-            const int row = selectedPanelIndex();
-            if (row >= 0) updateThumbnail(row);
-        }
+        undo();
     }
-    m_lastStroke.reset();
+    m_lastStrokeRecorded = false;
 
     // トグル: 未拡大かつimagePosが絵の枠内ならズームイン。拡大中ならどこをダブルクリックしても解除する。
     // 実際の反映はm_zoomButtonのtoggledハンドラに任せる(ボタンでの切替と経路を一本化するため)

@@ -7,6 +7,7 @@ add_executable(perapera_core_tests
     CompositorTests.cpp
     EffectTests.cpp
     FillToolTests.cpp
+    LassoFillToolTests.cpp
     ProjectIOTests.cpp
     StrokeCommandTests.cpp
     MultiplaneTests.cpp
