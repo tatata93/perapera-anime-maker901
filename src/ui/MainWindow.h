@@ -273,7 +273,7 @@ private:
     void updateFrameLabel();
     // コマ打ちパターン適用(1/2/3コマ打ち)。XsheetPanelのボタンと「操作」メニューのショートカット(1/2/3)で共有する
     void applyStepPattern(int step);
-    void applyStepPatternRange(int step, int startFrame, int endFrame);
+    void applyStepPatternRange(int celIndex, int step, int startFrame, int endFrame);
     void applyExposureEdits(const QList<int>& celIndices, const QList<int>& frames,
                             const QList<int>& drawings);
     void applyTimesheetEdits(const QList<int>& exposureCelIndices,

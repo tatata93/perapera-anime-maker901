@@ -32,6 +32,7 @@ public:
     void debugSetActionMarker(const QString& marker) { setActionSelection(marker); }
     void debugSetViewMode(int mode);
     void debugFillHoldSelection() { fillHoldSelection(); }
+    bool debugHasPairedColumns() const;
 
 signals:
     void sheetEditsRequested(const QList<int>& exposureCelIndices,
@@ -42,12 +43,13 @@ signals:
                              const QStringList& actionEntries);
     void cellClicked(int celIndex, int frame);
     void frameCountChanged(int frameCount);
-    void stepPatternRequested(int step, int startFrame, int endFrame);
+    void stepPatternRequested(int celIndex, int step, int startFrame, int endFrame);
     void addDrawingRequested();
     void addKeyDrawingRequested();
     void addInbetweenDrawingRequested();
     void deleteDrawingRequested();
     void celAddRequested();
+    void celDuplicateRequested(int celIndex);
     void celRemoveRequested();
     void celRenameRequested();
     void celMoveRequested(int delta);
@@ -55,10 +57,10 @@ signals:
     void tableFocusChanged(bool focused);
 
 private:
-    enum class ViewMode {
-        Action = 0,
-        Cell = 1,
-        Both = 2,
+    enum class WorkStage {
+        Key = 0,
+        Inbetween = 1,
+        Review = 2,
     };
 
     struct PendingExposureEdit {
@@ -85,7 +87,7 @@ private:
     void requestStepPattern(int step);
     void setActionSelection(const QString& entry);
     void promptKeyNumber();
-    void setViewMode(ViewMode mode);
+    void setWorkStage(WorkStage stage);
     void emitEdits(const std::vector<PendingExposureEdit>& exposureEdits,
                    const std::vector<PendingActionEdit>& actionEdits = {});
     void updateActionStates();
@@ -108,6 +110,7 @@ private:
     QSpinBox* m_frameCountSpin = nullptr;
     QLabel* m_currentTimeLabel = nullptr;
     QLabel* m_durationLabel = nullptr;
+    QLabel* m_pendingLabel = nullptr;
     QAction* m_copyAction = nullptr;
     QAction* m_cutAction = nullptr;
     QAction* m_pasteAction = nullptr;
@@ -128,6 +131,6 @@ private:
     int m_currentFrame = 0;
     int m_activeCel = 0;
     int m_fps = 24;
-    ViewMode m_viewMode = ViewMode::Action;
+    WorkStage m_workStage = WorkStage::Key;
     bool m_updating = false;
 };

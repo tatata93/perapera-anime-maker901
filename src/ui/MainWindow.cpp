@@ -636,6 +636,18 @@ void MainWindow::addDrawingAtCurrent(core::DrawingKind kind) {
     if (target >= cut.frameCount()) cut.setFrameCount(target + 1);
 
     const int oldDrawing = cel.exposure(target);
+    const bool targetIsKeyAnchor =
+        (oldDrawing >= 0 && static_cast<size_t>(oldDrawing) < cel.drawingCount() &&
+         cel.drawingKind(static_cast<size_t>(oldDrawing)) == core::DrawingKind::Key &&
+         (target == 0 || cel.exposure(target - 1) != oldDrawing)) ||
+        (!cel.actionEntry(target).empty() &&
+         std::all_of(cel.actionEntry(target).begin(), cel.actionEntry(target).end(),
+                     [](unsigned char ch) { return ch >= '0' && ch <= '9'; }));
+    if (kind == core::DrawingKind::Inbetween && targetIsKeyAnchor) {
+        statusBar()->showMessage(
+            tr("ここは原画位置です。中割は原画と原画の間に作ってください"), 4000);
+        return;
+    }
     if (placeAtSelectedFrame && oldDrawing >= 0 &&
         static_cast<size_t>(oldDrawing) < cel.drawingCount() &&
         cel.drawingKind(static_cast<size_t>(oldDrawing)) == kind &&
@@ -658,7 +670,7 @@ void MainWindow::addDrawingAtCurrent(core::DrawingKind kind) {
 
     size_t runEnd = target + 1;
     while (placeAtSelectedFrame && runEnd < cut.frameCount() &&
-           cel.exposure(runEnd) == oldDrawing) {
+           cel.exposure(runEnd) == oldDrawing && cel.actionEntry(runEnd).empty()) {
         ++runEnd;
     }
 
@@ -699,14 +711,6 @@ void MainWindow::addDrawingAtCurrent(core::DrawingKind kind) {
     }
 
     if (kind == core::DrawingKind::Key) {
-        for (size_t frame = 0; frame < cut.frameCount(); ++frame) {
-            const std::string& entry = cel.actionEntry(frame);
-            const bool numeric =
-                !entry.empty() &&
-                std::all_of(entry.begin(), entry.end(),
-                            [](unsigned char ch) { return ch >= '0' && ch <= '9'; });
-            if (numeric) cel.setActionEntry(frame, {});
-        }
         std::vector<bool> numbered(cel.drawingCount(), false);
         int keyNumber = 1;
         for (size_t frame = 0; frame < cut.frameCount(); ++frame) {
@@ -720,7 +724,10 @@ void MainWindow::addDrawingAtCurrent(core::DrawingKind kind) {
             cel.setActionEntry(frame, QString::number(keyNumber++).toStdString());
         }
     } else if (kind == core::DrawingKind::Inbetween) {
-        cel.setActionEntry(target, QStringLiteral("○").toStdString());
+        const std::string& marker = cel.actionEntry(target);
+        if (marker != "○" && marker != "●") {
+            cel.setActionEntry(target, QStringLiteral("○").toStdString());
+        }
     }
 
     clearUndoHistory();             // 構造変更のためUndo履歴を破棄
@@ -735,31 +742,158 @@ void MainWindow::deleteCurrentFrame() {
     applyExposureEdits({static_cast<int>(m_activeCel)}, {static_cast<int>(m_currentFrame)}, {-1});
 }
 
-// 現在コマ以降へ動画1から順に割り付ける。既存の前半は触らない。
+// 現在位置を含む原画区間だけへコマ打ちを適用する。
 void MainWindow::applyStepPattern(int step) {
-    applyStepPatternRange(step, static_cast<int>(m_currentFrame), static_cast<int>(activeCut().frameCount()) - 1);
+    applyStepPatternRange(static_cast<int>(m_activeCel), step,
+                          static_cast<int>(m_currentFrame), -1);
 }
 
-void MainWindow::applyStepPatternRange(int step, int startFrame, int endFrame) {
+void MainWindow::applyStepPatternRange(int celIndex, int step, int startFrame, int endFrame) {
     if (m_playing) return;
     core::Cut& cut = activeCut();
-    core::Cel& cel = activeCel();
-    if (cut.frameCount() == 0 || cel.drawingCount() == 0) return;
+    if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount() ||
+        cut.frameCount() == 0) {
+        return;
+    }
+    core::Cel& cel = cut.cel(static_cast<size_t>(celIndex));
+    if (cel.drawingCount() == 0) {
+        statusBar()->showMessage(tr("このセルは空です。先に原画を作ってください"), 4000);
+        return;
+    }
 
     step = std::clamp(step, 1, 3);
     startFrame = std::clamp(startFrame, 0, static_cast<int>(cut.frameCount()) - 1);
-    endFrame = std::clamp(endFrame, startFrame, static_cast<int>(cut.frameCount()) - 1);
+    const bool automaticRange = endFrame < startFrame;
+    endFrame = automaticRange
+                   ? static_cast<int>(cut.frameCount()) - 1
+                   : std::clamp(endFrame, startFrame,
+                                static_cast<int>(cut.frameCount()) - 1);
 
-    QList<int> cels;
-    QList<int> frames;
-    QList<int> drawings;
-    for (int frame = startFrame; frame <= endFrame; ++frame) {
-        const int drawing = (frame - startFrame) / step;
-        cels.append(static_cast<int>(m_activeCel));
-        frames.append(frame);
-        drawings.append(drawing < static_cast<int>(cel.drawingCount()) ? drawing : -1);
+    const auto isNumericEntry = [](const std::string& entry) {
+        return !entry.empty() &&
+               std::all_of(entry.begin(), entry.end(),
+                           [](unsigned char ch) { return ch >= '0' && ch <= '9'; });
+    };
+    const auto isKeyAnchor = [&](int frame) {
+        const int drawing = cel.exposure(static_cast<size_t>(frame));
+        const bool drawingStartsHere =
+            drawing >= 0 &&
+            static_cast<size_t>(drawing) < cel.drawingCount() &&
+            cel.drawingKind(static_cast<size_t>(drawing)) == core::DrawingKind::Key &&
+            (frame == 0 || cel.exposure(static_cast<size_t>(frame - 1)) != drawing);
+        return drawingStartsHere || isNumericEntry(cel.actionEntry(static_cast<size_t>(frame)));
+    };
+
+    int nextKey = -1;
+    for (int frame = startFrame + 1; frame < static_cast<int>(cut.frameCount()); ++frame) {
+        if (isKeyAnchor(frame)) {
+            nextKey = frame;
+            break;
+        }
     }
-    applyExposureEdits(cels, frames, drawings);
+    if (automaticRange) {
+        endFrame = nextKey >= 0 ? nextKey - 1
+                                : std::min(endFrame, startFrame + step - 1);
+    }
+
+    QList<int> exposureCels;
+    QList<int> exposureFrames;
+    QList<int> drawings;
+    QList<int> actionCels;
+    QList<int> actionFrames;
+    QStringList actionEntries;
+    bool skippedEmptySegment = false;
+
+    int segmentStart = startFrame;
+    while (segmentStart <= endFrame) {
+        int followingKey = -1;
+        for (int frame = segmentStart + 1; frame <= endFrame; ++frame) {
+            if (isKeyAnchor(frame)) {
+                followingKey = frame;
+                break;
+            }
+        }
+        const int segmentEnd = followingKey >= 0 ? followingKey - 1 : endFrame;
+        const int startDrawing = cel.exposure(static_cast<size_t>(segmentStart));
+        if (startDrawing < 0 ||
+            static_cast<size_t>(startDrawing) >= cel.drawingCount()) {
+            skippedEmptySegment = true;
+            segmentStart = followingKey >= 0 ? followingKey : endFrame + 1;
+            continue;
+        }
+
+        struct AvailableDrawing {
+            int drawing = -1;
+            QString marker;
+        };
+        std::vector<AvailableDrawing> available;
+        std::vector<bool> seen(cel.drawingCount(), false);
+        available.push_back(
+            {startDrawing,
+             QString::fromStdString(cel.actionEntry(static_cast<size_t>(segmentStart)))});
+        seen[static_cast<size_t>(startDrawing)] = true;
+        for (int frame = segmentStart + 1; frame <= segmentEnd; ++frame) {
+            const int drawing = cel.exposure(static_cast<size_t>(frame));
+            if (drawing < 0 || static_cast<size_t>(drawing) >= cel.drawingCount() ||
+                seen[static_cast<size_t>(drawing)] ||
+                cel.drawingKind(static_cast<size_t>(drawing)) == core::DrawingKind::Key) {
+                continue;
+            }
+            QString marker =
+                QString::fromStdString(cel.actionEntry(static_cast<size_t>(frame)));
+            if (marker != QStringLiteral("○") && marker != QStringLiteral("●")) {
+                marker = QStringLiteral("○");
+            }
+            available.push_back({drawing, marker});
+            seen[static_cast<size_t>(drawing)] = true;
+        }
+
+        for (int frame = segmentStart; frame <= segmentEnd; ++frame) {
+            const int slot = (frame - segmentStart) / step;
+            const bool slotStart = (frame - segmentStart) % step == 0;
+            const int desired =
+                slot < static_cast<int>(available.size()) ? available[static_cast<size_t>(slot)].drawing : -1;
+            exposureCels.append(celIndex);
+            exposureFrames.append(frame);
+            drawings.append(desired);
+
+            const std::string& currentAction =
+                cel.actionEntry(static_cast<size_t>(frame));
+            const bool marker =
+                currentAction == "○" || currentAction == "●";
+            if (slotStart && slot > 0) {
+                const QString desiredMarker =
+                    slot < static_cast<int>(available.size())
+                        ? available[static_cast<size_t>(slot)].marker
+                        : QStringLiteral("○");
+                actionCels.append(celIndex);
+                actionFrames.append(frame);
+                actionEntries.append(desiredMarker);
+            } else if (marker && !(slotStart && slot == 0)) {
+                actionCels.append(celIndex);
+                actionFrames.append(frame);
+                actionEntries.append(QString());
+            }
+        }
+        segmentStart = followingKey >= 0 ? followingKey : endFrame + 1;
+    }
+
+    if (exposureFrames.isEmpty()) {
+        statusBar()->showMessage(tr("選択位置に作画がありません。先に原画または中割を作ってください"),
+                                 4000);
+        return;
+    }
+    applyTimesheetEdits(exposureCels, exposureFrames, drawings, actionCels,
+                        actionFrames, actionEntries);
+    if (skippedEmptySegment) {
+        statusBar()->showMessage(tr("作画のない区間は変更しませんでした"), 4000);
+    } else {
+        statusBar()->showMessage(
+            tr("「%1」の選択区間を%2コマ打ちにしました。原画位置は保持されています")
+                .arg(QString::fromStdString(cel.name()))
+                .arg(step),
+            4000);
+    }
 }
 
 void MainWindow::applyExposureEdits(const QList<int>& celIndices, const QList<int>& frames,
@@ -784,6 +918,7 @@ void MainWindow::applyTimesheetEdits(const QList<int>& exposureCelIndices,
     std::vector<core::ExposureChange> changes;
     changes.reserve(static_cast<size_t>(exposureCelIndices.size()));
     bool invalidDrawing = false;
+    bool protectedKey = false;
     for (qsizetype i = 0; i < exposureCelIndices.size(); ++i) {
         const int celIndex = exposureCelIndices.at(i);
         const int frame = exposureFrames.at(i);
@@ -799,6 +934,19 @@ void MainWindow::applyTimesheetEdits(const QList<int>& exposureCelIndices,
             continue;
         }
         const int before = cel.exposure(static_cast<size_t>(frame));
+        const std::string& action = cel.actionEntry(static_cast<size_t>(frame));
+        const bool numericAction =
+            !action.empty() &&
+            std::all_of(action.begin(), action.end(),
+                        [](unsigned char ch) { return ch >= '0' && ch <= '9'; });
+        const bool keyStartsHere =
+            before >= 0 && static_cast<size_t>(before) < cel.drawingCount() &&
+            cel.drawingKind(static_cast<size_t>(before)) == core::DrawingKind::Key &&
+            (frame == 0 || cel.exposure(static_cast<size_t>(frame - 1)) != before);
+        if ((numericAction || keyStartsHere) && drawing != before) {
+            protectedKey = true;
+            continue;
+        }
         if (before == drawing) continue;
         changes.push_back({&cel, static_cast<size_t>(frame), before, drawing});
     }
@@ -823,6 +971,11 @@ void MainWindow::applyTimesheetEdits(const QList<int>& exposureCelIndices,
     if (changes.empty() && actionChanges.empty()) {
         updateXsheetPanel();
         if (invalidDrawing) statusBar()->showMessage(tr("存在しない作画番号はセル指定できません"), 4000);
+        if (protectedKey) {
+            statusBar()->showMessage(
+                tr("原画位置は保護されています。原画を消す場合は作画削除を使ってください"),
+                5000);
+        }
         return;
     }
 
@@ -836,6 +989,9 @@ void MainWindow::applyTimesheetEdits(const QList<int>& exposureCelIndices,
     updateWindowTitle();
     updateUndoActions();
     if (invalidDrawing) statusBar()->showMessage(tr("存在しない作画番号はセル指定できません"), 4000);
+    if (protectedKey) {
+        statusBar()->showMessage(tr("原画位置を除いて適用しました"), 4000);
+    }
 }
 
 void MainWindow::togglePlayback() {
@@ -1160,17 +1316,13 @@ void MainWindow::addCut() {
     initializeCut(cut, canvasWidth(), canvasHeight());  // セルA(レイヤー1・原画1)
     cut.setFrameCount(static_cast<size_t>(std::max(1, dlg.frameCount())));
 
-    // 追加セル(B, C, …)。それぞれ原画1から始める
+    // 追加セル(B, C, …)は空で始め、必要な位置で利用者が原画を作る。
     for (int c = 1; c < dlg.celCount(); ++c) {
         core::Cel& extra = cut.addCel(QString(QChar::fromLatin1(static_cast<char>('A' + c))).toStdString());
-        core::Layer& layer = extra.addLayer(tr("レイヤー 1").toStdString());
-        layer.addFrame().bitmap() = makeTransparentCel(canvasWidth(), canvasHeight());
-        extra.setDrawingKind(0, core::DrawingKind::Key);
-        extra.setActionEntry(0, "1");
+        extra.addLayer(tr("レイヤー 1").toStdString());
     }
-    // 全セルの原画1を止めで全コマに割り付ける
-    for (size_t ci = 0; ci < cut.celCount(); ++ci)
-        for (size_t t = 0; t < cut.frameCount(); ++t) cut.cel(ci).setExposure(t, 0);
+    // Aセルの原画1だけを止めで全コマに割り付ける。追加セルは全コマ空セル。
+    for (size_t t = 0; t < cut.frameCount(); ++t) cut.cel(0).setExposure(t, 0);
 
     cut.setStatus(static_cast<core::CutStatus>(dlg.status()));
     cut.setAction(dlg.action().toStdString());
@@ -1336,6 +1488,8 @@ void MainWindow::setupPanels() {
         deleteDrawing(idx);
     });
     connect(m_xsheetPanel, &XsheetPanel::celAddRequested, this, &MainWindow::addCel);
+    connect(m_xsheetPanel, &XsheetPanel::celDuplicateRequested, this,
+            &MainWindow::duplicateCel);
     connect(m_xsheetPanel, &XsheetPanel::celRemoveRequested, this, &MainWindow::removeActiveCel);
     connect(m_xsheetPanel, &XsheetPanel::celRenameRequested, this, &MainWindow::renameActiveCel);
     connect(m_xsheetPanel, &XsheetPanel::celMoveRequested, this, &MainWindow::moveActiveCel);
@@ -1706,20 +1860,21 @@ void MainWindow::addCel() {
     const QString name = index < 26 ? QString(QChar('A' + index)) : tr("セル%1").arg(index + 1);
 
     core::Cel& cel = cut.addCel(name.toStdString());
-    core::Layer& layer = cel.addLayer(tr("レイヤー 1").toStdString());
-    layer.addFrame().bitmap() = makeTransparentCel(canvasWidth(), canvasHeight());
-    cel.setExposure(m_currentFrame, 0);
-    cel.setDrawingKind(0, core::DrawingKind::Key);
-    cel.setActionEntry(m_currentFrame, "1");  // 新しいセルも原画1から始める
+    cel.addLayer(tr("レイヤー 1").toStdString());
     m_activeCel = static_cast<size_t>(index);
+    m_activeLayer = 0;
 
-    // 新規セル・レイヤー・動画は既存のBitmapに影響しないためUndo履歴/テクスチャキャッシュの破棄は不要
+    // 空のセル追加は既存のBitmapに影響しないためUndo履歴/テクスチャキャッシュの破棄は不要。
     markCutDirty(cut);
     updateCanvasLayers();
     updateXsheetPanel();
     updateLayerPanel();
     updateFrameLabel();
     updateWindowTitle();
+    statusBar()->showMessage(
+        tr("「%1」を空で追加しました。必要なコマで「原画を作る」を押してください")
+            .arg(name),
+        5000);
 }
 
 void MainWindow::duplicateCel(int celIndex) {
@@ -3524,7 +3679,8 @@ void MainWindow::debugSetupClassicDemo() {
     engineA.endStroke();
 
     // セルB: 左寄り緑丸(1スタンプの円ダブ)
-    addCel();  // セルB追加(アクティブになる。現在コマに動画1が自動で割り付く)
+    addCel();
+    addKeyDrawingAtCurrent();
     core::Cel& celB = cut.cel(1);
     core::Bitmap& bitmapB = celB.layer(0).frame(0).bitmap();
     core::BrushEngine engineB;
@@ -4154,10 +4310,12 @@ void MainWindow::debugSetupXsheetUiDemo() {
     celB.setActionEntry(16, "○");
     celB.setActionEntry(24, "2");
     celB.setActionEntry(36, "●");
+    celB.setExposure(40, -1);
+    celB.setActionEntry(40, "○");  // 中割待ち表示の確認用
 
-    m_activeCel = 0;
     clearUndoHistory();
     markCutDirty(cut);
+    setActiveCel(0);
     setCurrentFrame(7);
     m_xsheetPanel->debugSelectActionCell(0, 7);
 }
@@ -4168,15 +4326,21 @@ int MainWindow::debugXsheetEditUndoRedo() {
         initialCel.drawingCount() == 1 &&
         initialCel.drawingKind(0) == core::DrawingKind::Key &&
         initialCel.actionEntry(0) == "1" && initialCel.exposure(0) == 0;
+    addCel();
+    const bool addedCelStartsEmpty =
+        activeCel().drawingCount() == 0 && activeCel().exposure(0) == -1;
+    removeActiveCel();
 
     debugSetupXsheetUiDemo();
     core::Cel& cel = activeCut().cel(0);
+    const bool pairedInKeyStage = m_xsheetPanel->debugHasPairedColumns();
     cel.setExposure(0, 0);
     for (size_t frame = 1; frame < 4; ++frame) cel.setExposure(frame, -1);
     clearUndoHistory();
     updateXsheetPanel();
 
     m_xsheetPanel->debugSetViewMode(1);  // 動画工程(CELL)
+    const bool pairedInVideoStage = m_xsheetPanel->debugHasPairedColumns();
     m_xsheetPanel->debugSelectExposureRange(0, 0, 3);
     m_xsheetPanel->debugFillHoldSelection();
     const bool filled = cel.exposure(0) == 0 && cel.exposure(1) == 0 && cel.exposure(2) == 0 &&
@@ -4198,13 +4362,32 @@ int MainWindow::debugXsheetEditUndoRedo() {
     const bool actionUndone = cel.actionEntry(5).empty();
     redo();
     const bool actionRedone = cel.actionEntry(5) == "3";
+    cel.setActionEntry(5, {});
+    clearUndoHistory();
+    updateXsheetPanel();
 
+    applyStepPatternRange(0, 2, 0, -1);
+    const bool protectedStepPattern =
+        cel.exposure(0) == 0 && cel.exposure(1) == 0 &&
+        cel.exposure(2) == 1 && cel.exposure(3) == 1 &&
+        cel.exposure(4) == -1 && cel.actionEntry(4) == "○" &&
+        cel.exposure(12) == 2 && cel.actionEntry(12) == "2";
+    applyExposureEdits({0}, {12}, {0});
+    const bool directEditKeepsKey = cel.exposure(12) == 2;
+    const size_t drawingCountBeforeRejectedInbetween = cel.drawingCount();
+    setCurrentFrame(12);
+    addInbetweenDrawingAtCurrent();
+    const bool inbetweenCannotReplaceKey =
+        cel.drawingCount() == drawingCountBeforeRejectedInbetween &&
+        cel.exposure(12) == 2;
+
+    setCurrentFrame(7);
     addKeyDrawingAtCurrent();
     const int keyDrawing = cel.exposure(7);
     const bool keyAdded =
         keyDrawing >= 0 &&
         cel.drawingKind(static_cast<size_t>(keyDrawing)) == core::DrawingKind::Key &&
-        cel.actionEntry(7) == "2" && cel.exposure(11) == keyDrawing;
+        cel.actionEntry(7) == "2" && cel.exposure(8) != keyDrawing;
 
     setCurrentFrame(8);
     addInbetweenDrawingAtCurrent();
@@ -4212,17 +4395,23 @@ int MainWindow::debugXsheetEditUndoRedo() {
     const bool inbetweenAdded =
         inbetweenDrawing >= 0 &&
         cel.drawingKind(static_cast<size_t>(inbetweenDrawing)) == core::DrawingKind::Inbetween &&
-        cel.actionEntry(8) == "○" && cel.exposure(11) == inbetweenDrawing;
+        cel.actionEntry(8) == "○" && cel.exposure(9) == inbetweenDrawing &&
+        cel.exposure(10) != inbetweenDrawing;
 
-    return startsWithKeyDrawing && filled && undone && redone && actionSet && actionUndone && actionRedone &&
-                   keyAdded && inbetweenAdded
+    return startsWithKeyDrawing && addedCelStartsEmpty && pairedInKeyStage &&
+                   pairedInVideoStage && filled && undone && redone && actionSet &&
+                   actionUndone && actionRedone && protectedStepPattern &&
+                   directEditKeepsKey && inbetweenCannotReplaceKey && keyAdded &&
+                   inbetweenAdded
                ? 0
                : 1;
 }
 
 void MainWindow::debugSetupCelDemo() {
-    // セル管理確認用: セルBを追加し、セルAに赤縦線・セルBに青横線を描く(共にコマ1に動画1を割付)
-    addCel();  // セルB追加(動画1+exposure(0)=0はaddCel()内で設定済み。アクティブになる)
+    // セル管理確認用: 空のセルBを追加して原画1を作り、
+    // セルAに赤縦線・セルBに青横線を描く。
+    addCel();
+    addKeyDrawingAtCurrent();
     core::Cut& cut = activeCut();
 
     core::BrushEngine engine;

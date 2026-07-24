@@ -147,6 +147,32 @@ TEST_CASE("ACTION track and drawing kinds round trip through ppproj", "[core][io
     std::filesystem::remove_all(path);
 }
 
+TEST_CASE("An empty added cel stays empty after project round trip", "[core][io][sheet]") {
+    core::Project project("P");
+    core::Cut& cut = project.addScene("S").addCut("C");
+    cut.setFrameCount(12);
+    core::Cel& celA = cut.addCel("A");
+    celA.addLayer("L").addFrame();
+    celA.setExposure(0, 0);
+    core::Cel& celB = cut.addCel("B");
+    celB.addLayer("L");
+
+    const auto path = tempFolder("ppam_empty_cel_roundtrip.ppproj");
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const core::Cut& loadedCut = loaded->scene(0).cut(0);
+    REQUIRE(loadedCut.celCount() == 2);
+    const core::Cel& loadedCelB = loadedCut.cel(1);
+    REQUIRE(loadedCelB.layerCount() == 1);
+    REQUIRE(loadedCelB.drawingCount() == 0);
+    REQUIRE(loadedCelB.exposure(0) == -1);
+    REQUIRE(loadedCelB.exposure(11) == -1);
+    std::filesystem::remove_all(path);
+}
+
 TEST_CASE("Multiplane setup round trips through ppproj", "[core][io][multiplane]") {
     const auto folder = tempFolder("ppam_multiplane_roundtrip_test.ppproj");
 
