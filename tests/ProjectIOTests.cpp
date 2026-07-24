@@ -118,6 +118,35 @@ TEST_CASE("ProjectIO round trip preserves structure and pixels", "[core][io]") {
     std::filesystem::remove_all(folder);
 }
 
+TEST_CASE("ACTION track and drawing kinds round trip through ppproj", "[core][io][sheet]") {
+    core::Project project("P");
+    core::Cut& cut = project.addScene("S").addCut("C");
+    cut.setFrameCount(6);
+    core::Cel& cel = cut.addCel("A");
+    core::Layer& layer = cel.addLayer("L");
+    layer.addFrame();
+    layer.addFrame();
+    cel.setActionEntry(0, "1");
+    cel.setActionEntry(2, "○");
+    cel.setActionEntry(4, "●");
+    cel.setDrawingKind(0, core::DrawingKind::Key);
+    cel.setDrawingKind(1, core::DrawingKind::Inbetween);
+
+    const auto path = tempFolder("ppam_action_sheet_roundtrip.ppproj");
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const core::Cel& loadedCel = loaded->scene(0).cut(0).cel(0);
+    REQUIRE(loadedCel.actionEntry(0) == "1");
+    REQUIRE(loadedCel.actionEntry(2) == "○");
+    REQUIRE(loadedCel.actionEntry(4) == "●");
+    REQUIRE(loadedCel.drawingKind(0) == core::DrawingKind::Key);
+    REQUIRE(loadedCel.drawingKind(1) == core::DrawingKind::Inbetween);
+    std::filesystem::remove_all(path);
+}
+
 TEST_CASE("Multiplane setup round trips through ppproj", "[core][io][multiplane]") {
     const auto folder = tempFolder("ppam_multiplane_roundtrip_test.ppproj");
 

@@ -85,6 +85,8 @@ const QList<ShortcutDefinition>& shortcutDefinitions(ShortcutScope scope) {
         {QStringLiteral("paste"), QObject::tr("割付を貼り付け"), QKeySequence(QStringLiteral("Ctrl+V"))},
         {QStringLiteral("clear"), QObject::tr("割付を空セルにする"), QKeySequence(QStringLiteral("Delete"))},
         {QStringLiteral("hold"), QObject::tr("同じ絵を延長"), QKeySequence(QStringLiteral("H"))},
+        {QStringLiteral("addKey"), QObject::tr("原画を追加"), QKeySequence(QStringLiteral("K"))},
+        {QStringLiteral("addInbetween"), QObject::tr("中割を追加"), QKeySequence(QStringLiteral("I"))},
     };
     static const QList<ShortcutDefinition> settingBoardDefinitions{
         {QStringLiteral("undo"), QObject::tr("元に戻す"), QKeySequence(QStringLiteral("Ctrl+Z"))},

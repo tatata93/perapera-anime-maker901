@@ -632,3 +632,25 @@ TEST_CASE("Project supports multiple scenes and cuts", "[core]") {
     REQUIRE(project.sceneCount() == 2);
     REQUIRE(project.scene(1).cutCount() == 2);
 }
+
+TEST_CASE("Cel keeps ACTION entries and drawing kinds", "[core][sheet]") {
+    core::Cel cel("A");
+    cel.resizeExposure(8);
+
+    REQUIRE(cel.actionEntry(0).empty());
+    REQUIRE(cel.drawingKind(0) == core::DrawingKind::Unspecified);
+
+    cel.setActionEntry(2, "1");
+    cel.setActionEntry(3, "○");
+    cel.setDrawingKind(0, core::DrawingKind::Key);
+    cel.setDrawingKind(1, core::DrawingKind::Inbetween);
+
+    REQUIRE(cel.actionEntry(2) == "1");
+    REQUIRE(cel.actionEntry(3) == "○");
+    REQUIRE(cel.drawingKind(0) == core::DrawingKind::Key);
+    REQUIRE(cel.drawingKind(1) == core::DrawingKind::Inbetween);
+
+    cel.resizeExposure(3);
+    REQUIRE(cel.actionEntry(2) == "1");
+    REQUIRE(cel.actionEntry(3).empty());
+}

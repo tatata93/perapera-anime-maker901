@@ -3,16 +3,21 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QButtonGroup>
 #include <QClipboard>
 #include <QColor>
 #include <QFont>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
+#include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMap>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QSet>
 #include <QSpinBox>
 #include <QStyledItemDelegate>
@@ -88,6 +93,22 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     m_durationLabel = new QLabel(container);
     m_durationLabel->setMinimumWidth(118);
     statusLayout->addWidget(m_durationLabel);
+    statusLayout->addSpacing(8);
+    statusLayout->addWidget(new QLabel(tr("表示:"), container));
+
+    m_viewModeButtons = new QButtonGroup(this);
+    m_viewModeButtons->setExclusive(true);
+    const QStringList viewLabels = {tr("両方"), tr("原画"), tr("動画")};
+    for (int mode = 0; mode < viewLabels.size(); ++mode) {
+        auto* button = new QToolButton(container);
+        button->setText(viewLabels.at(mode));
+        button->setCheckable(true);
+        button->setChecked(mode == 0);
+        m_viewModeButtons->addButton(button, mode);
+        statusLayout->addWidget(button);
+    }
+    connect(m_viewModeButtons, &QButtonGroup::idClicked, this,
+            [this](int id) { setViewMode(static_cast<ViewMode>(id)); });
     statusLayout->addStretch();
 
     auto* drawingMenu = new QMenu(container);
@@ -135,40 +156,91 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     m_copyAction = new QAction(tr("コピー"), m_table);
     m_cutAction = new QAction(tr("切り取り"), m_table);
     m_pasteAction = new QAction(tr("貼り付け"), m_table);
-    m_clearAction = new QAction(tr("空セル"), m_table);
+    m_clearAction = new QAction(tr("消去"), m_table);
     m_holdAction = new QAction(tr("同じ絵を延長"), m_table);
+    auto* addKeyShortcutAction = new QAction(tr("原画追加"), m_table);
+    auto* addInbetweenShortcutAction = new QAction(tr("中割追加"), m_table);
 
     perapera::ui::bindShortcut(m_copyAction, perapera::ui::ShortcutScope::Xsheet, QStringLiteral("copy"));
     perapera::ui::bindShortcut(m_cutAction, perapera::ui::ShortcutScope::Xsheet, QStringLiteral("cut"));
     perapera::ui::bindShortcut(m_pasteAction, perapera::ui::ShortcutScope::Xsheet, QStringLiteral("paste"));
     perapera::ui::bindShortcut(m_clearAction, perapera::ui::ShortcutScope::Xsheet, QStringLiteral("clear"));
     perapera::ui::bindShortcut(m_holdAction, perapera::ui::ShortcutScope::Xsheet, QStringLiteral("hold"));
+    perapera::ui::bindShortcut(addKeyShortcutAction, perapera::ui::ShortcutScope::Xsheet,
+                               QStringLiteral("addKey"));
+    perapera::ui::bindShortcut(addInbetweenShortcutAction, perapera::ui::ShortcutScope::Xsheet,
+                               QStringLiteral("addInbetween"));
     for (QAction* action : {m_copyAction, m_cutAction, m_pasteAction, m_clearAction, m_holdAction}) {
         action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         m_table->addAction(action);
     }
+    for (QAction* action : {addKeyShortcutAction, addInbetweenShortcutAction}) {
+        action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        m_table->addAction(action);
+    }
 
-    m_holdAction->setToolTip(tr("Shiftを押しながら選んだ範囲を、先頭の動画で埋めます"));
-    m_clearAction->setToolTip(tr("選択した割付だけを消します。動画そのものは残ります"));
+    m_holdAction->setToolTip(tr("選択範囲を、先頭の動画で埋めます"));
+    m_clearAction->setToolTip(tr("選択したACTIONまたはCELLの記入だけを消します"));
 
-    auto* editLayout = new QHBoxLayout();
-    editLayout->setSpacing(3);
-    editLayout->addWidget(new QLabel(tr("コマ打ち:"), container));
+    auto* editBar = new QWidget(container);
+    auto* editBarLayout = new QHBoxLayout(editBar);
+    editBarLayout->setContentsMargins(0, 0, 0, 0);
+    editBarLayout->setSpacing(3);
+
+    m_actionControls = new QWidget(editBar);
+    auto* actionLayout = new QHBoxLayout(m_actionControls);
+    actionLayout->setContentsMargins(0, 0, 0, 0);
+    actionLayout->setSpacing(3);
+    actionLayout->addWidget(new QLabel(tr("ACTION:"), m_actionControls));
+    auto* addKeyButton = new QToolButton(m_actionControls);
+    addKeyButton->setText(tr("原画追加"));
+    addKeyButton->setToolTip(tr("新しい原画を作り、現在位置へ割り付けます"));
+    actionLayout->addWidget(addKeyButton);
+    auto* addInbetweenButton = new QToolButton(m_actionControls);
+    addInbetweenButton->setText(tr("中割追加"));
+    addInbetweenButton->setToolTip(tr("新しい中割を作り、現在位置へ割り付けます"));
+    actionLayout->addWidget(addInbetweenButton);
+    auto* keyNumberButton = new QToolButton(m_actionControls);
+    keyNumberButton->setText(tr("原画番号..."));
+    actionLayout->addWidget(keyNumberButton);
+    for (const QString& marker : {QStringLiteral("○"), QStringLiteral("●"), QStringLiteral("*")}) {
+        auto* markerButton = new QToolButton(m_actionControls);
+        markerButton->setText(marker == QStringLiteral("*") ? tr("* 空") : marker + tr(" 中割"));
+        connect(markerButton, &QToolButton::clicked, this, [this, marker] { setActionSelection(marker); });
+        actionLayout->addWidget(markerButton);
+    }
+    actionLayout->addWidget(actionButton(m_clearAction, m_actionControls));
+    actionLayout->addWidget(actionButton(m_copyAction, m_actionControls));
+    actionLayout->addWidget(actionButton(m_cutAction, m_actionControls));
+    actionLayout->addWidget(actionButton(m_pasteAction, m_actionControls));
+    editBarLayout->addWidget(m_actionControls);
+
+    m_cellControls = new QWidget(editBar);
+    auto* cellLayout = new QHBoxLayout(m_cellControls);
+    cellLayout->setContentsMargins(0, 0, 0, 0);
+    cellLayout->setSpacing(3);
+    cellLayout->addWidget(new QLabel(tr("CELL コマ打ち:"), m_cellControls));
     for (int step = 1; step <= 3; ++step) {
-        auto* stepButton = new QToolButton(container);
+        auto* stepButton = new QToolButton(m_cellControls);
         stepButton->setText(tr("%1コマ").arg(step));
         stepButton->setToolTip(tr("選択範囲へ動画1から順番に割り付けます"));
         connect(stepButton, &QToolButton::clicked, this, [this, step] { requestStepPattern(step); });
-        editLayout->addWidget(stepButton);
+        cellLayout->addWidget(stepButton);
     }
-    editLayout->addSpacing(8);
-    editLayout->addWidget(actionButton(m_holdAction, container));
-    editLayout->addWidget(actionButton(m_clearAction, container));
-    editLayout->addWidget(actionButton(m_copyAction, container));
-    editLayout->addWidget(actionButton(m_cutAction, container));
-    editLayout->addWidget(actionButton(m_pasteAction, container));
-    statusLayout->insertLayout(6, editLayout);
+    cellLayout->addSpacing(8);
+    cellLayout->addWidget(actionButton(m_holdAction, m_cellControls));
+    auto* blankCellButton = new QToolButton(m_cellControls);
+    blankCellButton->setText(tr("空セル"));
+    connect(blankCellButton, &QToolButton::clicked, m_clearAction, &QAction::trigger);
+    cellLayout->addWidget(blankCellButton);
+    cellLayout->addWidget(actionButton(m_copyAction, m_cellControls));
+    cellLayout->addWidget(actionButton(m_cutAction, m_cellControls));
+    cellLayout->addWidget(actionButton(m_pasteAction, m_cellControls));
+    editBarLayout->addWidget(m_cellControls);
+    editBarLayout->addStretch();
+
     layout->addLayout(statusLayout);
+    layout->addWidget(editBar);
     layout->addWidget(m_table);
     setWidget(container);
 
@@ -188,6 +260,12 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     connect(m_pasteAction, &QAction::triggered, this, &XsheetPanel::pasteSelection);
     connect(m_clearAction, &QAction::triggered, this, &XsheetPanel::clearSelection);
     connect(m_holdAction, &QAction::triggered, this, &XsheetPanel::fillHoldSelection);
+    connect(addKeyButton, &QToolButton::clicked, addKeyShortcutAction, &QAction::trigger);
+    connect(addInbetweenButton, &QToolButton::clicked, addInbetweenShortcutAction, &QAction::trigger);
+    connect(addKeyShortcutAction, &QAction::triggered, this, &XsheetPanel::addKeyDrawingRequested);
+    connect(addInbetweenShortcutAction, &QAction::triggered, this,
+            &XsheetPanel::addInbetweenDrawingRequested);
+    connect(keyNumberButton, &QToolButton::clicked, this, &XsheetPanel::promptKeyNumber);
 
     connect(m_table, &QTableWidget::itemChanged, this, &XsheetPanel::onItemChanged);
     connect(m_table, &QTableWidget::cellClicked, this, &XsheetPanel::onCellClicked);
@@ -207,6 +285,7 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     });
 
     updateActionStates();
+    updateEditControls();
 }
 
 void XsheetPanel::onItemChanged(QTableWidgetItem* item) {
@@ -215,9 +294,20 @@ void XsheetPanel::onItemChanged(QTableWidgetItem* item) {
     if (celIndex < 0) return;
 
     const QString text = item->text().trimmed();
+    if (isActionColumn(item->column())) {
+        if (text.size() > 12) {
+            setSheet(m_celNames, m_celVisible, m_exposures, m_actionTracks, m_frameCount,
+                     m_currentFrame, m_activeCel, m_fps);
+            return;
+        }
+        emitEdits({}, {{celIndex, item->row(), text}});
+        return;
+    }
+
     int drawing = -1;
     if (text == QStringLiteral("│")) {
-        setSheet(m_celNames, m_celVisible, m_exposures, m_frameCount, m_currentFrame, m_activeCel, m_fps);
+        setSheet(m_celNames, m_celVisible, m_exposures, m_actionTracks, m_frameCount,
+                 m_currentFrame, m_activeCel, m_fps);
         return;
     }
     if (!text.isEmpty() && text != QStringLiteral("*") && text != QStringLiteral("-") &&
@@ -225,7 +315,8 @@ void XsheetPanel::onItemChanged(QTableWidgetItem* item) {
         bool ok = false;
         const int value = text.toInt(&ok);
         if (!ok || value <= 0) {
-            setSheet(m_celNames, m_celVisible, m_exposures, m_frameCount, m_currentFrame, m_activeCel, m_fps);
+            setSheet(m_celNames, m_celVisible, m_exposures, m_actionTracks, m_frameCount,
+                     m_currentFrame, m_activeCel, m_fps);
             return;
         }
         drawing = value - 1;
@@ -237,6 +328,7 @@ void XsheetPanel::onCellClicked(int row, int column) {
     if (row < 0) return;
     const int cel = colToCel(column);
     emit cellClicked(cel >= 0 ? cel : m_activeCel, row);
+    updateEditControls();
 }
 
 void XsheetPanel::showHeaderContextMenu(const QPoint& pos) {
@@ -273,7 +365,7 @@ void XsheetPanel::showHeaderContextMenu(const QPoint& pos) {
 
 void XsheetPanel::showCellContextMenu(const QPoint& pos) {
     const QModelIndex index = m_table->indexAt(pos);
-    if (!index.isValid()) return;
+    if (!index.isValid() || colToCel(index.column()) < 0) return;
 
     if (colToCel(index.column()) >= 0 && !m_table->selectionModel()->isSelected(index)) {
         m_table->setCurrentCell(index.row(), index.column(), QItemSelectionModel::ClearAndSelect);
@@ -285,16 +377,37 @@ void XsheetPanel::showCellContextMenu(const QPoint& pos) {
     menu.addAction(m_cutAction);
     menu.addAction(m_pasteAction);
     menu.addSeparator();
-    menu.addAction(m_holdAction);
-    menu.addAction(m_clearAction);
-    QMenu* stepMenu = menu.addMenu(tr("コマ打ち"));
-    for (int step = 1; step <= 3; ++step) {
-        QAction* action = stepMenu->addAction(tr("%1コマ打ち").arg(step));
-        connect(action, &QAction::triggered, this, [this, step] { requestStepPattern(step); });
+    if (isActionColumn(index.column())) {
+        QAction* keyNumberAction = menu.addAction(tr("原画番号..."));
+        QAction* circleAction = menu.addAction(tr("○ 中割"));
+        QAction* dotAction = menu.addAction(tr("● 中割"));
+        QAction* blankAction = menu.addAction(tr("* 空"));
+        menu.addAction(m_clearAction);
+        menu.addSeparator();
+        QAction* addKeyAction = menu.addAction(tr("原画を追加"));
+        QAction* addInbetweenAction = menu.addAction(tr("中割を追加"));
+        connect(keyNumberAction, &QAction::triggered, this, &XsheetPanel::promptKeyNumber);
+        connect(circleAction, &QAction::triggered, this,
+                [this] { setActionSelection(QStringLiteral("○")); });
+        connect(dotAction, &QAction::triggered, this,
+                [this] { setActionSelection(QStringLiteral("●")); });
+        connect(blankAction, &QAction::triggered, this,
+                [this] { setActionSelection(QStringLiteral("*")); });
+        connect(addKeyAction, &QAction::triggered, this, &XsheetPanel::addKeyDrawingRequested);
+        connect(addInbetweenAction, &QAction::triggered, this,
+                &XsheetPanel::addInbetweenDrawingRequested);
+    } else {
+        menu.addAction(m_holdAction);
+        menu.addAction(m_clearAction);
+        QMenu* stepMenu = menu.addMenu(tr("コマ打ち"));
+        for (int step = 1; step <= 3; ++step) {
+            QAction* action = stepMenu->addAction(tr("%1コマ打ち").arg(step));
+            connect(action, &QAction::triggered, this, [this, step] { requestStepPattern(step); });
+        }
+        menu.addSeparator();
+        QAction* addDrawingAction = menu.addAction(tr("新しい動画を追加"));
+        connect(addDrawingAction, &QAction::triggered, this, &XsheetPanel::addDrawingRequested);
     }
-    menu.addSeparator();
-    QAction* addDrawingAction = menu.addAction(tr("新しい動画を追加"));
-    connect(addDrawingAction, &QAction::triggered, this, &XsheetPanel::addDrawingRequested);
     menu.exec(m_table->viewport()->mapToGlobal(pos));
 }
 
@@ -318,11 +431,18 @@ void XsheetPanel::copySelection() {
         QStringList values;
         for (int col = minCol; col <= maxCol; ++col) {
             const int cel = colToCel(col);
-            const int drawing =
-                cel >= 0 && cel < m_exposures.size() && row < m_exposures.at(cel).size()
-                    ? m_exposures.at(cel).at(row)
-                    : -1;
-            values.append(drawing >= 0 ? QString::number(drawing + 1) : QString());
+            if (isActionColumn(col)) {
+                values.append(cel >= 0 && cel < m_actionTracks.size() &&
+                                      row < m_actionTracks.at(cel).size()
+                                  ? m_actionTracks.at(cel).at(row)
+                                  : QString());
+            } else {
+                const int drawing =
+                    cel >= 0 && cel < m_exposures.size() && row < m_exposures.at(cel).size()
+                        ? m_exposures.at(cel).at(row)
+                        : -1;
+                values.append(drawing >= 0 ? QString::number(drawing + 1) : QString());
+            }
         }
         rows.append(values.join(QLatin1Char('\t')));
     }
@@ -340,24 +460,30 @@ void XsheetPanel::pasteSelection() {
 
     QModelIndex start = m_table->currentIndex();
     if (!start.isValid() || colToCel(start.column()) < 0) {
-        start = m_table->model()->index(std::clamp(m_currentFrame, 0, m_frameCount - 1), celToCol(m_activeCel));
+        start = m_table->model()->index(std::clamp(m_currentFrame, 0, m_frameCount - 1),
+                                        celToPrimaryCol(m_activeCel));
     }
     if (!start.isValid()) return;
 
     const QStringList rows = text.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
     const QStringList singleValues = rows.size() == 1 ? rows.first().split(QLatin1Char('\t'), Qt::KeepEmptyParts)
                                                       : QStringList();
-    std::vector<PendingEdit> edits;
+    std::vector<PendingExposureEdit> exposureEdits;
+    std::vector<PendingActionEdit> actionEdits;
 
-    if (rows.size() == 1 && singleValues.size() == 1 && selectedExposureCount() > 1) {
-        bool ok = false;
+    if (rows.size() == 1 && singleValues.size() == 1 && selectedEditableCount() > 1) {
         const QString valueText = singleValues.first().trimmed();
-        const int value = valueText.toInt(&ok);
-        const int drawing = valueText.isEmpty() ? -1 : (ok && value > 0 ? value - 1 : -2);
-        if (drawing < -1) return;
         for (const QModelIndex& index : m_table->selectionModel()->selectedIndexes()) {
             const int cel = colToCel(index.column());
-            if (cel >= 0) edits.push_back({cel, index.row(), drawing});
+            if (cel < 0) continue;
+            if (isActionColumn(index.column())) {
+                actionEdits.push_back({cel, index.row(), valueText.left(12)});
+            } else {
+                bool ok = false;
+                const int value = valueText.toInt(&ok);
+                const int drawing = valueText.isEmpty() ? -1 : (ok && value > 0 ? value - 1 : -2);
+                if (drawing >= -1) exposureEdits.push_back({cel, index.row(), drawing});
+            }
         }
     } else {
         for (int rowOffset = 0; rowOffset < rows.size(); ++rowOffset) {
@@ -368,43 +494,57 @@ void XsheetPanel::pasteSelection() {
                 const int cel = colToCel(col);
                 if (row >= m_frameCount || cel < 0 || cel >= m_exposures.size()) continue;
                 const QString valueText = values.at(colOffset).trimmed();
+                if (isActionColumn(col)) {
+                    actionEdits.push_back({cel, row, valueText.left(12)});
+                    continue;
+                }
                 bool ok = false;
                 const int value = valueText.toInt(&ok);
                 if (valueText.isEmpty() || valueText == QStringLiteral("*") || valueText == QStringLiteral("-") ||
                     valueText.compare(QStringLiteral("x"), Qt::CaseInsensitive) == 0 ||
                     valueText == QStringLiteral("×")) {
-                    edits.push_back({cel, row, -1});
+                    exposureEdits.push_back({cel, row, -1});
                 } else if (ok && value > 0) {
-                    edits.push_back({cel, row, value - 1});
+                    exposureEdits.push_back({cel, row, value - 1});
                 }
             }
         }
     }
-    emitEdits(edits);
+    emitEdits(exposureEdits, actionEdits);
 }
 
 void XsheetPanel::clearSelection() {
-    std::vector<PendingEdit> edits;
+    std::vector<PendingExposureEdit> exposureEdits;
+    std::vector<PendingActionEdit> actionEdits;
     for (const QModelIndex& index : m_table->selectionModel()->selectedIndexes()) {
         const int cel = colToCel(index.column());
-        if (cel >= 0) edits.push_back({cel, index.row(), -1});
+        if (cel < 0) continue;
+        if (isActionColumn(index.column())) {
+            actionEdits.push_back({cel, index.row(), QString()});
+        } else {
+            exposureEdits.push_back({cel, index.row(), -1});
+        }
     }
-    if (edits.empty() && m_table->currentIndex().isValid()) {
+    if (exposureEdits.empty() && actionEdits.empty() && m_table->currentIndex().isValid()) {
         const QModelIndex index = m_table->currentIndex();
         const int cel = colToCel(index.column());
-        if (cel >= 0) edits.push_back({cel, index.row(), -1});
+        if (cel >= 0 && isActionColumn(index.column())) {
+            actionEdits.push_back({cel, index.row(), QString()});
+        } else if (cel >= 0) {
+            exposureEdits.push_back({cel, index.row(), -1});
+        }
     }
-    emitEdits(edits);
+    emitEdits(exposureEdits, actionEdits);
 }
 
 void XsheetPanel::fillHoldSelection() {
     QMap<int, QList<int>> rowsByCel;
     for (const QModelIndex& index : m_table->selectionModel()->selectedIndexes()) {
         const int cel = colToCel(index.column());
-        if (cel >= 0) rowsByCel[cel].append(index.row());
+        if (cel >= 0 && !isActionColumn(index.column())) rowsByCel[cel].append(index.row());
     }
 
-    std::vector<PendingEdit> edits;
+    std::vector<PendingExposureEdit> edits;
     for (auto it = rowsByCel.begin(); it != rowsByCel.end(); ++it) {
         QList<int> rows = it.value();
         std::sort(rows.begin(), rows.end());
@@ -431,36 +571,110 @@ void XsheetPanel::requestStepPattern(int step) {
     emit stepPatternRequested(step, first, last);
 }
 
-void XsheetPanel::emitEdits(const std::vector<PendingEdit>& edits) {
-    QList<int> cels;
-    QList<int> frames;
+void XsheetPanel::setActionSelection(const QString& entry) {
+    std::vector<PendingActionEdit> edits;
+    for (const QModelIndex& index : m_table->selectionModel()->selectedIndexes()) {
+        const int cel = colToCel(index.column());
+        if (cel >= 0 && isActionColumn(index.column())) {
+            edits.push_back({cel, index.row(), entry});
+        }
+    }
+    if (edits.empty()) {
+        const QModelIndex current = m_table->currentIndex();
+        if (current.isValid() && isActionColumn(current.column())) {
+            edits.push_back({colToCel(current.column()), current.row(), entry});
+        }
+    }
+    emitEdits({}, edits);
+}
+
+void XsheetPanel::promptKeyNumber() {
+    bool ok = false;
+    const QString value = QInputDialog::getText(
+        this, tr("原画番号"), tr("ACTIONに記入する原画番号:"), QLineEdit::Normal, QString(), &ok);
+    if (!ok) return;
+    const QString trimmed = value.trimmed();
+    static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9]{1,12}$"));
+    if (!pattern.match(trimmed).hasMatch()) {
+        QMessageBox::information(this, tr("原画番号"),
+                                 tr("半角英数字で1～12文字にしてください。"));
+        return;
+    }
+    setActionSelection(trimmed);
+}
+
+void XsheetPanel::setViewMode(ViewMode mode) {
+    if (m_viewMode == mode) return;
+    m_viewMode = mode;
+    setSheet(m_celNames, m_celVisible, m_exposures, m_actionTracks, m_frameCount,
+             m_currentFrame, m_activeCel, m_fps);
+    updateEditControls();
+}
+
+void XsheetPanel::emitEdits(const std::vector<PendingExposureEdit>& exposureEdits,
+                            const std::vector<PendingActionEdit>& actionEdits) {
+    QList<int> exposureCels;
+    QList<int> exposureFrames;
     QList<int> drawings;
-    QSet<QString> seen;
-    for (const PendingEdit& edit : edits) {
+    QSet<QString> seenExposure;
+    for (const PendingExposureEdit& edit : exposureEdits) {
         if (edit.cel < 0 || edit.cel >= m_exposures.size() || edit.frame < 0 || edit.frame >= m_frameCount) continue;
         const QString key = QStringLiteral("%1/%2").arg(edit.cel).arg(edit.frame);
-        if (seen.contains(key)) continue;
-        seen.insert(key);
-        cels.append(edit.cel);
-        frames.append(edit.frame);
+        if (seenExposure.contains(key)) continue;
+        seenExposure.insert(key);
+        exposureCels.append(edit.cel);
+        exposureFrames.append(edit.frame);
         drawings.append(edit.drawing);
     }
-    if (!cels.isEmpty()) emit exposureEditsRequested(cels, frames, drawings);
+
+    QList<int> actionCels;
+    QList<int> actionFrames;
+    QStringList actionEntries;
+    QSet<QString> seenAction;
+    for (const PendingActionEdit& edit : actionEdits) {
+        if (edit.cel < 0 || edit.cel >= m_actionTracks.size() || edit.frame < 0 ||
+            edit.frame >= m_frameCount) {
+            continue;
+        }
+        const QString key = QStringLiteral("%1/%2").arg(edit.cel).arg(edit.frame);
+        if (seenAction.contains(key)) continue;
+        seenAction.insert(key);
+        actionCels.append(edit.cel);
+        actionFrames.append(edit.frame);
+        actionEntries.append(edit.entry.trimmed());
+    }
+
+    if (!exposureCels.isEmpty() || !actionCels.isEmpty()) {
+        emit sheetEditsRequested(exposureCels, exposureFrames, drawings, actionCels,
+                                 actionFrames, actionEntries);
+    }
 }
 
 void XsheetPanel::updateActionStates() {
-    const int count = selectedExposureCount();
+    const int count = selectedEditableCount();
+    const int cellCount = selectedCellCount();
     if (m_copyAction) m_copyAction->setEnabled(count > 0);
     if (m_cutAction) m_cutAction->setEnabled(count > 0);
     if (m_clearAction) m_clearAction->setEnabled(count > 0);
-    if (m_holdAction) m_holdAction->setEnabled(count > 1);
+    if (m_holdAction) m_holdAction->setEnabled(cellCount > 1);
     if (m_pasteAction) {
         m_pasteAction->setEnabled(m_table && m_table->currentIndex().isValid() &&
                                   colToCel(m_table->currentIndex().column()) >= 0);
     }
+    updateEditControls();
 }
 
-int XsheetPanel::selectedExposureCount() const {
+void XsheetPanel::updateEditControls() {
+    if (!m_actionControls || !m_cellControls) return;
+    bool showAction = m_viewMode == ViewMode::Action;
+    if (m_viewMode == ViewMode::Both && m_table && m_table->currentIndex().isValid()) {
+        showAction = isActionColumn(m_table->currentIndex().column());
+    }
+    m_actionControls->setVisible(showAction);
+    m_cellControls->setVisible(!showAction);
+}
+
+int XsheetPanel::selectedEditableCount() const {
     if (!m_table || !m_table->selectionModel()) return 0;
     int count = 0;
     for (const QModelIndex& index : m_table->selectionModel()->selectedIndexes()) {
@@ -469,10 +683,19 @@ int XsheetPanel::selectedExposureCount() const {
     return count;
 }
 
+int XsheetPanel::selectedCellCount() const {
+    if (!m_table || !m_table->selectionModel()) return 0;
+    int count = 0;
+    for (const QModelIndex& index : m_table->selectionModel()->selectedIndexes()) {
+        if (colToCel(index.column()) >= 0 && !isActionColumn(index.column())) ++count;
+    }
+    return count;
+}
+
 bool XsheetPanel::selectedFrameRange(int& firstFrame, int& lastFrame) const {
     int first = std::numeric_limits<int>::max();
     int last = -1;
-    const int activeColumn = celToCol(m_activeCel);
+    const int activeColumn = celToCellCol(m_activeCel);
     for (const QModelIndex& index : m_table->selectionModel()->selectedIndexes()) {
         if (index.column() != activeColumn) continue;
         first = std::min(first, index.row());
@@ -492,21 +715,56 @@ void XsheetPanel::updateRowBackgrounds(int frame) {
         timingItem->setBackground(frame == m_currentFrame ? QColor(255, 222, 218) : QColor(226, 226, 226));
     }
     for (int cel = 0; cel < m_celNames.size(); ++cel) {
-        QTableWidgetItem* item = m_table->item(frame, celToCol(cel));
-        if (!item) continue;
-        QColor background = (block % 2 == 0) ? QColor(255, 255, 255) : QColor(247, 247, 247);
-        if (cel == m_activeCel) background = (block % 2 == 0) ? QColor(232, 242, 253) : QColor(224, 236, 249);
-        if (frame == m_currentFrame) background = QColor(255, 238, 222);
-        item->setBackground(background);
+        for (int col : {celToActionCol(cel), celToCellCol(cel)}) {
+            if (col < 0) continue;
+            QTableWidgetItem* item = m_table->item(frame, col);
+            if (!item) continue;
+            QColor background = isActionColumn(col)
+                                    ? ((block % 2 == 0) ? QColor(255, 250, 232)
+                                                        : QColor(250, 244, 220))
+                                    : ((block % 2 == 0) ? QColor(255, 255, 255)
+                                                        : QColor(247, 247, 247));
+            if (cel == m_activeCel) {
+                background = isActionColumn(col)
+                                 ? ((block % 2 == 0) ? QColor(250, 238, 196)
+                                                     : QColor(244, 230, 184))
+                                 : ((block % 2 == 0) ? QColor(232, 242, 253)
+                                                     : QColor(224, 236, 249));
+            }
+            if (frame == m_currentFrame) background = QColor(255, 238, 222);
+            item->setBackground(background);
+        }
     }
 }
 
 int XsheetPanel::colToCel(int col) const {
-    return col > kTimingColumn ? col - 1 : -1;
+    if (col <= kTimingColumn) return -1;
+    return m_viewMode == ViewMode::Both ? (col - 1) / 2 : col - 1;
 }
 
-int XsheetPanel::celToCol(int celIndex) const {
-    return celIndex + 1;
+bool XsheetPanel::isActionColumn(int col) const {
+    if (col <= kTimingColumn) return false;
+    if (m_viewMode == ViewMode::Action) return true;
+    if (m_viewMode == ViewMode::Cell) return false;
+    return (col - 1) % 2 == 0;
+}
+
+int XsheetPanel::celToActionCol(int celIndex) const {
+    if (m_viewMode == ViewMode::Cell) return -1;
+    return m_viewMode == ViewMode::Both ? 1 + celIndex * 2 : 1 + celIndex;
+}
+
+int XsheetPanel::celToCellCol(int celIndex) const {
+    if (m_viewMode == ViewMode::Action) return -1;
+    return m_viewMode == ViewMode::Both ? 2 + celIndex * 2 : 1 + celIndex;
+}
+
+int XsheetPanel::celToPrimaryCol(int celIndex) const {
+    return m_viewMode == ViewMode::Action ? celToActionCol(celIndex) : celToCellCol(celIndex);
+}
+
+int XsheetPanel::sheetColumnCount(int celCount) const {
+    return 1 + (m_viewMode == ViewMode::Both ? celCount * 2 : celCount);
 }
 
 QString XsheetPanel::timeLabel(int zeroBasedFrame) const {
@@ -520,7 +778,8 @@ void XsheetPanel::debugSelectExposureRange(int celIndex, int firstFrame, int las
     if (!m_table || celIndex < 0 || celIndex >= m_exposures.size()) return;
     firstFrame = std::clamp(firstFrame, 0, m_frameCount - 1);
     lastFrame = std::clamp(lastFrame, firstFrame, m_frameCount - 1);
-    const int column = celToCol(celIndex);
+    const int column = celToCellCol(celIndex);
+    if (column < 0) return;
     QItemSelection selection(m_table->model()->index(firstFrame, column),
                              m_table->model()->index(lastFrame, column));
     m_table->selectionModel()->select(selection, QItemSelectionModel::ClearAndSelect);
@@ -528,9 +787,18 @@ void XsheetPanel::debugSelectExposureRange(int celIndex, int firstFrame, int las
                                                QItemSelectionModel::NoUpdate);
 }
 
+void XsheetPanel::debugSelectActionCell(int celIndex, int frame) {
+    if (!m_table || celIndex < 0 || celIndex >= m_actionTracks.size()) return;
+    frame = std::clamp(frame, 0, m_frameCount - 1);
+    const int column = celToActionCol(celIndex);
+    if (column < 0) return;
+    m_table->setCurrentCell(frame, column, QItemSelectionModel::ClearAndSelect);
+}
+
 void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVisible,
-                           const QList<QList<int>>& exposures, int frameCount, int currentFrame, int activeCel,
-                           int fps) {
+                           const QList<QList<int>>& exposures,
+                           const QList<QStringList>& actionTracks, int frameCount, int currentFrame,
+                           int activeCel, int fps) {
     const QModelIndexList oldSelection =
         m_table->selectionModel() ? m_table->selectionModel()->selectedIndexes() : QModelIndexList();
     const QModelIndex oldCurrent = m_table->currentIndex();
@@ -544,8 +812,9 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
     const int previousCurrentFrame = m_currentFrame;
     const bool positionOnly =
         m_table->rowCount() == normalizedFrameCount &&
-        m_table->columnCount() == static_cast<int>(celNames.size()) + 1 && m_celNames == celNames &&
-        m_celVisible == celVisible && m_exposures == exposures && m_frameCount == normalizedFrameCount &&
+        m_table->columnCount() == sheetColumnCount(static_cast<int>(celNames.size())) &&
+        m_celNames == celNames && m_celVisible == celVisible && m_exposures == exposures &&
+        m_actionTracks == actionTracks && m_frameCount == normalizedFrameCount &&
         m_activeCel == normalizedActiveCel && m_fps == normalizedFps;
 
     if (positionOnly) {
@@ -557,7 +826,8 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
         updateRowBackgrounds(m_currentFrame);
 
         if (!celNames.isEmpty()) {
-            const QModelIndex target = m_table->model()->index(m_currentFrame, celToCol(m_activeCel));
+            const QModelIndex target =
+                m_table->model()->index(m_currentFrame, celToPrimaryCol(m_activeCel));
             if (!preserveSelection) {
                 m_table->setCurrentCell(target.row(), target.column(), QItemSelectionModel::ClearAndSelect);
             }
@@ -572,6 +842,7 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
     m_celNames = celNames;
     m_celVisible = celVisible;
     m_exposures = exposures;
+    m_actionTracks = actionTracks;
     m_frameCount = normalizedFrameCount;
     m_currentFrame = normalizedCurrentFrame;
     m_activeCel = normalizedActiveCel;
@@ -581,7 +852,7 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
     m_currentTimeLabel->setText(tr("%1（%2コマ目）").arg(timeLabel(m_currentFrame)).arg(m_currentFrame + 1));
     m_durationLabel->setText(tr("%1 / %2fps").arg(timeLabel(m_frameCount - 1)).arg(m_fps));
 
-    const int columnCount = celNames.size() + 1;
+    const int columnCount = sheetColumnCount(static_cast<int>(celNames.size()));
     if (m_table->rowCount() != m_frameCount || m_table->columnCount() != columnCount) {
         m_table->clear();
         m_table->setRowCount(m_frameCount);
@@ -602,17 +873,24 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
     m_table->setColumnWidth(kTimingColumn, 72);
 
     for (int cel = 0; cel < celNames.size(); ++cel) {
-        QString label = celNames.at(cel);
         const bool visible = cel < celVisible.size() ? celVisible.at(cel) : true;
-        if (!visible) label += tr(" [非表示]");
-        auto* headerItem = new QTableWidgetItem(label);
-        QFont font = headerItem->font();
-        font.setBold(cel == m_activeCel);
-        headerItem->setFont(font);
-        if (cel == m_activeCel) headerItem->setBackground(QColor(202, 222, 246));
-        m_table->setHorizontalHeaderItem(celToCol(cel), headerItem);
-        m_table->horizontalHeader()->setSectionResizeMode(celToCol(cel), QHeaderView::Interactive);
-        m_table->setColumnWidth(celToCol(cel), 92);
+        for (int col : {celToActionCol(cel), celToCellCol(cel)}) {
+            if (col < 0) continue;
+            QString label =
+                tr("%1 %2").arg(celNames.at(cel), isActionColumn(col) ? tr("ACTION") : tr("CELL"));
+            if (!visible) label += tr(" [非表示]");
+            auto* headerItem = new QTableWidgetItem(label);
+            QFont font = headerItem->font();
+            font.setBold(cel == m_activeCel);
+            headerItem->setFont(font);
+            if (cel == m_activeCel) {
+                headerItem->setBackground(isActionColumn(col) ? QColor(239, 220, 158)
+                                                               : QColor(202, 222, 246));
+            }
+            m_table->setHorizontalHeaderItem(col, headerItem);
+            m_table->horizontalHeader()->setSectionResizeMode(col, QHeaderView::Interactive);
+            m_table->setColumnWidth(col, isActionColumn(col) ? 84 : 82);
+        }
     }
     m_table->horizontalHeader()->setStretchLastSection(false);
 
@@ -640,8 +918,42 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
                                                           : QColor(226, 226, 226));
 
         for (int cel = 0; cel < celNames.size(); ++cel) {
-            const int col = celToCol(cel);
-            QTableWidgetItem* item = m_table->item(frame, col);
+            const int actionCol = celToActionCol(cel);
+            if (actionCol >= 0) {
+                QTableWidgetItem* actionItem = m_table->item(frame, actionCol);
+                const QStringList* actionColumn =
+                    cel < actionTracks.size() ? &actionTracks.at(cel) : nullptr;
+                const QString entry =
+                    actionColumn && frame < actionColumn->size() ? actionColumn->at(frame) : QString();
+                const bool markerEntry = entry == QStringLiteral("○") || entry == QStringLiteral("●") ||
+                                         entry == QStringLiteral("*");
+
+                actionItem->setData(kGridMarkerRole, marker);
+                actionItem->setText(entry);
+                actionItem->setTextAlignment(Qt::AlignCenter);
+                actionItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+                QFont actionFont = actionItem->font();
+                actionFont.setBold(!entry.isEmpty() && !markerEntry);
+                actionItem->setFont(actionFont);
+                actionItem->setForeground(entry == QStringLiteral("*") ? QColor(115, 115, 115)
+                                                                        : QColor(Qt::black));
+
+                QColor actionBackground =
+                    (block % 2 == 0) ? QColor(255, 250, 232) : QColor(250, 244, 220);
+                if (cel == m_activeCel) {
+                    actionBackground =
+                        (block % 2 == 0) ? QColor(250, 238, 196) : QColor(244, 230, 184);
+                }
+                if (frame == m_currentFrame) actionBackground = QColor(255, 238, 222);
+                actionItem->setBackground(actionBackground);
+                actionItem->setToolTip(
+                    tr("%1 ACTION / %2 / 原画番号・○中割・●中割・*空")
+                        .arg(celNames.at(cel), timeLabel(frame)));
+            }
+
+            const int cellCol = celToCellCol(cel);
+            if (cellCol < 0) continue;
+            QTableWidgetItem* item = m_table->item(frame, cellCol);
             const QList<int>* exposureColumn = cel < exposures.size() ? &exposures.at(cel) : nullptr;
             const int drawing = exposureColumn && frame < exposureColumn->size() ? exposureColumn->at(frame) : -1;
             const int previous = exposureColumn && frame > 0 && frame - 1 < exposureColumn->size()
@@ -672,7 +984,8 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
     }
 
     if (!celNames.isEmpty()) {
-        const QModelIndex target = m_table->model()->index(m_currentFrame, celToCol(m_activeCel));
+        const QModelIndex target =
+            m_table->model()->index(m_currentFrame, celToPrimaryCol(m_activeCel));
         if (preserveSelection && !oldSelection.isEmpty()) {
             m_table->selectionModel()->clearSelection();
             for (const QModelIndex& index : oldSelection) {

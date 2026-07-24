@@ -611,6 +611,18 @@ void MainWindow::setCurrentFrame(size_t index) {
 }
 
 void MainWindow::addFrameAfterCurrent() {
+    addDrawingAtCurrent(core::DrawingKind::Unspecified);
+}
+
+void MainWindow::addKeyDrawingAtCurrent() {
+    addDrawingAtCurrent(core::DrawingKind::Key);
+}
+
+void MainWindow::addInbetweenDrawingAtCurrent() {
+    addDrawingAtCurrent(core::DrawingKind::Inbetween);
+}
+
+void MainWindow::addDrawingAtCurrent(core::DrawingKind kind) {
     if (m_playing) return;
     // 新しい動画を作る(セル内全レイヤーに同時追加)。
     // 現在コマが空欄(未割付)ならその場に割り付け、コマは移動しない。
@@ -624,7 +636,17 @@ void MainWindow::addFrameAfterCurrent() {
     const size_t target = currentIsEmpty ? m_currentFrame : m_currentFrame + 1;
     core::Cut& cut = activeCut();
     if (target >= cut.frameCount()) cut.setFrameCount(target + 1);
+    cel.setDrawingKind(static_cast<size_t>(newDrawing), kind);
     cel.setExposure(target, newDrawing);
+    if (kind == core::DrawingKind::Key) {
+        int keyNumber = 1;
+        for (int drawing = 0; drawing < newDrawing; ++drawing) {
+            if (cel.drawingKind(static_cast<size_t>(drawing)) == core::DrawingKind::Key) ++keyNumber;
+        }
+        cel.setActionEntry(target, QString::number(keyNumber).toStdString());
+    } else if (kind == core::DrawingKind::Inbetween) {
+        cel.setActionEntry(target, QStringLiteral("○").toStdString());
+    }
 
     clearUndoHistory();             // 構造変更のためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 動画構造が変わったため
@@ -667,15 +689,29 @@ void MainWindow::applyStepPatternRange(int step, int startFrame, int endFrame) {
 
 void MainWindow::applyExposureEdits(const QList<int>& celIndices, const QList<int>& frames,
                                     const QList<int>& drawings) {
-    if (m_playing || celIndices.size() != frames.size() || frames.size() != drawings.size()) return;
+    applyTimesheetEdits(celIndices, frames, drawings, {}, {}, {});
+}
+
+void MainWindow::applyTimesheetEdits(const QList<int>& exposureCelIndices,
+                                     const QList<int>& exposureFrames,
+                                     const QList<int>& drawings,
+                                     const QList<int>& actionCelIndices,
+                                     const QList<int>& actionFrames,
+                                     const QStringList& actionEntries) {
+    if (m_playing || exposureCelIndices.size() != exposureFrames.size() ||
+        exposureFrames.size() != drawings.size() ||
+        actionCelIndices.size() != actionFrames.size() ||
+        actionFrames.size() != actionEntries.size()) {
+        return;
+    }
 
     core::Cut& cut = activeCut();
     std::vector<core::ExposureChange> changes;
-    changes.reserve(static_cast<size_t>(celIndices.size()));
+    changes.reserve(static_cast<size_t>(exposureCelIndices.size()));
     bool invalidDrawing = false;
-    for (qsizetype i = 0; i < celIndices.size(); ++i) {
-        const int celIndex = celIndices.at(i);
-        const int frame = frames.at(i);
+    for (qsizetype i = 0; i < exposureCelIndices.size(); ++i) {
+        const int celIndex = exposureCelIndices.at(i);
+        const int frame = exposureFrames.at(i);
         if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount() || frame < 0 ||
             static_cast<size_t>(frame) >= cut.frameCount()) {
             continue;
@@ -691,13 +727,32 @@ void MainWindow::applyExposureEdits(const QList<int>& celIndices, const QList<in
         if (before == drawing) continue;
         changes.push_back({&cel, static_cast<size_t>(frame), before, drawing});
     }
-    if (changes.empty()) {
+
+    std::vector<core::ActionChange> actionChanges;
+    actionChanges.reserve(static_cast<size_t>(actionCelIndices.size()));
+    for (qsizetype i = 0; i < actionCelIndices.size(); ++i) {
+        const int celIndex = actionCelIndices.at(i);
+        const int frame = actionFrames.at(i);
+        if (celIndex < 0 || static_cast<size_t>(celIndex) >= cut.celCount() || frame < 0 ||
+            static_cast<size_t>(frame) >= cut.frameCount()) {
+            continue;
+        }
+
+        core::Cel& cel = cut.cel(static_cast<size_t>(celIndex));
+        const std::string before = cel.actionEntry(static_cast<size_t>(frame));
+        const std::string after = actionEntries.at(i).trimmed().toStdString();
+        if (before == after) continue;
+        actionChanges.push_back({&cel, static_cast<size_t>(frame), before, after});
+    }
+
+    if (changes.empty() && actionChanges.empty()) {
         updateXsheetPanel();
         if (invalidDrawing) statusBar()->showMessage(tr("存在しない動画番号は割り付けできません"), 4000);
         return;
     }
 
-    m_commands.push(std::make_unique<core::ExposureSheetCommand>(std::move(changes)));
+    m_commands.push(
+        std::make_unique<core::ExposureSheetCommand>(std::move(changes), std::move(actionChanges)));
     markCutDirty(cut);
     updateCanvasLayers();
     updateOnionSkin();
@@ -833,7 +888,12 @@ void MainWindow::updateFrameLabel() {
         }
 
         // 動画(絵)一覧。選択=現在コマに割り付けられた動画
-        m_framePanel->setDrawings(displayOrder, cel.exposure(m_currentFrame));
+        QList<int> drawingKinds;
+        drawingKinds.reserve(drawingCount);
+        for (int drawing = 0; drawing < drawingCount; ++drawing) {
+            drawingKinds.append(static_cast<int>(cel.drawingKind(static_cast<size_t>(drawing))));
+        }
+        m_framePanel->setDrawings(displayOrder, drawingKinds, cel.exposure(m_currentFrame));
         m_framePanel->setWindowTitle(tr("動画 - セル %1").arg(QString::fromStdString(cel.name())));
     }
     // 動画一覧(チェック状態)の再構築後にライトテーブルも追従させる(構造変更後の破棄漏れ防止)
@@ -1079,13 +1139,7 @@ void MainWindow::setupPanels() {
     connect(m_framePanel, &FramePanel::frameSelected, this, [this](int index) {
         // 動画一覧のクリック = 現在コマにその動画を割り付ける(タイムシート編集)
         if (m_playing) return;
-        activeCel().setExposure(m_currentFrame, index);
-        markCutDirty(activeCut());
-        updateCanvasLayers();
-        updateOnionSkin();
-        updateFrameLabel();
-        updateXsheetPanel();
-        updateWindowTitle();
+        applyExposureEdits({static_cast<int>(m_activeCel)}, {static_cast<int>(m_currentFrame)}, {index});
     });
     connect(m_framePanel, &FramePanel::addRequested, this, &MainWindow::addFrameAfterCurrent);
     connect(m_framePanel, &FramePanel::duplicateRequested, this, &MainWindow::duplicateDrawing);
@@ -1171,7 +1225,7 @@ void MainWindow::setupPanels() {
         setCurrentFrame(static_cast<size_t>(frame));
         if (celChanged) updateLayerPanel();  // アクティブセルが変わったのでレイヤーパネルも追従させる
     });
-    connect(m_xsheetPanel, &XsheetPanel::exposureEditsRequested, this, &MainWindow::applyExposureEdits);
+    connect(m_xsheetPanel, &XsheetPanel::sheetEditsRequested, this, &MainWindow::applyTimesheetEdits);
     connect(m_xsheetPanel, &XsheetPanel::frameCountChanged, this, [this](int frameCount) {
         if (m_playing || frameCount < 1) return;
         core::Cut& cut = activeCut();
@@ -1194,6 +1248,9 @@ void MainWindow::setupPanels() {
     // 動画追加/削除: FramePanel(動画パネル)の動画追加/動画削除ボタンと同じ処理を呼ぶ。
     // 削除は動画パネルと違い一覧選択がないため、現在コマに割り付いている動画を対象にする
     connect(m_xsheetPanel, &XsheetPanel::addDrawingRequested, this, &MainWindow::addFrameAfterCurrent);
+    connect(m_xsheetPanel, &XsheetPanel::addKeyDrawingRequested, this, &MainWindow::addKeyDrawingAtCurrent);
+    connect(m_xsheetPanel, &XsheetPanel::addInbetweenDrawingRequested, this,
+            &MainWindow::addInbetweenDrawingAtCurrent);
     connect(m_xsheetPanel, &XsheetPanel::deleteDrawingRequested, this, [this] {
         if (m_playing) return;
         const int idx = activeCel().exposure(m_currentFrame);
@@ -1465,6 +1522,7 @@ void MainWindow::updateXsheetPanel() {
     QStringList celNames;
     QList<bool> celVisible;
     QList<QList<int>> exposures;
+    QList<QStringList> actionTracks;
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
         const core::Cel& cel = cut.cel(ci);
         celNames.append(QString::fromStdString(cel.name()));
@@ -1475,11 +1533,19 @@ void MainWindow::updateXsheetPanel() {
             column.append(cel.exposure(f));
         }
         exposures.append(column);
+
+        QStringList actionColumn;
+        actionColumn.reserve(static_cast<int>(cut.frameCount()));
+        for (size_t f = 0; f < cut.frameCount(); ++f) {
+            actionColumn.append(QString::fromStdString(cel.actionEntry(f)));
+        }
+        actionTracks.append(actionColumn);
     }
 
-    m_xsheetPanel->setSheet(celNames, celVisible, exposures, static_cast<int>(cut.frameCount()),
-                             static_cast<int>(m_currentFrame), static_cast<int>(m_activeCel),
-                             m_fpsSpin ? m_fpsSpin->value() : kDefaultFps);
+    m_xsheetPanel->setSheet(celNames, celVisible, exposures, actionTracks,
+                            static_cast<int>(cut.frameCount()), static_cast<int>(m_currentFrame),
+                            static_cast<int>(m_activeCel),
+                            m_fpsSpin ? m_fpsSpin->value() : kDefaultFps);
 
     updateCelPanel();  // セルの構成・可視状態・アクティブセルはXsheetと同じ元データなのでここで一緒に更新する
     updateTapPanel();  // 位置キーの一覧・現在コマの選択もアクティブセルに追従させる
@@ -1743,6 +1809,7 @@ void MainWindow::deleteDrawing(int idx) {
     for (size_t li = 0; li < cel.layerCount(); ++li) {
         cel.layer(li).removeFrame(static_cast<size_t>(idx));
     }
+    cel.removeDrawingMetadata(static_cast<size_t>(idx));
 
     // 露出表を修正: 削除された動画を指していたコマは空欄(-1)に、それより後ろの動画番号は1つ詰める
     core::Cut& cut = activeCut();
@@ -1779,6 +1846,7 @@ void MainWindow::duplicateDrawing(int idx) {
         const core::Bitmap sourceBitmap = layer.frame(static_cast<size_t>(idx)).bitmap();  // addFrame前にコピーしておく
         layer.addFrame().bitmap() = sourceBitmap;
     }
+    cel.setDrawingKind(static_cast<size_t>(newDrawing), cel.drawingKind(static_cast<size_t>(idx)));
     const bool currentIsEmpty = cel.exposure(m_currentFrame) == -1;
     const size_t target = currentIsEmpty ? m_currentFrame : m_currentFrame + 1;
     core::Cut& cut = activeCut();
@@ -3974,7 +4042,14 @@ void MainWindow::debugSetupXsheetUiDemo() {
                     makeTransparentCelForCel(cel, canvasWidth(), canvasHeight());
             }
         }
-        for (size_t frame = 0; frame < cut.frameCount(); ++frame) cel.setExposure(frame, -1);
+        for (size_t frame = 0; frame < cut.frameCount(); ++frame) {
+            cel.setExposure(frame, -1);
+            cel.setActionEntry(frame, {});
+        }
+        cel.setDrawingKind(0, core::DrawingKind::Key);
+        cel.setDrawingKind(1, core::DrawingKind::Inbetween);
+        cel.setDrawingKind(2, core::DrawingKind::Key);
+        cel.setDrawingKind(3, core::DrawingKind::Inbetween);
     }
 
     core::Cel& celA = cut.cel(0);
@@ -3985,15 +4060,24 @@ void MainWindow::debugSetupXsheetUiDemo() {
             celA.setExposure(static_cast<size_t>(frame), drawing);
         }
     }
+    celA.setActionEntry(0, "1");
+    celA.setActionEntry(6, "○");
+    celA.setActionEntry(12, "2");
+    celA.setActionEntry(18, "●");
     for (int frame = 8; frame < 16; ++frame) celB.setExposure(static_cast<size_t>(frame), 0);
     for (int frame = 16; frame < 24; ++frame) celB.setExposure(static_cast<size_t>(frame), 1);
     for (int frame = 24; frame < 36; ++frame) celB.setExposure(static_cast<size_t>(frame), 2);
     for (int frame = 36; frame < 48; ++frame) celB.setExposure(static_cast<size_t>(frame), 3);
+    celB.setActionEntry(8, "1");
+    celB.setActionEntry(16, "○");
+    celB.setActionEntry(24, "2");
+    celB.setActionEntry(36, "●");
 
     m_activeCel = 0;
     clearUndoHistory();
     markCutDirty(cut);
     setCurrentFrame(7);
+    m_xsheetPanel->debugSelectActionCell(0, 7);
 }
 
 int MainWindow::debugXsheetEditUndoRedo() {
@@ -4016,7 +4100,31 @@ int MainWindow::debugXsheetEditUndoRedo() {
     redo();
     const bool redone = cel.exposure(0) == 0 && cel.exposure(1) == 0 && cel.exposure(2) == 0 &&
                         cel.exposure(3) == 0;
-    return filled && undone && redone ? 0 : 1;
+
+    m_xsheetPanel->debugSelectActionCell(0, 5);
+    m_xsheetPanel->debugSetActionMarker(QStringLiteral("3"));
+    const bool actionSet = cel.actionEntry(5) == "3";
+    undo();
+    const bool actionUndone = cel.actionEntry(5).empty();
+    redo();
+    const bool actionRedone = cel.actionEntry(5) == "3";
+
+    const size_t keyDrawing = cel.drawingCount();
+    addKeyDrawingAtCurrent();
+    const bool keyAdded =
+        cel.drawingKind(keyDrawing) == core::DrawingKind::Key &&
+        cel.exposure(8) == static_cast<int>(keyDrawing) && cel.actionEntry(8) == "3";
+
+    const size_t inbetweenDrawing = cel.drawingCount();
+    addInbetweenDrawingAtCurrent();
+    const bool inbetweenAdded =
+        cel.drawingKind(inbetweenDrawing) == core::DrawingKind::Inbetween &&
+        cel.exposure(9) == static_cast<int>(inbetweenDrawing) && cel.actionEntry(9) == "○";
+
+    return filled && undone && redone && actionSet && actionUndone && actionRedone &&
+                   keyAdded && inbetweenAdded
+               ? 0
+               : 1;
 }
 
 void MainWindow::debugSetupCelDemo() {

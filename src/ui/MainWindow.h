@@ -263,6 +263,9 @@ private:
     void updateCanvasLayers();
     void setCurrentFrame(size_t index);
     void addFrameAfterCurrent();
+    void addKeyDrawingAtCurrent();
+    void addInbetweenDrawingAtCurrent();
+    void addDrawingAtCurrent(core::DrawingKind kind);
     void deleteCurrentFrame();
     void togglePlayback();
     void onPlaybackTick();
@@ -273,6 +276,12 @@ private:
     void applyStepPatternRange(int step, int startFrame, int endFrame);
     void applyExposureEdits(const QList<int>& celIndices, const QList<int>& frames,
                             const QList<int>& drawings);
+    void applyTimesheetEdits(const QList<int>& exposureCelIndices,
+                             const QList<int>& exposureFrames,
+                             const QList<int>& drawings,
+                             const QList<int>& actionCelIndices,
+                             const QList<int>& actionFrames,
+                             const QStringList& actionEntries);
 
     // 動画(絵)管理操作
     void deleteDrawing(int idx);

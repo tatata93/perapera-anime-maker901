@@ -11,6 +11,12 @@
 
 namespace core {
 
+enum class DrawingKind {
+    Unspecified = 0,
+    Key = 1,
+    Inbetween = 2,
+};
+
 // 2Dベクトル(セルのタップ/ペグ移動量、px)
 struct Vec2 {
     float x = 0.0f;
@@ -46,15 +52,27 @@ public:
 
     // 動画(絵)の枚数。レイヤー0のフレーム数を代表値とする(レイヤー間はコマ数同期前提)
     size_t drawingCount() const { return m_layers.empty() ? 0 : m_layers.front()->frameCount(); }
+    DrawingKind drawingKind(size_t drawing) const {
+        return drawing < m_drawingKinds.size() ? m_drawingKinds[drawing] : DrawingKind::Unspecified;
+    }
+    void setDrawingKind(size_t drawing, DrawingKind kind);
+    void removeDrawingMetadata(size_t drawing);
+    const std::vector<DrawingKind>& drawingKinds() const { return m_drawingKinds; }
 
     // --- 露出表(タイムシートの列) ---
     // コマt(カット尺内の位置)に表示する動画番号。-1はセルなし(空欄)
 
     int exposure(size_t frame) const { return frame < m_exposure.size() ? m_exposure[frame] : -1; }
     void setExposure(size_t frame, int drawing);
+    const std::string& actionEntry(size_t frame) const;
+    void setActionEntry(size_t frame, std::string entry);
     // 尺の変更に合わせて露出表の長さを揃える(伸長分は-1で埋める)
-    void resizeExposure(size_t frameCount) { m_exposure.resize(frameCount, -1); }
+    void resizeExposure(size_t frameCount) {
+        m_exposure.resize(frameCount, -1);
+        m_actionTrack.resize(frameCount);
+    }
     const std::vector<int>& exposures() const { return m_exposure; }
+    const std::vector<std::string>& actionTrack() const { return m_actionTrack; }
 
     // 一括コマ打ち: 動画0,1,2...をstepコマずつ順番に割り当てる(frameCountまで)。
     // 動画が尽きたら残りは空欄にする。
@@ -89,6 +107,8 @@ private:
     std::string m_name;
     std::vector<std::unique_ptr<Layer>> m_layers;
     std::vector<int> m_exposure;
+    std::vector<std::string> m_actionTrack;
+    std::vector<DrawingKind> m_drawingKinds;
     std::map<size_t, Vec2> m_positionKeys;
     bool m_visible = true;
     double m_opacity = 1.0;

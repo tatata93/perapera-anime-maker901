@@ -33,3 +33,24 @@ TEST_CASE("ExposureSheetCommand edits a range as one undo step", "[core][sheet][
     REQUIRE(celA.exposure(2) == 2);
     REQUIRE(celB.exposure(2) == 1);
 }
+
+TEST_CASE("ExposureSheetCommand keeps ACTION and CELL in one undo step", "[core][sheet][command]") {
+    core::Cel cel("A");
+    cel.resizeExposure(4);
+
+    std::vector<core::ExposureChange> exposureChanges{{&cel, 2, -1, 1}};
+    std::vector<core::ActionChange> actionChanges{{&cel, 2, std::string(), "○"}};
+
+    core::CommandStack stack;
+    stack.push(std::make_unique<core::ExposureSheetCommand>(exposureChanges, actionChanges));
+    REQUIRE(cel.exposure(2) == 1);
+    REQUIRE(cel.actionEntry(2) == "○");
+
+    stack.undo();
+    REQUIRE(cel.exposure(2) == -1);
+    REQUIRE(cel.actionEntry(2).empty());
+
+    stack.redo();
+    REQUIRE(cel.exposure(2) == 1);
+    REQUIRE(cel.actionEntry(2) == "○");
+}

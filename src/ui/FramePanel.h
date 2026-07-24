@@ -20,7 +20,8 @@ public:
     // 表示順に並んだ動画一覧を反映する(シグナルは発火しない)。
     // displayOrder[表示行] = 動画インデックス(0始まり)。currentDrawingは現在選択中の動画インデックス。
     // ライトテーブルのチェック状態は動画インデックスをキーに保持し、再構築後も引き継ぐ
-    void setDrawings(const QList<int>& displayOrder, int currentDrawing);
+    void setDrawings(const QList<int>& displayOrder, const QList<int>& drawingKinds,
+                     int currentDrawing);
 
     // 現在の並び順(0=番号順、1=再生順)。MainWindowがdisplayOrderを組み立てる際に参照する
     int sortMode() const;

@@ -7,10 +7,12 @@
 #include <vector>
 
 class QAction;
+class QButtonGroup;
 class QLabel;
 class QSpinBox;
 class QTableWidget;
 class QTableWidgetItem;
+class QWidget;
 
 // 縦読みのタイムシート。左からA/B/Cの順にセルを並べ、行は1始まりのコマを表す。
 // 数字が動画の先頭、縦線が同じ動画の継続、空欄が空セル。
@@ -20,18 +22,27 @@ class XsheetPanel : public QDockWidget {
 public:
     explicit XsheetPanel(QWidget* parent = nullptr);
 
-    void setSheet(const QStringList& celNames, const QList<bool>& celVisible, const QList<QList<int>>& exposures,
+    void setSheet(const QStringList& celNames, const QList<bool>& celVisible,
+                  const QList<QList<int>>& exposures, const QList<QStringList>& actionTracks,
                   int frameCount, int currentFrame, int activeCel, int fps = 24);
     void debugSelectExposureRange(int celIndex, int firstFrame, int lastFrame);
+    void debugSelectActionCell(int celIndex, int frame);
+    void debugSetActionMarker(const QString& marker) { setActionSelection(marker); }
     void debugFillHoldSelection() { fillHoldSelection(); }
 
 signals:
-    void exposureEditsRequested(const QList<int>& celIndices, const QList<int>& frames,
-                                const QList<int>& drawings);
+    void sheetEditsRequested(const QList<int>& exposureCelIndices,
+                             const QList<int>& exposureFrames,
+                             const QList<int>& drawings,
+                             const QList<int>& actionCelIndices,
+                             const QList<int>& actionFrames,
+                             const QStringList& actionEntries);
     void cellClicked(int celIndex, int frame);
     void frameCountChanged(int frameCount);
     void stepPatternRequested(int step, int startFrame, int endFrame);
     void addDrawingRequested();
+    void addKeyDrawingRequested();
+    void addInbetweenDrawingRequested();
     void deleteDrawingRequested();
     void celAddRequested();
     void celRemoveRequested();
@@ -41,10 +52,22 @@ signals:
     void tableFocusChanged(bool focused);
 
 private:
-    struct PendingEdit {
+    enum class ViewMode {
+        Both = 0,
+        Action = 1,
+        Cell = 2,
+    };
+
+    struct PendingExposureEdit {
         int cel = -1;
         int frame = -1;
         int drawing = -1;
+    };
+
+    struct PendingActionEdit {
+        int cel = -1;
+        int frame = -1;
+        QString entry;
     };
 
     void onItemChanged(QTableWidgetItem* item);
@@ -57,13 +80,23 @@ private:
     void clearSelection();
     void fillHoldSelection();
     void requestStepPattern(int step);
-    void emitEdits(const std::vector<PendingEdit>& edits);
+    void setActionSelection(const QString& entry);
+    void promptKeyNumber();
+    void setViewMode(ViewMode mode);
+    void emitEdits(const std::vector<PendingExposureEdit>& exposureEdits,
+                   const std::vector<PendingActionEdit>& actionEdits = {});
     void updateActionStates();
-    int selectedExposureCount() const;
+    void updateEditControls();
+    int selectedEditableCount() const;
+    int selectedCellCount() const;
     bool selectedFrameRange(int& firstFrame, int& lastFrame) const;
     void updateRowBackgrounds(int frame);
     int colToCel(int col) const;
-    int celToCol(int celIndex) const;
+    bool isActionColumn(int col) const;
+    int celToActionCol(int celIndex) const;
+    int celToCellCol(int celIndex) const;
+    int celToPrimaryCol(int celIndex) const;
+    int sheetColumnCount(int celCount) const;
     QString timeLabel(int zeroBasedFrame) const;
 
     static constexpr int kTimingColumn = 0;
@@ -77,12 +110,17 @@ private:
     QAction* m_pasteAction = nullptr;
     QAction* m_clearAction = nullptr;
     QAction* m_holdAction = nullptr;
+    QWidget* m_actionControls = nullptr;
+    QWidget* m_cellControls = nullptr;
+    QButtonGroup* m_viewModeButtons = nullptr;
     QList<QList<int>> m_exposures;
+    QList<QStringList> m_actionTracks;
     QStringList m_celNames;
     QList<bool> m_celVisible;
     int m_frameCount = 1;
     int m_currentFrame = 0;
     int m_activeCel = 0;
     int m_fps = 24;
+    ViewMode m_viewMode = ViewMode::Both;
     bool m_updating = false;
 };

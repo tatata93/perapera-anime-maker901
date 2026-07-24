@@ -124,6 +124,8 @@ JSONヘッダの内容はファイル種別 (`fileType`: `"project"` / `"storybo
     "name": "...",
     "visible": true,
     "exposure": [0, 0, 1, 1, ...],
+    "actionTrack": ["1", "", "○", "", ...],  // 省略可(ACTION欄)
+    "drawingKinds": [1, 2, 0, ...],            // 省略可(0=未指定、1=原画、2=中割)
     "positionKeys": [[0, 0.0, 0.0], [23, -1920.0, 0.0]],
     "paperWidth": 3840,   // 省略可(引きセル。0=キャンバスサイズに従う既定)
     "paperHeight": 1080,  // 省略可

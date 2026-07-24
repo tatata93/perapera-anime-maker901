@@ -507,7 +507,7 @@ bool readPaintLayers(const json& owner, const unsigned char* blobBase, uint64_t 
 }
 
 // --- cuts/cut_<id>.ppam 1個分のJSON変換 ---
-// 現在jCutに入っている全項目(name/frameCount/action/dialogue/status/cels(exposure/positionKeys/
+// 現在jCutに入っている全項目(name/frameCount/action/dialogue/status/cels(exposure/actionTrack/drawingKinds/positionKeys/
 // paperW/H/layers/frames)/previz/cameraKeys/effects(params/paramCurves/mask)/
 // multiplane(camera/planes/backlights))を漏れなく往復させる
 
@@ -541,6 +541,17 @@ bool buildCutJson(const Cut& cut, json* jCutOut, std::vector<unsigned char>* blo
                           {"exposure", cel.exposures()},
                           {"positionKeys", std::move(jPositionKeys)},
                           {"layers", std::move(jLayers)}};
+        if (std::any_of(cel.actionTrack().begin(), cel.actionTrack().end(),
+                        [](const std::string& entry) { return !entry.empty(); })) {
+            jCelEntry["actionTrack"] = cel.actionTrack();
+        }
+        if (std::any_of(cel.drawingKinds().begin(), cel.drawingKinds().end(),
+                        [](DrawingKind kind) { return kind != DrawingKind::Unspecified; })) {
+            std::vector<int> kinds;
+            kinds.reserve(cel.drawingKinds().size());
+            for (DrawingKind kind : cel.drawingKinds()) kinds.push_back(static_cast<int>(kind));
+            jCelEntry["drawingKinds"] = std::move(kinds);
+        }
         // 用紙サイズ(引きセル)。0(キャンバスサイズに従う既定)は省略する
         if (cel.paperWidth() > 0) jCelEntry["paperWidth"] = cel.paperWidth();
         if (cel.paperHeight() > 0) jCelEntry["paperHeight"] = cel.paperHeight();
@@ -737,6 +748,22 @@ bool parseCutJson(const json& jCut, Cut& cut, const unsigned char* blobBase, uin
         } else {
             for (size_t t = 0; t < cel.drawingCount(); ++t) cel.setExposure(t, static_cast<int>(t));
         }
+        if (jCel.contains("actionTrack")) {
+            const auto actionTrack = jCel.at("actionTrack").get<std::vector<std::string>>();
+            for (size_t t = 0; t < actionTrack.size(); ++t) cel.setActionEntry(t, actionTrack[t]);
+        }
+        if (jCel.contains("drawingKinds")) {
+            const auto drawingKinds = jCel.at("drawingKinds").get<std::vector<int>>();
+            for (size_t drawing = 0; drawing < drawingKinds.size(); ++drawing) {
+                const int rawKind = drawingKinds[drawing];
+                const DrawingKind kind =
+                    rawKind == static_cast<int>(DrawingKind::Key)
+                        ? DrawingKind::Key
+                        : (rawKind == static_cast<int>(DrawingKind::Inbetween) ? DrawingKind::Inbetween
+                                                                              : DrawingKind::Unspecified);
+                cel.setDrawingKind(drawing, kind);
+            }
+        }
     }
 
     // 絵コンテメモ(欠落時は空文字)
@@ -876,7 +903,8 @@ bool parseCutJson(const json& jCut, Cut& cut, const unsigned char* blobBase, uin
     size_t frameCount = jCut.value("frameCount", static_cast<size_t>(0));
     if (frameCount == 0) {
         for (size_t ceIdx = 0; ceIdx < cut.celCount(); ++ceIdx) {
-            frameCount = std::max({frameCount, cut.cel(ceIdx).exposures().size(), cut.cel(ceIdx).drawingCount()});
+            frameCount = std::max({frameCount, cut.cel(ceIdx).exposures().size(),
+                                   cut.cel(ceIdx).actionTrack().size(), cut.cel(ceIdx).drawingCount()});
         }
     }
     cut.setFrameCount(std::max<size_t>(1, frameCount));

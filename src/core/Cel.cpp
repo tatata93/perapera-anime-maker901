@@ -7,6 +7,8 @@ namespace core {
 
 namespace {
 
+const std::string kEmptyActionEntry;
+
 // srcを中央基準でdstへコピーする(dstはあらかじめ透明で初期化されている前提)。
 // dstの方が小さい方向ははみ出す部分を切り捨てる(同じ式で拡大・縮小の両方に対応する)
 void copyCentered(const Bitmap& src, Bitmap& dst) {
@@ -43,6 +45,25 @@ void Cel::removeLayer(size_t index) {
 void Cel::setExposure(size_t frame, int drawing) {
     if (frame >= m_exposure.size()) m_exposure.resize(frame + 1, -1);
     m_exposure[frame] = drawing;
+}
+
+const std::string& Cel::actionEntry(size_t frame) const {
+    return frame < m_actionTrack.size() ? m_actionTrack[frame] : kEmptyActionEntry;
+}
+
+void Cel::setActionEntry(size_t frame, std::string entry) {
+    if (frame >= m_actionTrack.size()) m_actionTrack.resize(frame + 1);
+    m_actionTrack[frame] = std::move(entry);
+}
+
+void Cel::setDrawingKind(size_t drawing, DrawingKind kind) {
+    if (drawing >= m_drawingKinds.size()) m_drawingKinds.resize(drawing + 1, DrawingKind::Unspecified);
+    m_drawingKinds[drawing] = kind;
+}
+
+void Cel::removeDrawingMetadata(size_t drawing) {
+    if (drawing >= m_drawingKinds.size()) return;
+    m_drawingKinds.erase(m_drawingKinds.begin() + static_cast<ptrdiff_t>(drawing));
 }
 
 void Cel::applyStepPattern(int step, size_t frameCount, size_t startFrame) {
@@ -103,6 +124,8 @@ std::unique_ptr<Cel> Cel::clone(std::string name) const {
     copy->m_visible = m_visible;
     copy->m_opacity = m_opacity;
     copy->m_exposure = m_exposure;
+    copy->m_actionTrack = m_actionTrack;
+    copy->m_drawingKinds = m_drawingKinds;
     copy->m_positionKeys = m_positionKeys;
     copy->m_paperWidth = m_paperWidth;
     copy->m_paperHeight = m_paperHeight;

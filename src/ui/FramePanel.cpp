@@ -76,7 +76,8 @@ QList<int> FramePanel::lightTableDrawings() const {
     return result;
 }
 
-void FramePanel::setDrawings(const QList<int>& displayOrder, int currentDrawing) {
+void FramePanel::setDrawings(const QList<int>& displayOrder, const QList<int>& drawingKinds,
+                             int currentDrawing) {
     m_updating = true;
     m_displayOrder = displayOrder;
 
@@ -93,7 +94,9 @@ void FramePanel::setDrawings(const QList<int>& displayOrder, int currentDrawing)
     for (int row = 0; row < count; ++row) {
         QListWidgetItem* item = m_list->item(row);
         const int drawing = displayOrder.at(row);
-        item->setText(tr("動画 %1").arg(drawing + 1));
+        const int kind = drawing >= 0 && drawing < drawingKinds.size() ? drawingKinds.at(drawing) : 0;
+        const QString label = kind == 1 ? tr("原画") : (kind == 2 ? tr("中割") : tr("動画"));
+        item->setText(tr("%1 %2").arg(label).arg(drawing + 1));
         item->setCheckState(m_lightTableChecked.contains(drawing) ? Qt::Checked : Qt::Unchecked);
     }
 
