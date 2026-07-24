@@ -625,15 +625,17 @@ void MainWindow::addInbetweenDrawingAtCurrent() {
 void MainWindow::addDrawingAtCurrent(core::DrawingKind kind) {
     if (m_playing) return;
     // 新しい動画を作る(セル内全レイヤーに同時追加)。
-    // 現在コマが空欄(未割付)ならその場に割り付け、コマは移動しない。
-    // 既に割付済みなら次のコマに割り付け、次のコマが尺を超える場合は尺を伸ばす
+    // 原画/中割は選択したコマへ直接作る。通常の「動画追加」は従来どおり、
+    // 現在コマが割付済みなら次のコマへ進める。
     core::Cel& cel = activeCel();
     const int newDrawing = static_cast<int>(cel.drawingCount());
     for (size_t li = 0; li < cel.layerCount(); ++li) {
         cel.layer(li).addFrame().bitmap() = makeTransparentCelForCel(cel, canvasWidth(), canvasHeight());
     }
     const bool currentIsEmpty = cel.exposure(m_currentFrame) == -1;
-    const size_t target = currentIsEmpty ? m_currentFrame : m_currentFrame + 1;
+    const bool placeAtSelectedFrame = kind != core::DrawingKind::Unspecified;
+    const size_t target =
+        placeAtSelectedFrame || currentIsEmpty ? m_currentFrame : m_currentFrame + 1;
     core::Cut& cut = activeCut();
     if (target >= cut.frameCount()) cut.setFrameCount(target + 1);
     cel.setDrawingKind(static_cast<size_t>(newDrawing), kind);
@@ -4113,13 +4115,14 @@ int MainWindow::debugXsheetEditUndoRedo() {
     addKeyDrawingAtCurrent();
     const bool keyAdded =
         cel.drawingKind(keyDrawing) == core::DrawingKind::Key &&
-        cel.exposure(8) == static_cast<int>(keyDrawing) && cel.actionEntry(8) == "3";
+        cel.exposure(7) == static_cast<int>(keyDrawing) && cel.actionEntry(7) == "3";
 
+    setCurrentFrame(8);
     const size_t inbetweenDrawing = cel.drawingCount();
     addInbetweenDrawingAtCurrent();
     const bool inbetweenAdded =
         cel.drawingKind(inbetweenDrawing) == core::DrawingKind::Inbetween &&
-        cel.exposure(9) == static_cast<int>(inbetweenDrawing) && cel.actionEntry(9) == "○";
+        cel.exposure(8) == static_cast<int>(inbetweenDrawing) && cel.actionEntry(8) == "○";
 
     return filled && undone && redone && actionSet && actionUndone && actionRedone &&
                    keyAdded && inbetweenAdded

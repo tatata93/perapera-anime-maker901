@@ -98,7 +98,7 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
 
     m_viewModeButtons = new QButtonGroup(this);
     m_viewModeButtons->setExclusive(true);
-    const QStringList viewLabels = {tr("両方"), tr("原画"), tr("動画")};
+    const QStringList viewLabels = {tr("全部"), tr("原画"), tr("動画")};
     for (int mode = 0; mode < viewLabels.size(); ++mode) {
         auto* button = new QToolButton(container);
         button->setText(viewLabels.at(mode));
@@ -187,19 +187,27 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     editBarLayout->setContentsMargins(0, 0, 0, 0);
     editBarLayout->setSpacing(3);
 
+    auto* createControls = new QWidget(editBar);
+    auto* createLayout = new QHBoxLayout(createControls);
+    createLayout->setContentsMargins(0, 0, 0, 0);
+    createLayout->setSpacing(3);
+    createLayout->addWidget(new QLabel(tr("新しい絵:"), createControls));
+    auto* addKeyButton = new QToolButton(createControls);
+    addKeyButton->setText(tr("原画を作る"));
+    addKeyButton->setToolTip(tr("選択したコマに新しい原画を作ります（K）"));
+    createLayout->addWidget(addKeyButton);
+    auto* addInbetweenButton = new QToolButton(createControls);
+    addInbetweenButton->setText(tr("中割を作る"));
+    addInbetweenButton->setToolTip(tr("選択したコマに新しい中割を作ります（I）"));
+    createLayout->addWidget(addInbetweenButton);
+    editBarLayout->addWidget(createControls);
+    editBarLayout->addSpacing(8);
+
     m_actionControls = new QWidget(editBar);
     auto* actionLayout = new QHBoxLayout(m_actionControls);
     actionLayout->setContentsMargins(0, 0, 0, 0);
     actionLayout->setSpacing(3);
-    actionLayout->addWidget(new QLabel(tr("ACTION:"), m_actionControls));
-    auto* addKeyButton = new QToolButton(m_actionControls);
-    addKeyButton->setText(tr("原画追加"));
-    addKeyButton->setToolTip(tr("新しい原画を作り、現在位置へ割り付けます"));
-    actionLayout->addWidget(addKeyButton);
-    auto* addInbetweenButton = new QToolButton(m_actionControls);
-    addInbetweenButton->setText(tr("中割追加"));
-    addInbetweenButton->setToolTip(tr("新しい中割を作り、現在位置へ割り付けます"));
-    actionLayout->addWidget(addInbetweenButton);
+    actionLayout->addWidget(new QLabel(tr("原画指示:"), m_actionControls));
     auto* keyNumberButton = new QToolButton(m_actionControls);
     keyNumberButton->setText(tr("原画番号..."));
     actionLayout->addWidget(keyNumberButton);
@@ -219,7 +227,7 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     auto* cellLayout = new QHBoxLayout(m_cellControls);
     cellLayout->setContentsMargins(0, 0, 0, 0);
     cellLayout->setSpacing(3);
-    cellLayout->addWidget(new QLabel(tr("CELL コマ打ち:"), m_cellControls));
+    cellLayout->addWidget(new QLabel(tr("動画の割付:"), m_cellControls));
     for (int step = 1; step <= 3; ++step) {
         auto* stepButton = new QToolButton(m_cellControls);
         stepButton->setText(tr("%1コマ").arg(step));
@@ -877,7 +885,7 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
         for (int col : {celToActionCol(cel), celToCellCol(cel)}) {
             if (col < 0) continue;
             QString label =
-                tr("%1 %2").arg(celNames.at(cel), isActionColumn(col) ? tr("ACTION") : tr("CELL"));
+                tr("%1 %2").arg(celNames.at(cel), isActionColumn(col) ? tr("原画") : tr("動画"));
             if (!visible) label += tr(" [非表示]");
             auto* headerItem = new QTableWidgetItem(label);
             QFont font = headerItem->font();
@@ -887,6 +895,9 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
                 headerItem->setBackground(isActionColumn(col) ? QColor(239, 220, 158)
                                                                : QColor(202, 222, 246));
             }
+            headerItem->setToolTip(
+                isActionColumn(col) ? tr("ACTION：原画番号や中割記号を書く欄")
+                                    : tr("CELL：このコマで実際に表示する動画"));
             m_table->setHorizontalHeaderItem(col, headerItem);
             m_table->horizontalHeader()->setSectionResizeMode(col, QHeaderView::Interactive);
             m_table->setColumnWidth(col, isActionColumn(col) ? 84 : 82);
