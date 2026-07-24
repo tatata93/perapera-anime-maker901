@@ -45,6 +45,7 @@ public:
     // 絵コンテ(パネル列)。カット制作前の単体作業として編集される
     std::vector<StoryboardPanel>& storyboard() { return m_storyboard; }
     const std::vector<StoryboardPanel>& storyboard() const { return m_storyboard; }
+    StoryboardPanel& duplicateStoryboardPanel(size_t index);
 
 private:
     std::string m_name;

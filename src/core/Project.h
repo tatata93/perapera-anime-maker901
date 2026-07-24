@@ -61,6 +61,7 @@ public:
     // 設定ボード(キャラ・美術などの資料集)。既定は空
     std::vector<SettingBoard>& settingBoards() { return m_settingBoards; }
     const std::vector<SettingBoard>& settingBoards() const { return m_settingBoards; }
+    SettingBoard& duplicateSettingBoard(size_t index, std::string name);
 
     // カットの永続ID採番カウンタ(既定1)。ProjectIO::saveがid==0のカットへ
     // ここから採番し、採番後にこのカウンタを更新する

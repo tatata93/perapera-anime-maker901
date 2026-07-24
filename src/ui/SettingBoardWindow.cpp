@@ -15,6 +15,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPen>
@@ -352,9 +353,11 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* buttonLayout = new QHBoxLayout();
     auto* addButton = new QPushButton(tr("追加"), leftContainer);
+    auto* duplicateButton = new QPushButton(tr("複製"), leftContainer);
     auto* removeButton = new QPushButton(tr("削除"), leftContainer);
     auto* renameButton = new QPushButton(tr("名前変更"), leftContainer);
     buttonLayout->addWidget(addButton);
+    buttonLayout->addWidget(duplicateButton);
     buttonLayout->addWidget(removeButton);
     buttonLayout->addWidget(renameButton);
     leftLayout->addLayout(buttonLayout);
@@ -494,7 +497,18 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(detachButton, &QPushButton::clicked, this, &SettingBoardWindow::detachCanvas);
 
     connect(m_list, &QListWidget::itemSelectionChanged, this, &SettingBoardWindow::onSelectionChanged);
+    m_list->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_list, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        QListWidgetItem* item = m_list->itemAt(pos);
+        if (!item) return;
+        m_list->setCurrentItem(item);
+
+        QMenu menu(this);
+        QAction* duplicateAction = menu.addAction(tr("この設定ボードを複製"));
+        if (menu.exec(m_list->viewport()->mapToGlobal(pos)) == duplicateAction) duplicateBoard();
+    });
     connect(addButton, &QPushButton::clicked, this, &SettingBoardWindow::addBoard);
+    connect(duplicateButton, &QPushButton::clicked, this, &SettingBoardWindow::duplicateBoard);
     connect(removeButton, &QPushButton::clicked, this, &SettingBoardWindow::removeBoard);
     connect(renameButton, &QPushButton::clicked, this, &SettingBoardWindow::renameBoard);
 
@@ -683,6 +697,34 @@ void SettingBoardWindow::addBoard() {
     boards.push_back(std::move(board));
 
     m_selectedRow = static_cast<int>(boards.size()) - 1;
+    refresh();
+    emit edited();
+}
+
+void SettingBoardWindow::duplicateBoard() {
+    if (!m_project) return;
+    auto& boards = m_project->settingBoards();
+    const int row = selectedBoardIndex();
+    if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
+
+    clearUndoHistory();
+    syncSettingBoardComposite(boards[static_cast<size_t>(row)]);
+
+    const QString sourceName = QString::fromStdString(boards[static_cast<size_t>(row)].name);
+    const QString baseName = sourceName.isEmpty() ? tr("設定ボード 差分") : tr("%1 差分").arg(sourceName);
+    QString copyName = baseName;
+    int suffix = 2;
+    const auto nameExists = [&boards](const QString& name) {
+        return std::any_of(boards.cbegin(), boards.cend(), [&name](const core::SettingBoard& board) {
+            return QString::fromStdString(board.name) == name;
+        });
+    };
+    while (nameExists(copyName)) copyName = tr("%1 %2").arg(baseName).arg(suffix++);
+
+    core::SettingBoard& copy =
+        m_project->duplicateSettingBoard(static_cast<size_t>(row), copyName.toStdString());
+    copy.finalStamp = false;
+    m_selectedRow = row + 1;
     refresh();
     emit edited();
 }
@@ -949,6 +991,15 @@ void SettingBoardWindow::debugDetachCanvas() {
 
 FloatingCanvasWindow* SettingBoardWindow::debugFloatingCanvasWindow() const {
     return m_floatingCanvasWindow;
+}
+
+bool SettingBoardWindow::debugDuplicateSelectedBoard() {
+    if (!m_project) return false;
+    const size_t before = m_project->settingBoards().size();
+    duplicateBoard();
+    if (m_project->settingBoards().size() != before + 1 || m_selectedRow < 0) return false;
+    const auto& copy = m_project->settingBoards()[static_cast<size_t>(m_selectedRow)];
+    return !copy.finalStamp && QString::fromStdString(copy.name).contains(tr("差分"));
 }
 
 bool SettingBoardWindow::debugExportSelectedBoardImage(const QString& path) {

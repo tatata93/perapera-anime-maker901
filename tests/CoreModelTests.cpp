@@ -138,6 +138,76 @@ TEST_CASE("Cel and Layer duplication copies editable content", "[core]") {
     REQUIRE(celCopy.layer(1).frame(0).bitmap().pixel(1, 1).b == 30);
 }
 
+TEST_CASE("Storyboard panel duplication creates an independent editable copy", "[core][storyboard]") {
+    core::Scene scene("Scene 1");
+    core::StoryboardPanel panel;
+    panel.cutLabel = "12";
+    panel.action = "turn";
+    panel.dialogue = "look";
+    panel.durationFrames = 18;
+    panel.drawing = core::Bitmap(4, 3);
+    panel.drawing.fill({0, 0, 0, 0});
+    panel.drawing.setPixel(1, 1, {10, 20, 30, 255});
+
+    core::PaintLayer layer;
+    layer.name = "Line";
+    layer.bitmap = panel.drawing;
+    layer.opacity = 0.5;
+    panel.layers.push_back(layer);
+    scene.storyboard().push_back(panel);
+
+    core::StoryboardPanel& copy = scene.duplicateStoryboardPanel(0);
+    REQUIRE(scene.storyboard().size() == 2);
+    REQUIRE(copy.cutLabel == "12");
+    REQUIRE(copy.action == "turn");
+    REQUIRE(copy.dialogue == "look");
+    REQUIRE(copy.durationFrames == 18);
+    REQUIRE(copy.layers.size() == 1);
+    REQUIRE(copy.layers[0].opacity == 0.5);
+    REQUIRE(copy.drawing.pixel(1, 1).g == 20);
+
+    copy.drawing.setPixel(1, 1, {200, 100, 50, 255});
+    copy.layers[0].bitmap.setPixel(1, 1, {5, 6, 7, 255});
+    REQUIRE(scene.storyboard()[0].drawing.pixel(1, 1).r == 10);
+    REQUIRE(scene.storyboard()[0].layers[0].bitmap.pixel(1, 1).r == 10);
+}
+
+TEST_CASE("Setting board duplication copies artwork and annotations independently", "[core][settingboard]") {
+    core::Project project("Project");
+    core::SettingBoard board;
+    board.name = "Character";
+    board.finalStamp = true;
+    board.image = core::Bitmap(4, 3);
+    board.image.fill({0, 0, 0, 0});
+    board.image.setPixel(2, 1, {30, 40, 50, 255});
+
+    core::PaintLayer layer;
+    layer.name = "Color";
+    layer.bitmap = board.image;
+    board.layers.push_back(layer);
+    board.colorSpecs.push_back({"Skin", {240, 200, 170, 255}});
+    board.textBoxes.push_back({"height 160", 1, 2, 30, 10, 8, {1, 2, 3, 255}});
+    project.settingBoards().push_back(board);
+
+    core::SettingBoard& copy = project.duplicateSettingBoard(0, "Character Variant");
+    REQUIRE(project.settingBoards().size() == 2);
+    REQUIRE(copy.name == "Character Variant");
+    REQUIRE(copy.finalStamp);
+    REQUIRE(copy.layers.size() == 1);
+    REQUIRE(copy.colorSpecs[0].name == "Skin");
+    REQUIRE(copy.textBoxes[0].text == "height 160");
+    REQUIRE(copy.image.pixel(2, 1).g == 40);
+
+    copy.image.setPixel(2, 1, {200, 100, 50, 255});
+    copy.layers[0].bitmap.setPixel(2, 1, {5, 6, 7, 255});
+    copy.colorSpecs[0].name = "Shadow";
+    copy.textBoxes[0].text = "height 170";
+    REQUIRE(project.settingBoards()[0].image.pixel(2, 1).r == 30);
+    REQUIRE(project.settingBoards()[0].layers[0].bitmap.pixel(2, 1).r == 30);
+    REQUIRE(project.settingBoards()[0].colorSpecs[0].name == "Skin");
+    REQUIRE(project.settingBoards()[0].textBoxes[0].text == "height 160");
+}
+
 TEST_CASE("Cel::moveLayer reorders layers", "[core]") {
     core::Cel cel("Cel A");
     cel.addLayer("Layer 1");

@@ -1070,8 +1070,14 @@ int main(int argc, char* argv[]) {
             window.debugSetupStoryboardDemo();
             window.debugOpenStoryboard();
             QTimer::singleShot(400, &window, [&window, outputPath] {
-                window.storyboardWindow()->grab().save(outputPath);
-                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                if (!window.storyboardWindow()->debugDuplicateSelectedPanel()) {
+                    QApplication::exit(1);
+                    return;
+                }
+                QTimer::singleShot(200, &window, [&window, outputPath] {
+                    window.storyboardWindow()->grab().save(outputPath);
+                    QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                });
             });
         });
     }
@@ -1158,6 +1164,10 @@ int main(int argc, char* argv[]) {
                                 QApplication::exit(1);
                                 return;
                             }
+                            if (!window.storyboardWindow()->debugDuplicateSelectedPanel()) {
+                                QApplication::exit(1);
+                                return;
+                            }
                             auto* canvas = floating->findChild<GLCanvas*>();
                             if (!canvas) {
                                 QApplication::exit(1);
@@ -1184,9 +1194,15 @@ int main(int argc, char* argv[]) {
             window.debugSetupSettingBoardDemo();
             window.debugOpenSettingBoard();
             QTimer::singleShot(400, &window, [&window, outputPath, mainOutputPath] {
-                window.settingBoardWindow()->grab().save(outputPath);
-                window.grab().save(mainOutputPath);  // 参照ドック(色指定含む)を確認するためメインウィンドウも保存
-                QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                if (!window.settingBoardWindow()->debugDuplicateSelectedBoard()) {
+                    QApplication::exit(1);
+                    return;
+                }
+                QTimer::singleShot(200, &window, [&window, outputPath, mainOutputPath] {
+                    window.settingBoardWindow()->grab().save(outputPath);
+                    window.grab().save(mainOutputPath);  // 参照ドック(色指定含む)を確認するためメインウィンドウも保存
+                    QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+                });
             });
         });
     }
@@ -1231,6 +1247,10 @@ int main(int argc, char* argv[]) {
                         window.settingBoardWindow()->debugDetachCanvas();
                         QTimer::singleShot(100, &window, [&window, outputPath, floating] {
                             if (!floating->isVisible() || floating->isMinimized()) {
+                                QApplication::exit(1);
+                                return;
+                            }
+                            if (!window.settingBoardWindow()->debugDuplicateSelectedBoard()) {
                                 QApplication::exit(1);
                                 return;
                             }

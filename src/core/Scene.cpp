@@ -18,4 +18,11 @@ void Scene::moveCut(size_t from, size_t to) {
     m_cuts.insert(m_cuts.begin() + static_cast<ptrdiff_t>(to), std::move(moved));
 }
 
+StoryboardPanel& Scene::duplicateStoryboardPanel(size_t index) {
+    StoryboardPanel copy = m_storyboard.at(index);
+    auto it =
+        m_storyboard.insert(m_storyboard.begin() + static_cast<ptrdiff_t>(index + 1), std::move(copy));
+    return *it;
+}
+
 }  // namespace core

@@ -57,6 +57,7 @@ public:
     void debugDetachCanvas();
     FloatingCanvasWindow* debugFloatingCanvasWindow() const;
     bool debugExportStoryboardPdf(const QString& path);
+    bool debugDuplicateSelectedPanel();
 
 signals:
     void edited();  // カット番号/内容/セリフ/尺またはコンテ絵が編集された
@@ -68,6 +69,7 @@ private:
     void onItemChanged(QTableWidgetItem* item);
     void onSelectionChanged();
     void addPanel();
+    void duplicatePanel();
     void removePanel();
     void movePanel(int delta);
     void createCutFromPanel();

@@ -15,6 +15,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMarginsF>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPageLayout>
 #include <QPageSize>
@@ -459,11 +460,13 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* buttonLayout = new QHBoxLayout();
     auto* addButton = new QPushButton(tr("パネル追加"), leftContainer);
+    auto* duplicateButton = new QPushButton(tr("複製"), leftContainer);
     auto* removeButton = new QPushButton(tr("パネル削除"), leftContainer);
     auto* upButton = new QPushButton(tr("上へ"), leftContainer);
     auto* downButton = new QPushButton(tr("下へ"), leftContainer);
     auto* createCutButton = new QPushButton(tr("パネルからカット作成"), leftContainer);
     buttonLayout->addWidget(addButton);
+    buttonLayout->addWidget(duplicateButton);
     buttonLayout->addWidget(removeButton);
     buttonLayout->addWidget(upButton);
     buttonLayout->addWidget(downButton);
@@ -627,8 +630,19 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(m_table, &QTableWidget::itemChanged, this, &StoryboardWindow::onItemChanged);
     connect(m_table, &QTableWidget::itemSelectionChanged, this, &StoryboardWindow::onSelectionChanged);
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        const QModelIndex index = m_table->indexAt(pos);
+        if (!index.isValid()) return;
+        m_table->selectRow(index.row());
+
+        QMenu menu(this);
+        QAction* duplicateAction = menu.addAction(tr("このパネルを複製"));
+        if (menu.exec(m_table->viewport()->mapToGlobal(pos)) == duplicateAction) duplicatePanel();
+    });
 
     connect(addButton, &QPushButton::clicked, this, &StoryboardWindow::addPanel);
+    connect(duplicateButton, &QPushButton::clicked, this, &StoryboardWindow::duplicatePanel);
     connect(removeButton, &QPushButton::clicked, this, &StoryboardWindow::removePanel);
     connect(upButton, &QPushButton::clicked, this, [this] { movePanel(-1); });
     connect(downButton, &QPushButton::clicked, this, [this] { movePanel(1); });
@@ -897,6 +911,21 @@ void StoryboardWindow::addPanel() {
     panels.push_back(std::move(panel));
 
     m_selectedRow = static_cast<int>(panels.size()) - 1;
+    refresh();
+    emit edited();
+}
+
+void StoryboardWindow::duplicatePanel() {
+    if (!m_project || m_project->sceneCount() == 0) return;
+    auto& scene = m_project->scene(0);
+    auto& panels = scene.storyboard();
+    const int row = selectedPanelIndex();
+    if (row < 0 || static_cast<size_t>(row) >= panels.size()) return;
+
+    clearUndoHistory();
+    syncStoryboardPanelComposite(panels[static_cast<size_t>(row)]);
+    scene.duplicateStoryboardPanel(static_cast<size_t>(row));
+    m_selectedRow = row + 1;
     refresh();
     emit edited();
 }
@@ -1564,4 +1593,11 @@ void StoryboardWindow::debugDetachCanvas() {
 
 FloatingCanvasWindow* StoryboardWindow::debugFloatingCanvasWindow() const {
     return m_floatingCanvasWindow;
+}
+
+bool StoryboardWindow::debugDuplicateSelectedPanel() {
+    if (!m_project || m_project->sceneCount() == 0) return false;
+    const size_t before = m_project->scene(0).storyboard().size();
+    duplicatePanel();
+    return m_project->scene(0).storyboard().size() == before + 1 && m_selectedRow >= 0;
 }

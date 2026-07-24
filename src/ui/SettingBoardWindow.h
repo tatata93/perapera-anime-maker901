@@ -41,12 +41,14 @@ public:
     void debugDetachCanvas();
     FloatingCanvasWindow* debugFloatingCanvasWindow() const;
     bool debugExportSelectedBoardImage(const QString& path);
+    bool debugDuplicateSelectedBoard();
 
 signals:
     void edited();  // ボードの追加/削除/名前変更/手描き/画像貼付が行われた
 
 private:
     void addBoard();
+    void duplicateBoard();
     void removeBoard();
     void renameBoard();
     void onSelectionChanged();
