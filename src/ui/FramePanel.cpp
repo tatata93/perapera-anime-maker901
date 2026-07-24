@@ -95,8 +95,17 @@ void FramePanel::setDrawings(const QList<int>& displayOrder, const QList<int>& d
         QListWidgetItem* item = m_list->item(row);
         const int drawing = displayOrder.at(row);
         const int kind = drawing >= 0 && drawing < drawingKinds.size() ? drawingKinds.at(drawing) : 0;
-        const QString label = kind == 1 ? tr("原画") : (kind == 2 ? tr("中割") : tr("作画"));
-        item->setText(tr("%1 %2").arg(label).arg(drawing + 1));
+        int kindNumber = 0;
+        for (int index = 0; index <= drawing && index < drawingKinds.size(); ++index) {
+            if (drawingKinds.at(index) == kind) ++kindNumber;
+        }
+        if (kind == 1) {
+            item->setText(tr("作画%1 / 原画%2").arg(drawing + 1).arg(kindNumber));
+        } else if (kind == 2) {
+            item->setText(tr("作画%1 / 中割%2").arg(drawing + 1).arg(kindNumber));
+        } else {
+            item->setText(tr("作画%1").arg(drawing + 1));
+        }
         item->setCheckState(m_lightTableChecked.contains(drawing) ? Qt::Checked : Qt::Unchecked);
     }
 

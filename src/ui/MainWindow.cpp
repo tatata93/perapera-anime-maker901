@@ -673,6 +673,11 @@ void MainWindow::addDrawingAtCurrent(core::DrawingKind kind) {
            cel.exposure(runEnd) == oldDrawing && cel.actionEntry(runEnd).empty()) {
         ++runEnd;
     }
+    // 空セルの末尾に最初の絵を作る場合は、終点が未指定なので選択コマだけへ置く。
+    // 必要な露出はタイムシートの「ここまで保持」で明示的に伸ばす。
+    if (placeAtSelectedFrame && oldDrawing < 0 && runEnd == cut.frameCount()) {
+        runEnd = target + 1;
+    }
 
     size_t insertDrawing = cel.drawingCount();
     if (placeAtSelectedFrame) {
@@ -1754,6 +1759,7 @@ void MainWindow::updateXsheetPanel() {
     QStringList celNames;
     QList<bool> celVisible;
     QList<QList<int>> exposures;
+    QList<QList<int>> drawingKinds;
     QList<QStringList> actionTracks;
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
         const core::Cel& cel = cut.cel(ci);
@@ -1766,6 +1772,13 @@ void MainWindow::updateXsheetPanel() {
         }
         exposures.append(column);
 
+        QList<int> kindColumn;
+        kindColumn.reserve(static_cast<int>(cel.drawingCount()));
+        for (size_t drawing = 0; drawing < cel.drawingCount(); ++drawing) {
+            kindColumn.append(static_cast<int>(cel.drawingKind(drawing)));
+        }
+        drawingKinds.append(kindColumn);
+
         QStringList actionColumn;
         actionColumn.reserve(static_cast<int>(cut.frameCount()));
         for (size_t f = 0; f < cut.frameCount(); ++f) {
@@ -1774,7 +1787,7 @@ void MainWindow::updateXsheetPanel() {
         actionTracks.append(actionColumn);
     }
 
-    m_xsheetPanel->setSheet(celNames, celVisible, exposures, actionTracks,
+    m_xsheetPanel->setSheet(celNames, celVisible, exposures, drawingKinds, actionTracks,
                             static_cast<int>(cut.frameCount()), static_cast<int>(m_currentFrame),
                             static_cast<int>(m_activeCel),
                             m_fpsSpin ? m_fpsSpin->value() : kDefaultFps);
@@ -4329,11 +4342,34 @@ int MainWindow::debugXsheetEditUndoRedo() {
     addCel();
     const bool addedCelStartsEmpty =
         activeCel().drawingCount() == 0 && activeCel().exposure(0) == -1;
+    activeCut().setFrameCount(8);
+    setCurrentFrame(3);
+    addKeyDrawingAtCurrent();
+    core::Cel& addedCel = activeCel();
+    const bool firstDrawingUsesSelectedFrameOnly =
+        addedCel.drawingCount() == 1 && addedCel.exposure(3) == 0 &&
+        addedCel.exposure(4) == -1 && addedCel.exposure(7) == -1;
+    m_xsheetPanel->debugSelectExposureRange(1, 6, 6);
+    m_xsheetPanel->debugFillHoldSelection();
+    const bool heldToSelectedFrame =
+        addedCel.exposure(3) == 0 && addedCel.exposure(4) == 0 &&
+        addedCel.exposure(5) == 0 && addedCel.exposure(6) == 0 &&
+        addedCel.exposure(7) == -1;
+    m_xsheetPanel->debugSelectExposureRange(1, 5, 5);
+    m_xsheetPanel->debugEndExposureSelection();
+    const bool endedAtSelectedFrame =
+        addedCel.exposure(3) == 0 && addedCel.exposure(4) == 0 &&
+        addedCel.exposure(5) == -1 && addedCel.exposure(6) == -1;
     removeActiveCel();
+    setCurrentFrame(0);
 
     debugSetupXsheetUiDemo();
     core::Cel& cel = activeCut().cel(0);
     const bool pairedInKeyStage = m_xsheetPanel->debugHasPairedColumns();
+    const bool semanticDrawingNumbers =
+        m_xsheetPanel->debugCellText(0, 0) == QStringLiteral("作1/原1") &&
+        m_xsheetPanel->debugCellText(0, 6) == QStringLiteral("作2/中1") &&
+        m_xsheetPanel->debugCellText(0, 12) == QStringLiteral("作3/原2");
     cel.setExposure(0, 0);
     for (size_t frame = 1; frame < 4; ++frame) cel.setExposure(frame, -1);
     clearUndoHistory();
@@ -4398,11 +4434,12 @@ int MainWindow::debugXsheetEditUndoRedo() {
         cel.actionEntry(8) == "○" && cel.exposure(9) == inbetweenDrawing &&
         cel.exposure(10) != inbetweenDrawing;
 
-    return startsWithKeyDrawing && addedCelStartsEmpty && pairedInKeyStage &&
-                   pairedInVideoStage && filled && undone && redone && actionSet &&
-                   actionUndone && actionRedone && protectedStepPattern &&
-                   directEditKeepsKey && inbetweenCannotReplaceKey && keyAdded &&
-                   inbetweenAdded
+    return startsWithKeyDrawing && addedCelStartsEmpty && firstDrawingUsesSelectedFrameOnly &&
+                   heldToSelectedFrame && endedAtSelectedFrame && pairedInKeyStage &&
+                   pairedInVideoStage && semanticDrawingNumbers && filled && undone &&
+                   redone && actionSet && actionUndone && actionRedone &&
+                   protectedStepPattern && directEditKeepsKey &&
+                   inbetweenCannotReplaceKey && keyAdded && inbetweenAdded
                ? 0
                : 1;
 }

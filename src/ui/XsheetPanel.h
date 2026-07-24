@@ -16,7 +16,7 @@ class QToolButton;
 class QWidget;
 
 // 縦読みのタイムシート。左からA/B/Cの順にセルを並べ、行は1始まりのコマを表す。
-// 数字が動画の先頭、縦線が同じ動画の継続、空欄が空セル。
+// 「作2/中1」のような作画番号が動画の先頭、縦線が同じ動画の継続、空欄が空セル。
 class XsheetPanel : public QDockWidget {
     Q_OBJECT
 
@@ -24,14 +24,17 @@ public:
     explicit XsheetPanel(QWidget* parent = nullptr);
 
     void setSheet(const QStringList& celNames, const QList<bool>& celVisible,
-                  const QList<QList<int>>& exposures, const QList<QStringList>& actionTracks,
-                  int frameCount, int currentFrame, int activeCel, int fps = 24);
+                  const QList<QList<int>>& exposures, const QList<QList<int>>& drawingKinds,
+                  const QList<QStringList>& actionTracks, int frameCount, int currentFrame,
+                  int activeCel, int fps = 24);
     void startKeyDrawingWorkflow();
     void debugSelectExposureRange(int celIndex, int firstFrame, int lastFrame);
     void debugSelectActionCell(int celIndex, int frame);
     void debugSetActionMarker(const QString& marker) { setActionSelection(marker); }
     void debugSetViewMode(int mode);
     void debugFillHoldSelection() { fillHoldSelection(); }
+    void debugEndExposureSelection() { endExposureSelection(); }
+    QString debugCellText(int celIndex, int frame) const;
     bool debugHasPairedColumns() const;
 
 signals:
@@ -84,6 +87,7 @@ private:
     void pasteSelection();
     void clearSelection();
     void fillHoldSelection();
+    void endExposureSelection();
     void requestStepPattern(int step);
     void setActionSelection(const QString& entry);
     void promptKeyNumber();
@@ -103,6 +107,7 @@ private:
     int celToPrimaryCol(int celIndex) const;
     int sheetColumnCount(int celCount) const;
     QString timeLabel(int zeroBasedFrame) const;
+    QString drawingLabel(int celIndex, int drawing, bool compact) const;
 
     static constexpr int kTimingColumn = 0;
 
@@ -116,6 +121,7 @@ private:
     QAction* m_pasteAction = nullptr;
     QAction* m_clearAction = nullptr;
     QAction* m_holdAction = nullptr;
+    QAction* m_endExposureAction = nullptr;
     QAction* m_addKeyAction = nullptr;
     QAction* m_addInbetweenAction = nullptr;
     QWidget* m_actionControls = nullptr;
@@ -124,6 +130,7 @@ private:
     QToolButton* m_addInbetweenButton = nullptr;
     QButtonGroup* m_viewModeButtons = nullptr;
     QList<QList<int>> m_exposures;
+    QList<QList<int>> m_drawingKinds;
     QList<QStringList> m_actionTracks;
     QStringList m_celNames;
     QList<bool> m_celVisible;

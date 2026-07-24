@@ -35,10 +35,23 @@ namespace {
 
 constexpr int kGridMarkerRole = Qt::UserRole + 1;
 constexpr int kCelPairEndRole = Qt::UserRole + 2;
+constexpr int kExposureCellRole = Qt::UserRole + 3;
 
 class XsheetGridDelegate final : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
+
+    void setEditorData(QWidget* editor, const QModelIndex& index) const override {
+        if (index.data(kExposureCellRole).toBool()) {
+            if (auto* lineEdit = qobject_cast<QLineEdit*>(editor)) {
+                const int drawing = index.data(Qt::UserRole).toInt();
+                lineEdit->setText(drawing >= 0 ? QString::number(drawing + 1) : QString());
+                lineEdit->selectAll();
+                return;
+            }
+        }
+        QStyledItemDelegate::setEditorData(editor, index);
+    }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option,
                const QModelIndex& index) const override {
@@ -180,7 +193,8 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     m_cutAction = new QAction(tr("切り取り"), m_table);
     m_pasteAction = new QAction(tr("貼り付け"), m_table);
     m_clearAction = new QAction(tr("消去"), m_table);
-    m_holdAction = new QAction(tr("同じ絵を延長"), m_table);
+    m_holdAction = new QAction(tr("ここまで保持"), m_table);
+    m_endExposureAction = new QAction(tr("ここで表示終了"), m_table);
     m_addKeyAction = new QAction(tr("原画追加"), m_table);
     m_addInbetweenAction = new QAction(tr("中割追加"), m_table);
 
@@ -193,7 +207,9 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
                                QStringLiteral("addKey"));
     perapera::ui::bindShortcut(m_addInbetweenAction, perapera::ui::ShortcutScope::Xsheet,
                                QStringLiteral("addInbetween"));
-    for (QAction* action : {m_copyAction, m_cutAction, m_pasteAction, m_clearAction, m_holdAction}) {
+    for (QAction* action :
+         {m_copyAction, m_cutAction, m_pasteAction, m_clearAction, m_holdAction,
+          m_endExposureAction}) {
         action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         m_table->addAction(action);
     }
@@ -202,7 +218,8 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
         m_table->addAction(action);
     }
 
-    m_holdAction->setToolTip(tr("選択範囲を、先頭の作画で埋めます"));
+    m_holdAction->setToolTip(tr("直前の絵を選択したコマまで表示します"));
+    m_endExposureAction->setToolTip(tr("選択したコマから同じ絵の続きを空セルにします"));
     m_clearAction->setToolTip(tr("選択したACTIONまたはCELLの記入だけを消します"));
 
     auto* editBar = new QWidget(container);
@@ -261,8 +278,9 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     }
     cellLayout->addSpacing(8);
     cellLayout->addWidget(actionButton(m_holdAction, m_cellControls));
+    cellLayout->addWidget(actionButton(m_endExposureAction, m_cellControls));
     auto* blankCellButton = new QToolButton(m_cellControls);
-    blankCellButton->setText(tr("空セル"));
+    blankCellButton->setText(tr("選択を空セル"));
     connect(blankCellButton, &QToolButton::clicked, m_clearAction, &QAction::trigger);
     cellLayout->addWidget(blankCellButton);
     cellLayout->addWidget(actionButton(m_copyAction, m_cellControls));
@@ -296,6 +314,8 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     connect(m_pasteAction, &QAction::triggered, this, &XsheetPanel::pasteSelection);
     connect(m_clearAction, &QAction::triggered, this, &XsheetPanel::clearSelection);
     connect(m_holdAction, &QAction::triggered, this, &XsheetPanel::fillHoldSelection);
+    connect(m_endExposureAction, &QAction::triggered, this,
+            &XsheetPanel::endExposureSelection);
     connect(m_addKeyButton, &QToolButton::clicked, m_addKeyAction, &QAction::trigger);
     connect(m_addInbetweenButton, &QToolButton::clicked, m_addInbetweenAction,
             &QAction::trigger);
@@ -333,8 +353,8 @@ void XsheetPanel::onItemChanged(QTableWidgetItem* item) {
     const QString text = item->text().trimmed();
     if (isActionColumn(item->column())) {
         if (text.size() > 12) {
-            setSheet(m_celNames, m_celVisible, m_exposures, m_actionTracks, m_frameCount,
-                     m_currentFrame, m_activeCel, m_fps);
+            setSheet(m_celNames, m_celVisible, m_exposures, m_drawingKinds, m_actionTracks,
+                     m_frameCount, m_currentFrame, m_activeCel, m_fps);
             return;
         }
         emitEdits({}, {{celIndex, item->row(), text}});
@@ -343,8 +363,8 @@ void XsheetPanel::onItemChanged(QTableWidgetItem* item) {
 
     int drawing = -1;
     if (text == QStringLiteral("│")) {
-        setSheet(m_celNames, m_celVisible, m_exposures, m_actionTracks, m_frameCount,
-                 m_currentFrame, m_activeCel, m_fps);
+        setSheet(m_celNames, m_celVisible, m_exposures, m_drawingKinds, m_actionTracks,
+                 m_frameCount, m_currentFrame, m_activeCel, m_fps);
         return;
     }
     if (!text.isEmpty() && text != QStringLiteral("*") && text != QStringLiteral("-") &&
@@ -352,8 +372,8 @@ void XsheetPanel::onItemChanged(QTableWidgetItem* item) {
         bool ok = false;
         const int value = text.toInt(&ok);
         if (!ok || value <= 0) {
-            setSheet(m_celNames, m_celVisible, m_exposures, m_actionTracks, m_frameCount,
-                     m_currentFrame, m_activeCel, m_fps);
+            setSheet(m_celNames, m_celVisible, m_exposures, m_drawingKinds, m_actionTracks,
+                     m_frameCount, m_currentFrame, m_activeCel, m_fps);
             return;
         }
         drawing = value - 1;
@@ -435,6 +455,7 @@ void XsheetPanel::showCellContextMenu(const QPoint& pos) {
         connect(addKeyAction, &QAction::triggered, this, &XsheetPanel::addKeyDrawingRequested);
     } else {
         menu.addAction(m_holdAction);
+        menu.addAction(m_endExposureAction);
         menu.addAction(m_clearAction);
         QMenu* stepMenu = menu.addMenu(tr("コマ打ち"));
         for (int step = 1; step <= 3; ++step) {
@@ -587,17 +608,51 @@ void XsheetPanel::fillHoldSelection() {
         QList<int> rows = it.value();
         std::sort(rows.begin(), rows.end());
         rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
-        if (rows.size() < 2) continue;
+        if (rows.isEmpty()) continue;
 
         const int cel = it.key();
-        int sourceRow = rows.first();
+        const int selectedStart = rows.first();
+        const int endpoint = rows.last();
+        int sourceRow = selectedStart;
         int drawing = sourceRow < m_exposures.at(cel).size() ? m_exposures.at(cel).at(sourceRow) : -1;
         while (drawing < 0 && sourceRow > 0) {
             --sourceRow;
             drawing = m_exposures.at(cel).at(sourceRow);
         }
         if (drawing < 0) continue;
-        for (int row : rows) edits.push_back({cel, row, drawing});
+        const int fillStart = rows.size() == 1 ? sourceRow : selectedStart;
+        for (int row = fillStart; row <= endpoint; ++row) {
+            edits.push_back({cel, row, drawing});
+        }
+    }
+    emitEdits(edits);
+}
+
+void XsheetPanel::endExposureSelection() {
+    QMap<int, int> firstRowByCel;
+    for (const QModelIndex& index : m_table->selectionModel()->selectedIndexes()) {
+        const int cel = colToCel(index.column());
+        if (cel < 0 || isActionColumn(index.column())) continue;
+        if (!firstRowByCel.contains(cel) || index.row() < firstRowByCel.value(cel)) {
+            firstRowByCel.insert(cel, index.row());
+        }
+    }
+
+    std::vector<PendingExposureEdit> edits;
+    for (auto it = firstRowByCel.cbegin(); it != firstRowByCel.cend(); ++it) {
+        const int cel = it.key();
+        const int firstRow = it.value();
+        if (cel < 0 || cel >= m_exposures.size() || firstRow < 0 ||
+            firstRow >= m_exposures.at(cel).size()) {
+            continue;
+        }
+        const int drawing = m_exposures.at(cel).at(firstRow);
+        if (drawing < 0) continue;
+        for (int row = firstRow;
+             row < m_exposures.at(cel).size() && m_exposures.at(cel).at(row) == drawing;
+             ++row) {
+            edits.push_back({cel, row, -1});
+        }
     }
     emitEdits(edits);
 }
@@ -697,7 +752,8 @@ void XsheetPanel::updateActionStates() {
     if (m_copyAction) m_copyAction->setEnabled(count > 0);
     if (m_cutAction) m_cutAction->setEnabled(count > 0);
     if (m_clearAction) m_clearAction->setEnabled(count > 0);
-    if (m_holdAction) m_holdAction->setEnabled(cellCount > 1);
+    if (m_holdAction) m_holdAction->setEnabled(cellCount > 0);
+    if (m_endExposureAction) m_endExposureAction->setEnabled(cellCount > 0);
     if (m_pasteAction) {
         m_pasteAction->setEnabled(m_table && m_table->currentIndex().isValid() &&
                                   colToCel(m_table->currentIndex().column()) >= 0);
@@ -848,6 +904,30 @@ QString XsheetPanel::timeLabel(int zeroBasedFrame) const {
     return QStringLiteral("%1+%2").arg(seconds).arg(frameInSecond, 2, 10, QLatin1Char('0'));
 }
 
+QString XsheetPanel::drawingLabel(int celIndex, int drawing, bool compact) const {
+    if (drawing < 0) return QString();
+
+    const QList<int>* kinds =
+        celIndex >= 0 && celIndex < m_drawingKinds.size() ? &m_drawingKinds.at(celIndex) : nullptr;
+    const int kind = kinds && drawing < kinds->size() ? kinds->at(drawing) : 0;
+    int kindNumber = 0;
+    if (kinds) {
+        for (int index = 0; index <= drawing && index < kinds->size(); ++index) {
+            if (kinds->at(index) == kind) ++kindNumber;
+        }
+    }
+
+    if (kind == 1) {
+        return compact ? tr("作%1/原%2").arg(drawing + 1).arg(kindNumber)
+                       : tr("作画%1 / 原画%2").arg(drawing + 1).arg(kindNumber);
+    }
+    if (kind == 2) {
+        return compact ? tr("作%1/中%2").arg(drawing + 1).arg(kindNumber)
+                       : tr("作画%1 / 中割%2").arg(drawing + 1).arg(kindNumber);
+    }
+    return compact ? tr("作%1").arg(drawing + 1) : tr("作画%1").arg(drawing + 1);
+}
+
 void XsheetPanel::debugSelectExposureRange(int celIndex, int firstFrame, int lastFrame) {
     if (!m_table || celIndex < 0 || celIndex >= m_exposures.size()) return;
     firstFrame = std::clamp(firstFrame, 0, m_frameCount - 1);
@@ -869,10 +949,20 @@ void XsheetPanel::debugSelectActionCell(int celIndex, int frame) {
     m_table->setCurrentCell(frame, column, QItemSelectionModel::ClearAndSelect);
 }
 
+QString XsheetPanel::debugCellText(int celIndex, int frame) const {
+    if (!m_table || celIndex < 0 || celIndex >= m_celNames.size() || frame < 0 ||
+        frame >= m_frameCount) {
+        return QString();
+    }
+    const QTableWidgetItem* item = m_table->item(frame, celToCellCol(celIndex));
+    return item ? item->text() : QString();
+}
+
 void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVisible,
                            const QList<QList<int>>& exposures,
-                           const QList<QStringList>& actionTracks, int frameCount, int currentFrame,
-                           int activeCel, int fps) {
+                           const QList<QList<int>>& drawingKinds,
+                           const QList<QStringList>& actionTracks, int frameCount,
+                           int currentFrame, int activeCel, int fps) {
     const QModelIndexList oldSelection =
         m_table->selectionModel() ? m_table->selectionModel()->selectedIndexes() : QModelIndexList();
     const QModelIndex oldCurrent = m_table->currentIndex();
@@ -888,8 +978,9 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
         m_table->rowCount() == normalizedFrameCount &&
         m_table->columnCount() == sheetColumnCount(static_cast<int>(celNames.size())) &&
         m_celNames == celNames && m_celVisible == celVisible && m_exposures == exposures &&
-        m_actionTracks == actionTracks && m_frameCount == normalizedFrameCount &&
-        m_activeCel == normalizedActiveCel && m_fps == normalizedFps;
+        m_drawingKinds == drawingKinds && m_actionTracks == actionTracks &&
+        m_frameCount == normalizedFrameCount && m_activeCel == normalizedActiveCel &&
+        m_fps == normalizedFps;
 
     if (positionOnly) {
         m_updating = true;
@@ -916,6 +1007,7 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
     m_celNames = celNames;
     m_celVisible = celVisible;
     m_exposures = exposures;
+    m_drawingKinds = drawingKinds;
     m_actionTracks = actionTracks;
     m_frameCount = normalizedFrameCount;
     m_currentFrame = normalizedCurrentFrame;
@@ -1041,6 +1133,7 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
             const bool held = drawing >= 0 && drawing == previous;
 
             item->setData(Qt::UserRole, drawing);
+            item->setData(kExposureCellRole, true);
             item->setData(kGridMarkerRole, marker);
             item->setData(kCelPairEndRole, true);
             const QString actionEntry =
@@ -1053,7 +1146,8 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
             if (pending) ++pendingInbetweens;
             item->setText(drawing < 0
                               ? (pending ? tr("待") : QString())
-                              : (held ? QStringLiteral("│") : QString::number(drawing + 1)));
+                              : (held ? QStringLiteral("│")
+                                      : drawingLabel(cel, drawing, true)));
             item->setTextAlignment(Qt::AlignCenter);
             item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
             QFont font = item->font();
@@ -1069,7 +1163,8 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
             const QString state =
                 pending ? tr("中割待ち")
                         : drawing < 0 ? tr("空セル")
-                            : (held ? tr("作画%1（継続）").arg(drawing + 1) : tr("作画%1").arg(drawing + 1));
+                            : (held ? tr("%1（継続）").arg(drawingLabel(cel, drawing, false))
+                                    : drawingLabel(cel, drawing, false));
             item->setToolTip(tr("%1セル / %2 / %3").arg(celNames.at(cel), timeLabel(frame), state));
         }
     }
