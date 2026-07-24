@@ -274,6 +274,9 @@ json previzToJson(const PrevizScene& scene) {
                        {"filePath", model.filePath},
                        {"transform", transformToJson(model.transform)},
                        {"keys", std::move(jKeys)}};
+        if (model.parentModel >= 0) {
+            jModel["parentModel"] = model.parentModel;
+        }
         if (model.sourceBoundsKnown) {
             jModel["sourceSizeMeters"] = vec3ToJson(model.sourceSizeMeters);
             jModel["sourceCenterMeters"] = vec3ToJson(model.sourceCenterMeters);
@@ -306,6 +309,7 @@ void previzFromJson(const json& j, PrevizScene& scene) {
         PrevizModel model;
         model.name = jModel.at("name").get<std::string>();
         model.filePath = jModel.at("filePath").get<std::string>();
+        model.parentModel = jModel.value("parentModel", -1);
         model.transform = transformFromJson(jModel.at("transform"));
         if (jModel.contains("sourceSizeMeters") && jModel.contains("sourceCenterMeters")) {
             model.sourceSizeMeters = vec3FromJson(jModel.at("sourceSizeMeters"));
@@ -328,6 +332,7 @@ void previzFromJson(const json& j, PrevizScene& scene) {
         }
         scene.models.push_back(std::move(model));
     }
+    scene.normalizeParentLinks();
     const json& jCamera = j.at("camera");
     scene.camera.state = cameraStateFromJson(jCamera.at("state"));
     scene.camera.sensorWidthMm = jCamera.at("sensorWidth").get<float>();

@@ -60,6 +60,9 @@ private:
     void addModel();
     // 組み込みプリミティブ(kind=":box"/":cylinder"/":sphere")を追加する
     void addPrimitive(const QString& kind, bool select);
+    void groupSelectedModels();
+    void ungroupSelectedModels();
+    void removeModelAt(size_t modelIndex);
     void removeSelectedModel();
     void refreshModelList();
     void refreshCameraUi();
@@ -68,6 +71,10 @@ private:
     void refreshPoseUi();
     void refreshBodyUi();
     core::PrevizModel* selectedModel();
+    int selectedModelIndex() const;
+    bool usesRelativeTransform() const;
+    core::PrevizTransform selectedTransformForUi() const;
+    void writeSelectedTransformFromUi(const core::PrevizTransform& transform);
     void applyTransformFromUi();
     void applyPhysicalHeightFromUi();
     void applyCameraDistanceFromUi();
@@ -115,6 +122,8 @@ private:
     QDoubleSpinBox* m_scaleX = nullptr;
     QDoubleSpinBox* m_scaleY = nullptr;
     QDoubleSpinBox* m_scaleZ = nullptr;
+    QComboBox* m_transformSpaceCombo = nullptr;
+    QLabel* m_transformLabel = nullptr;
     QDoubleSpinBox* m_physicalHeightSpin = nullptr;
     QDoubleSpinBox* m_cameraDistanceSpin = nullptr;
     QLabel* m_physicalSizeLabel = nullptr;

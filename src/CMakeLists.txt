@@ -62,6 +62,7 @@ set(PERAPERA_APP_SOURCES
     previz/PrevizSheetPanel.h
     previz/PrevizViewport.cpp
     previz/PrevizViewport.h
+    previz/PrevizTransformUtils.h
     previz/PrevizWindow.cpp
     previz/PrevizWindow.h
 )

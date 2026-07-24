@@ -1,5 +1,6 @@
 #include "PrevizWindow.h"
 
+#include <QAbstractItemView>
 #include <QComboBox>
 #include <QDialog>
 #include <QDockWidget>
@@ -29,6 +30,7 @@
 #include "previz/GltfLoader.h"
 #include "previz/PrevizSheetPanel.h"
 #include "previz/StlLoader.h"
+#include "previz/PrevizTransformUtils.h"
 #include "previz/PrevizViewport.h"
 #include "ui/DockPanelColumn.h"
 #include "ui/RetroTheme.h"
@@ -99,16 +101,6 @@ bool populateSourceBounds(core::PrevizModel& model) {
     }
     model.sourceBoundsKnown = true;
     return true;
-}
-
-QMatrix4x4 transformMatrix(const core::PrevizTransform& transform) {
-    QMatrix4x4 matrix;
-    matrix.translate(transform.position.x, transform.position.y, transform.position.z);
-    matrix.rotate(transform.rotationDeg.y, 0, 1, 0);
-    matrix.rotate(transform.rotationDeg.x, 1, 0, 0);
-    matrix.rotate(transform.rotationDeg.z, 0, 0, 1);
-    matrix.scale(transform.scale.x, transform.scale.y, transform.scale.z);
-    return matrix;
 }
 
 QMatrix4x4 cameraWorldMatrix(const core::PrevizCameraState& camera) {
@@ -393,7 +385,18 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     auto* layout = new QVBoxLayout(container);
     layout->setContentsMargins(0, 0, 0, 0);
     m_modelList = new QListWidget(container);
+    m_modelList->setSelectionMode(QAbstractItemView::ExtendedSelection);
     layout->addWidget(m_modelList);
+    auto* groupRow = new QWidget(container);
+    auto* groupLayout = new QHBoxLayout(groupRow);
+    groupLayout->setContentsMargins(0, 0, 0, 0);
+    auto* groupButton = new QPushButton(tr("グループ化"), groupRow);
+    groupButton->setToolTip(tr("選択した項目を、まとめて動かせるグループにします"));
+    auto* ungroupButton = new QPushButton(tr("グループ解除"), groupRow);
+    ungroupButton->setToolTip(tr("選択したグループを解散するか、項目を親から外します"));
+    groupLayout->addWidget(groupButton);
+    groupLayout->addWidget(ungroupButton);
+    layout->addWidget(groupRow);
     auto* addButton = new QPushButton(tr("モデル追加..."), container);
     layout->addWidget(addButton);
 
@@ -421,9 +424,12 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     rightPanelColumn->addPanel(dock);
 
     connect(addButton, &QPushButton::clicked, this, &PrevizWindow::addModel);
+    connect(groupButton, &QPushButton::clicked, this, &PrevizWindow::groupSelectedModels);
+    connect(ungroupButton, &QPushButton::clicked, this, &PrevizWindow::ungroupSelectedModels);
     connect(removeButton, &QPushButton::clicked, this, &PrevizWindow::removeSelectedModel);
     connect(m_modelList, &QListWidget::currentRowChanged, this, [this](int row) {
         m_viewport->setSelectedModel(row);  // 作業視点の左ドラッグ移動対象
+        if (row >= 0 && m_nudgeTargetCombo) m_nudgeTargetCombo->setCurrentIndex(1);
         refreshTransformUi();
         refreshMeasurementUi();
         refreshPoseUi();
@@ -432,8 +438,8 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     });
 
     // 選択モデルの配置編集
-    auto* transformLabel = new QLabel(tr("配置(選択モデル)"), container);
-    layout->addWidget(transformLabel);
+    m_transformLabel = new QLabel(tr("配置（選択項目）"), container);
+    layout->addWidget(m_transformLabel);
     const auto makeSpin = [container](double min, double max, double step) {
         auto* spin = new QDoubleSpinBox(container);
         spin->setRange(min, max);
@@ -463,6 +469,15 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         h->addWidget(w, 1);
         layout->addWidget(row);
     };
+
+    m_transformSpaceCombo = new QComboBox(container);
+    m_transformSpaceCombo->addItem(tr("絶対（ワールド座標）"));
+    m_transformSpaceCombo->addItem(tr("相対（親・グループ基準）"));
+    m_transformSpaceCombo->setToolTip(
+        tr("絶対はシーン全体の座標、相対は所属グループから見た座標です"));
+    addRow(tr("座標方式"), m_transformSpaceCombo);
+    connect(m_transformSpaceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this] { refreshTransformUi(); });
 
     auto* measurementLabel = new QLabel(tr("実寸・撮影距離"), container);
     layout->addWidget(measurementLabel);
@@ -840,9 +855,9 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         rebuildSheet();
         emit sceneEdited();
     });
-    auto* modelKeyButton = new QPushButton(tr("現在コマにモデルキー"), container);
+    auto* modelKeyButton = new QPushButton(tr("現在コマに選択項目キー"), container);
     layout->addWidget(modelKeyButton);
-    auto* modelKeyClearButton = new QPushButton(tr("モデルキー削除"), container);
+    auto* modelKeyClearButton = new QPushButton(tr("選択項目キー削除"), container);
     layout->addWidget(modelKeyClearButton);
     connect(modelKeyClearButton, &QPushButton::clicked, this, [this] {
         core::PrevizModel* model = selectedModel();
@@ -884,7 +899,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     targetLayout->addWidget(new QLabel(tr("対象:"), targetRow));
     m_nudgeTargetCombo = new QComboBox(targetRow);
     m_nudgeTargetCombo->addItem(tr("カメラ"));
-    m_nudgeTargetCombo->addItem(tr("選択モデル"));
+    m_nudgeTargetCombo->addItem(tr("選択項目"));
     targetLayout->addWidget(m_nudgeTargetCombo, 1);
     nudgeLayout->addWidget(targetRow);
 
@@ -946,8 +961,10 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(m_nudgeTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         const bool isCamera = (index == 0);
-        m_pitchUpButton->setEnabled(isCamera);
-        m_pitchDownButton->setEnabled(isCamera);
+        m_pitchUpButton->setToolTip(
+            isCamera ? tr("見上げる（ピッチ+）") : tr("選択項目を上向きに回転（X+）"));
+        m_pitchDownButton->setToolTip(
+            isCamera ? tr("見下ろす（ピッチ-）") : tr("選択項目を下向きに回転（X-）"));
     });
     connect(zMinusButton, &QToolButton::clicked, this, [this] {
         const float step = static_cast<float>(m_moveStepSpin->value());
@@ -995,7 +1012,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
             [step](core::PrevizCameraState& s) {
                 s.rotationDeg.x = std::clamp(s.rotationDeg.x + step, -89.0f, 89.0f);
             },
-            [](core::PrevizTransform&) {});  // モデルには無効(ピッチボタンはカメラ選択時のみ有効)
+            [step](core::PrevizTransform& t) { t.rotationDeg.x += step; });
     });
     connect(m_pitchDownButton, &QToolButton::clicked, this, [this] {
         const float step = static_cast<float>(m_rotStepSpin->value());
@@ -1003,9 +1020,9 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
             [step](core::PrevizCameraState& s) {
                 s.rotationDeg.x = std::clamp(s.rotationDeg.x - step, -89.0f, 89.0f);
             },
-            [](core::PrevizTransform&) {});
+            [step](core::PrevizTransform& t) { t.rotationDeg.x -= step; });
     });
-    m_pitchUpButton->setEnabled(true);   // 初期対象は「カメラ」
+    m_pitchUpButton->setEnabled(true);
     m_pitchDownButton->setEnabled(true);
 
     statusBar()->showMessage(
@@ -1025,21 +1042,58 @@ void PrevizWindow::togglePlayback() {
     }
 }
 
-core::PrevizModel* PrevizWindow::selectedModel() {
-    if (!m_scene) return nullptr;
+int PrevizWindow::selectedModelIndex() const {
+    if (!m_scene || !m_modelList) return -1;
     const int row = m_modelList->currentRow();
-    if (row < 0 || row >= static_cast<int>(m_scene->models.size())) return nullptr;
-    return &m_scene->models[static_cast<size_t>(row)];
+    return row >= 0 && row < static_cast<int>(m_scene->models.size()) ? row : -1;
+}
+
+core::PrevizModel* PrevizWindow::selectedModel() {
+    const int row = selectedModelIndex();
+    return row >= 0 ? &m_scene->models[static_cast<size_t>(row)] : nullptr;
+}
+
+bool PrevizWindow::usesRelativeTransform() const {
+    return m_transformSpaceCombo && m_transformSpaceCombo->currentIndex() == 1;
+}
+
+core::PrevizTransform PrevizWindow::selectedTransformForUi() const {
+    const int row = selectedModelIndex();
+    if (row < 0) return {};
+    if (usesRelativeTransform()) {
+        return m_scene->models[static_cast<size_t>(row)].transformAt(m_viewport->frame());
+    }
+    return previz::worldTransform(*m_scene, static_cast<size_t>(row), m_viewport->frame());
+}
+
+void PrevizWindow::writeSelectedTransformFromUi(const core::PrevizTransform& transform) {
+    const int row = selectedModelIndex();
+    if (row < 0) return;
+    core::PrevizModel& model = m_scene->models[static_cast<size_t>(row)];
+    core::PrevizTransform local = transform;
+    if (!usesRelativeTransform()) {
+        local = previz::localTransformForWorld(
+            *m_scene, static_cast<size_t>(row), m_viewport->frame(),
+            previz::matrixFromTransform(transform));
+    }
+    editableModelTransform(model) = local;
 }
 
 void PrevizWindow::refreshTransformUi() {
     core::PrevizModel* model = selectedModel();
     if (!model) {
+        if (m_transformLabel) m_transformLabel->setText(tr("配置（未選択）"));
         refreshMeasurementUi();
         return;
     }
     m_updating = true;
-    const core::PrevizTransform tf = model->transformAt(m_viewport->frame());
+    if (m_transformLabel) {
+        m_transformLabel->setText(
+            model->isGroup()
+                ? tr("配置（グループ: %1）").arg(QString::fromStdString(model->name))
+                : tr("配置（モデル: %1）").arg(QString::fromStdString(model->name)));
+    }
+    const core::PrevizTransform tf = selectedTransformForUi();
     m_posX->setValue(tf.position.x);
     m_posY->setValue(tf.position.y);
     m_posZ->setValue(tf.position.z);
@@ -1079,11 +1133,17 @@ void PrevizWindow::refreshMeasurementUi() {
     }
 
     const size_t frame = m_viewport->frame();
-    const core::PrevizTransform transform = model->transformAt(frame);
-    const core::Vec3 size = model->physicalSizeAt(frame);
+    const size_t modelIndex = static_cast<size_t>(selectedModelIndex());
+    const core::PrevizTransform transform =
+        previz::worldTransform(*m_scene, modelIndex, frame);
+    const core::Vec3 size{
+        std::abs(model->sourceSizeMeters.x * transform.scale.x),
+        std::abs(model->sourceSizeMeters.y * transform.scale.y),
+        std::abs(model->sourceSizeMeters.z * transform.scale.z)};
     const QVector3D sourceCenter(model->sourceCenterMeters.x, model->sourceCenterMeters.y,
                                  model->sourceCenterMeters.z);
-    const QVector3D worldCenter = transformMatrix(transform).map(sourceCenter);
+    const QVector3D worldCenter =
+        previz::worldMatrix(*m_scene, modelIndex, frame).map(sourceCenter);
     const core::PrevizCameraState camera = m_scene->camera.stateAt(frame);
     const QVector3D cameraPosition(camera.position.x, camera.position.y, camera.position.z);
     const float straightDistance = (worldCenter - cameraPosition).length();
@@ -1119,7 +1179,7 @@ void PrevizWindow::applyTransformFromUi() {
     core::PrevizModel* model = selectedModel();
     if (!model) return;
 
-    core::PrevizTransform tf = model->transformAt(m_viewport->frame());
+    core::PrevizTransform tf = selectedTransformForUi();
     tf.position = {static_cast<float>(m_posX->value()), static_cast<float>(m_posY->value()),
                    static_cast<float>(m_posZ->value())};
     tf.rotationDeg = {static_cast<float>(m_rotX->value()), static_cast<float>(m_rotY->value()),
@@ -1128,12 +1188,7 @@ void PrevizWindow::applyTransformFromUi() {
     tf.scale = {static_cast<float>(m_scaleX->value()), static_cast<float>(m_scaleY->value()),
                static_cast<float>(m_scaleZ->value())};
 
-    // キーが無ければ基本配置、キーがあれば現在コマのキーを編集(カメラと同じ規則)
-    if (model->transformKeys.empty()) {
-        model->transform = tf;
-    } else {
-        model->transformKeys[m_viewport->frame()] = tf;
-    }
+    writeSelectedTransformFromUi(tf);
     m_viewport->update();
     refreshMeasurementUi();
     emit sceneEdited();
@@ -1275,7 +1330,9 @@ void PrevizWindow::applyPhysicalHeightFromUi() {
     core::PrevizModel* model = selectedModel();
     if (!model || !model->sourceBoundsKnown) return;
 
-    core::PrevizTransform transform = model->transformAt(m_viewport->frame());
+    const size_t modelIndex = static_cast<size_t>(selectedModelIndex());
+    core::PrevizTransform transform =
+        previz::worldTransform(*m_scene, modelIndex, m_viewport->frame());
     const float currentHeight =
         std::abs(model->sourceSizeMeters.y * transform.scale.y);
     if (currentHeight <= 0.000001f) return;
@@ -1284,7 +1341,9 @@ void PrevizWindow::applyPhysicalHeightFromUi() {
     transform.scale.x *= ratio;
     transform.scale.y *= ratio;
     transform.scale.z *= ratio;
-    editableModelTransform(*model) = transform;
+    editableModelTransform(*model) = previz::localTransformForWorld(
+        *m_scene, modelIndex, m_viewport->frame(),
+        previz::matrixFromTransform(transform));
 
     m_viewport->update();
     refreshTransformUi();
@@ -1297,10 +1356,11 @@ void PrevizWindow::applyCameraDistanceFromUi() {
     core::PrevizModel* model = selectedModel();
     if (!model || !model->sourceBoundsKnown) return;
 
-    const core::PrevizTransform transform = model->transformAt(m_viewport->frame());
+    const size_t modelIndex = static_cast<size_t>(selectedModelIndex());
     const QVector3D sourceCenter(model->sourceCenterMeters.x, model->sourceCenterMeters.y,
                                  model->sourceCenterMeters.z);
-    const QVector3D worldCenter = transformMatrix(transform).map(sourceCenter);
+    const QVector3D worldCenter =
+        previz::worldMatrix(*m_scene, modelIndex, m_viewport->frame()).map(sourceCenter);
     core::PrevizCameraState camera = m_scene->camera.stateAt(m_viewport->frame());
     QVector3D direction =
         QVector3D(camera.position.x, camera.position.y, camera.position.z) - worldCenter;
@@ -1324,10 +1384,11 @@ void PrevizWindow::aimCameraAtSelectedModel() {
     core::PrevizModel* model = selectedModel();
     if (!model || !model->sourceBoundsKnown) return;
 
-    const core::PrevizTransform transform = model->transformAt(m_viewport->frame());
+    const size_t modelIndex = static_cast<size_t>(selectedModelIndex());
     const QVector3D sourceCenter(model->sourceCenterMeters.x, model->sourceCenterMeters.y,
                                  model->sourceCenterMeters.z);
-    const QVector3D worldCenter = transformMatrix(transform).map(sourceCenter);
+    const QVector3D worldCenter =
+        previz::worldMatrix(*m_scene, modelIndex, m_viewport->frame()).map(sourceCenter);
     core::PrevizCameraState camera = m_scene->camera.stateAt(m_viewport->frame());
     const QVector3D cameraPosition(camera.position.x, camera.position.y, camera.position.z);
     QVector3D direction = worldCenter - cameraPosition;
@@ -1604,11 +1665,17 @@ bool PrevizWindow::debugPhysicalCameraControls() {
     aimCameraAtSelectedModel();
 
     core::PrevizModel* model = selectedModel();
-    const core::Vec3 size = model->physicalSizeAt(m_viewport->frame());
-    const core::PrevizTransform transform = model->transformAt(m_viewport->frame());
+    const size_t modelIndex = static_cast<size_t>(selectedModelIndex());
+    const core::PrevizTransform transform =
+        previz::worldTransform(*m_scene, modelIndex, m_viewport->frame());
+    const core::Vec3 size{
+        std::abs(model->sourceSizeMeters.x * transform.scale.x),
+        std::abs(model->sourceSizeMeters.y * transform.scale.y),
+        std::abs(model->sourceSizeMeters.z * transform.scale.z)};
     const QVector3D sourceCenter(model->sourceCenterMeters.x, model->sourceCenterMeters.y,
                                  model->sourceCenterMeters.z);
-    const QVector3D worldCenter = transformMatrix(transform).map(sourceCenter);
+    const QVector3D worldCenter =
+        previz::worldMatrix(*m_scene, modelIndex, m_viewport->frame()).map(sourceCenter);
     const core::PrevizCameraState camera =
         m_scene->camera.stateAt(m_viewport->frame());
     const float distance =
@@ -1667,11 +1734,130 @@ void PrevizWindow::addPrimitive(const QString& kind, bool select) {
     emit sceneEdited();
 }
 
+void PrevizWindow::groupSelectedModels() {
+    if (!m_scene || !m_modelList) return;
+    std::vector<int> selectedRows;
+    selectedRows.reserve(static_cast<size_t>(m_modelList->selectedItems().size()));
+    for (QListWidgetItem* item : m_modelList->selectedItems()) {
+        selectedRows.push_back(m_modelList->row(item));
+    }
+    std::sort(selectedRows.begin(), selectedRows.end());
+    selectedRows.erase(std::unique(selectedRows.begin(), selectedRows.end()),
+                       selectedRows.end());
+    if (selectedRows.size() < 2) {
+        statusBar()->showMessage(tr("グループ化する項目を2つ以上選択してください"), 3000);
+        return;
+    }
+
+    int groupNumber = 1;
+    for (const core::PrevizModel& model : m_scene->models) {
+        if (model.isGroup()) ++groupNumber;
+    }
+    core::PrevizModel group;
+    group.name = tr("グループ %1").arg(groupNumber).toStdString();
+    group.filePath = ":group";
+    const int groupIndex = selectedRows.front();
+    m_scene->models.insert(
+        m_scene->models.begin() + static_cast<std::ptrdiff_t>(groupIndex),
+        std::move(group));
+    for (size_t index = 0; index < m_scene->models.size(); ++index) {
+        if (static_cast<int>(index) != groupIndex &&
+            m_scene->models[index].parentModel >= groupIndex) {
+            ++m_scene->models[index].parentModel;
+        }
+    }
+
+    for (const int row : selectedRows) {
+        const int shiftedRow = row >= groupIndex ? row + 1 : row;
+        if (shiftedRow >= 0 &&
+            shiftedRow < static_cast<int>(m_scene->models.size())) {
+            previz::reparentPreservingWorld(
+                *m_scene, static_cast<size_t>(shiftedRow), groupIndex,
+                m_viewport->frame());
+        }
+    }
+
+    refreshModelList();
+    m_modelList->clearSelection();
+    m_modelList->setCurrentRow(groupIndex);
+    if (QListWidgetItem* item = m_modelList->item(groupIndex)) item->setSelected(true);
+    rebuildSheet();
+    m_viewport->update();
+    emit sceneEdited();
+    statusBar()->showMessage(
+        tr("%1個の項目を「%2」にまとめました")
+            .arg(selectedRows.size())
+            .arg(QString::fromStdString(m_scene->models[static_cast<size_t>(groupIndex)].name)),
+        3000);
+}
+
+void PrevizWindow::ungroupSelectedModels() {
+    if (!m_scene || !m_modelList) return;
+    std::vector<int> selectedRows;
+    for (QListWidgetItem* item : m_modelList->selectedItems()) {
+        selectedRows.push_back(m_modelList->row(item));
+    }
+    if (selectedRows.empty() && selectedModelIndex() >= 0) {
+        selectedRows.push_back(selectedModelIndex());
+    }
+    std::sort(selectedRows.begin(), selectedRows.end());
+    selectedRows.erase(std::unique(selectedRows.begin(), selectedRows.end()),
+                       selectedRows.end());
+    if (selectedRows.empty()) return;
+
+    std::vector<int> groups;
+    for (const int row : selectedRows) {
+        if (row < 0 || row >= static_cast<int>(m_scene->models.size())) continue;
+        if (m_scene->models[static_cast<size_t>(row)].isGroup()) {
+            groups.push_back(row);
+        } else {
+            previz::reparentPreservingWorld(
+                *m_scene, static_cast<size_t>(row), -1, m_viewport->frame());
+        }
+    }
+    std::sort(groups.rbegin(), groups.rend());
+    for (const int row : groups) {
+        removeModelAt(static_cast<size_t>(row));
+    }
+
+    refreshModelList();
+    rebuildSheet();
+    m_viewport->update();
+    emit sceneEdited();
+    statusBar()->showMessage(tr("選択項目のグループを解除しました"), 3000);
+}
+
+void PrevizWindow::removeModelAt(size_t modelIndex) {
+    if (!m_scene || modelIndex >= m_scene->models.size()) return;
+    const int replacementParent = m_scene->models[modelIndex].parentModel;
+    std::vector<size_t> children;
+    for (size_t index = 0; index < m_scene->models.size(); ++index) {
+        if (m_scene->models[index].parentModel == static_cast<int>(modelIndex)) {
+            children.push_back(index);
+        }
+    }
+    for (const size_t child : children) {
+        previz::reparentPreservingWorld(
+            *m_scene, child, replacementParent, m_viewport->frame());
+    }
+
+    m_scene->models.erase(m_scene->models.begin() +
+                          static_cast<std::ptrdiff_t>(modelIndex));
+    for (core::PrevizModel& model : m_scene->models) {
+        if (model.parentModel > static_cast<int>(modelIndex)) {
+            --model.parentModel;
+        } else if (model.parentModel == static_cast<int>(modelIndex)) {
+            model.parentModel = -1;
+        }
+    }
+}
+
 void PrevizWindow::setScene(core::PrevizScene* scene) {
     m_scene = scene;
     if (m_scene) {
+        m_scene->normalizeParentLinks();
         for (core::PrevizModel& model : m_scene->models) {
-            if (!model.sourceBoundsKnown) populateSourceBounds(model);
+            if (!model.isGroup() && !model.sourceBoundsKnown) populateSourceBounds(model);
         }
     }
     m_viewport->setScene(scene);
@@ -1740,7 +1926,7 @@ void PrevizWindow::removeSelectedModel() {
     if (!m_scene) return;
     const int row = m_modelList->currentRow();
     if (row < 0 || row >= static_cast<int>(m_scene->models.size())) return;
-    m_scene->models.erase(m_scene->models.begin() + row);
+    removeModelAt(static_cast<size_t>(row));
     refreshModelList();
     m_viewport->update();
     rebuildSheet();
@@ -1749,20 +1935,52 @@ void PrevizWindow::removeSelectedModel() {
 
 void PrevizWindow::refreshModelList() {
     const int previousRow = m_modelList->currentRow();
+    std::vector<int> previousSelection;
+    for (QListWidgetItem* item : m_modelList->selectedItems()) {
+        previousSelection.push_back(m_modelList->row(item));
+    }
     m_updating = true;
     {
         const QSignalBlocker blocker(m_modelList);
         m_modelList->clear();
         if (m_scene) {
-            for (const core::PrevizModel& model : m_scene->models) {
-                m_modelList->addItem(QString::fromStdString(model.name));
+            for (size_t index = 0; index < m_scene->models.size(); ++index) {
+                const core::PrevizModel& model = m_scene->models[index];
+                int depth = 0;
+                int parent = model.parentModel;
+                std::vector<bool> visited(m_scene->models.size(), false);
+                while (parent >= 0 &&
+                       parent < static_cast<int>(m_scene->models.size()) &&
+                       !visited[static_cast<size_t>(parent)]) {
+                    visited[static_cast<size_t>(parent)] = true;
+                    ++depth;
+                    parent = m_scene->models[static_cast<size_t>(parent)].parentModel;
+                }
+                const QString prefix(depth * 2, QLatin1Char(' '));
+                const QString type = model.isGroup() ? tr("[グループ] ") : QString();
+                auto* item = new QListWidgetItem(
+                    prefix + (depth > 0 ? tr("└ ") : QString()) + type +
+                    QString::fromStdString(model.name));
+                if (model.parentModel >= 0 &&
+                    model.parentModel < static_cast<int>(m_scene->models.size())) {
+                    item->setToolTip(
+                        tr("親: %1")
+                            .arg(QString::fromStdString(
+                                m_scene->models[static_cast<size_t>(model.parentModel)].name)));
+                }
+                m_modelList->addItem(item);
+            }
+            for (const int row : previousSelection) {
+                if (QListWidgetItem* item = m_modelList->item(row)) item->setSelected(true);
             }
         }
     }
     m_updating = false;
     if (m_modelList->count() > 0) {
-        m_modelList->setCurrentRow(
-            std::clamp(previousRow < 0 ? 0 : previousRow, 0, m_modelList->count() - 1));
+        const int row =
+            std::clamp(previousRow < 0 ? 0 : previousRow, 0, m_modelList->count() - 1);
+        m_modelList->setCurrentRow(row, QItemSelectionModel::NoUpdate);
+        m_viewport->setSelectedModel(row);
     }
 }
 
@@ -1873,7 +2091,17 @@ void PrevizWindow::applyNudge(const std::function<void(core::PrevizCameraState&)
     } else {
         core::PrevizModel* model = selectedModel();
         if (!model) return;
-        modelFn(editableModelTransform(*model));
+        if (usesRelativeTransform()) {
+            modelFn(editableModelTransform(*model));
+        } else {
+            const size_t modelIndex = static_cast<size_t>(selectedModelIndex());
+            core::PrevizTransform world =
+                previz::worldTransform(*m_scene, modelIndex, m_viewport->frame());
+            modelFn(world);
+            editableModelTransform(*model) = previz::localTransformForWorld(
+                *m_scene, modelIndex, m_viewport->frame(),
+                previz::matrixFromTransform(world));
+        }
     }
     m_viewport->update();
     refreshTransformUi();

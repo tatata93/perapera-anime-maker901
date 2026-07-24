@@ -150,6 +150,7 @@ T interpolateKeys(const std::map<size_t, T>& keys, size_t frame, const T& fallba
 struct PrevizModel {
     std::string name;
     std::string filePath;  // glTF/glbファイルパス
+    int parentModel = -1;  // -1=root; ":group" is a non-rendered transform parent
     PrevizTransform transform;                       // キーが無いときの基本配置
     std::map<size_t, PrevizTransform> transformKeys;  // コマ→トランスフォーム(モーション)
     PrevizHumanoidPose humanoidPose;
@@ -160,6 +161,8 @@ struct PrevizModel {
     Vec3 sourceSizeMeters{1.0f, 1.0f, 1.0f};
     Vec3 sourceCenterMeters{0.0f, 0.5f, 0.0f};
     bool sourceBoundsKnown = false;
+
+    bool isGroup() const { return filePath == ":group"; }
 
     PrevizTransform transformAt(size_t frame) const {
         return previz_detail::interpolateKeys(transformKeys, frame, transform,
@@ -231,6 +234,38 @@ struct PrevizScene {
     PrevizCamera camera;
 
     bool isEmpty() const { return models.empty() && camera.keys.empty(); }
+
+    bool isDescendantOf(size_t modelIndex, size_t ancestorIndex) const {
+        if (modelIndex >= models.size() || ancestorIndex >= models.size()) return false;
+        std::vector<bool> visited(models.size(), false);
+        int current = models[modelIndex].parentModel;
+        while (current >= 0 && current < static_cast<int>(models.size())) {
+            const size_t index = static_cast<size_t>(current);
+            if (index == ancestorIndex) return true;
+            if (visited[index]) return false;
+            visited[index] = true;
+            current = models[index].parentModel;
+        }
+        return false;
+    }
+
+    bool canSetParent(size_t modelIndex, int parentModel) const {
+        if (modelIndex >= models.size()) return false;
+        if (parentModel < 0) return true;
+        if (parentModel >= static_cast<int>(models.size()) ||
+            static_cast<size_t>(parentModel) == modelIndex) {
+            return false;
+        }
+        return !isDescendantOf(static_cast<size_t>(parentModel), modelIndex);
+    }
+
+    void normalizeParentLinks() {
+        for (size_t index = 0; index < models.size(); ++index) {
+            if (!canSetParent(index, models[index].parentModel)) {
+                models[index].parentModel = -1;
+            }
+        }
+    }
 };
 
 }  // namespace core

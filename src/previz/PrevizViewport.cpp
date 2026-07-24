@@ -13,6 +13,7 @@
 #include <cstdint>
 
 #include "previz/StlLoader.h"
+#include "previz/PrevizTransformUtils.h"
 
 namespace {
 
@@ -27,16 +28,6 @@ std::string lowerExtension(const std::string& path) {
 
 bool isHumanoidModelPath(const std::string& filePath) {
     return filePath == ":humanoid" || filePath == ":humanoid_box";
-}
-
-QMatrix4x4 modelMatrixFromTransform(const core::PrevizTransform& tf) {
-    QMatrix4x4 m;
-    m.translate(tf.position.x, tf.position.y, tf.position.z);
-    m.rotate(tf.rotationDeg.y, 0, 1, 0);
-    m.rotate(tf.rotationDeg.x, 1, 0, 0);
-    m.rotate(tf.rotationDeg.z, 0, 0, 1);
-    m.scale(tf.scale.x, tf.scale.y, tf.scale.z);
-    return m;
 }
 
 std::vector<uint32_t> triangleWireIndices(const uint32_t* indices, size_t count) {
@@ -1289,9 +1280,12 @@ void PrevizViewport::renderScene(const QMatrix4x4& viewProj) {
     if (m_scene) {
         for (size_t mi = 0; mi < m_scene->models.size(); ++mi) {
             const core::PrevizModel& model = m_scene->models[mi];
-            const core::PrevizTransform tf = model.transformAt(m_frame);
-            const QMatrix4x4 m = modelMatrixFromTransform(tf);
-            const bool highlight = !usingCameraView() && static_cast<int>(mi) == m_selectedModel;
+            if (model.isGroup()) continue;
+            const QMatrix4x4 m = previz::worldMatrix(*m_scene, mi, m_frame);
+            const bool highlight =
+                !usingCameraView() && m_selectedModel >= 0 &&
+                (static_cast<int>(mi) == m_selectedModel ||
+                 m_scene->isDescendantOf(mi, static_cast<size_t>(m_selectedModel)));
 
             if (isHumanoidModelPath(model.filePath)) {
                 drawHumanoid(model, m, viewProj, highlight);
@@ -1364,8 +1358,9 @@ void PrevizViewport::mousePressEvent(QMouseEvent* event) {
     // 作業視点の左ドラッグ: 選択モデルの移動を開始
     if (!usingCameraView() && event->button() == Qt::LeftButton && m_scene && m_selectedModel >= 0 &&
         m_selectedModel < static_cast<int>(m_scene->models.size())) {
-        core::PrevizModel& model = m_scene->models[static_cast<size_t>(m_selectedModel)];
-        m_dragPlaneY = editableModelTransform(model).position.y;
+        const core::PrevizTransform world =
+            previz::worldTransform(*m_scene, static_cast<size_t>(m_selectedModel), m_frame);
+        m_dragPlaneY = world.position.y;
         if (groundHit(event->position(), m_dragPlaneY, m_dragLastHit)) {
             m_draggingModel = true;
         }
@@ -1380,8 +1375,10 @@ void PrevizViewport::mouseMoveEvent(QMouseEvent* event) {
 
     // モデルのドラッグ移動(作業視点)
     if (m_draggingModel && m_selectedModel >= 0 && m_selectedModel < static_cast<int>(m_scene->models.size())) {
-        core::PrevizModel& model = m_scene->models[static_cast<size_t>(m_selectedModel)];
-        core::PrevizTransform tf = editableModelTransform(model);
+        const size_t modelIndex = static_cast<size_t>(m_selectedModel);
+        core::PrevizModel& model = m_scene->models[modelIndex];
+        core::PrevizTransform tf =
+            previz::worldTransform(*m_scene, modelIndex, m_frame);
         if (event->modifiers() & Qt::ShiftModifier) {
             // Shift+ドラッグ: 上下移動
             tf.position.y += static_cast<float>(-delta.y()) * 0.003f * m_orbitDistance;
@@ -1394,7 +1391,9 @@ void PrevizViewport::mouseMoveEvent(QMouseEvent* event) {
                 m_dragLastHit = hit;
             }
         }
-        writeModelTransform(model, tf);
+        const core::PrevizTransform local = previz::localTransformForWorld(
+            *m_scene, modelIndex, m_frame, previz::matrixFromTransform(tf));
+        writeModelTransform(model, local);
         emit modelEdited();
         update();
         return;

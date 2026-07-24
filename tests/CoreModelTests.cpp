@@ -531,6 +531,71 @@ TEST_CASE("Previz model and camera keys interpolate", "[core][previz]") {
     REQUIRE(miniatureSize.z == 0.25f);
 }
 
+TEST_CASE("Previz model hierarchy rejects cycles and repairs invalid parents",
+          "[core][previz][group]") {
+    core::PrevizScene scene;
+    scene.models.resize(3);
+    scene.models[0].name = "Group";
+    scene.models[0].filePath = ":group";
+    scene.models[1].name = "Base";
+    scene.models[1].filePath = ":box";
+    scene.models[2].name = "Barrel";
+    scene.models[2].filePath = ":cylinder";
+
+    scene.models[1].parentModel = 0;
+    scene.models[2].parentModel = 0;
+    REQUIRE(scene.models[0].isGroup());
+    REQUIRE(scene.isDescendantOf(1, 0));
+    REQUIRE(scene.isDescendantOf(2, 0));
+    REQUIRE_FALSE(scene.canSetParent(0, 2));
+
+    scene.models[0].parentModel = 2;
+    scene.normalizeParentLinks();
+    REQUIRE(scene.models[0].parentModel == -1);
+    REQUIRE(scene.models[1].parentModel == 0);
+    REQUIRE(scene.models[2].parentModel == 0);
+
+    scene.models[2].parentModel = 99;
+    scene.normalizeParentLinks();
+    REQUIRE(scene.models[2].parentModel == -1);
+}
+
+TEST_CASE("Previz groups round trip through ppam", "[core][previz][group][io]") {
+    core::Project project("P");
+    core::Cut& cut = project.addScene("S").addCut("C");
+    cut.addCel("A").addLayer("L").addFrame();
+
+    core::PrevizModel group;
+    group.name = "Turret";
+    group.filePath = ":group";
+    group.transformKeys[0].rotationDeg.y = 0.0f;
+    group.transformKeys[12].rotationDeg.y = 90.0f;
+    cut.previz().models.push_back(group);
+
+    core::PrevizModel barrel;
+    barrel.name = "Barrel";
+    barrel.filePath = ":cylinder";
+    barrel.parentModel = 0;
+    barrel.transform.position = {0.0f, 1.0f, 0.0f};
+    cut.previz().models.push_back(barrel);
+
+    const auto path =
+        std::filesystem::temp_directory_path() / "ppam_previz_group_test.ppproj";
+    std::string error;
+    REQUIRE(core::ProjectIO::save(project, path, &error));
+    const auto loaded = core::ProjectIO::load(path, &error);
+    REQUIRE(loaded != nullptr);
+
+    const core::PrevizScene& previz = loaded->scene(0).cut(0).previz();
+    REQUIRE(previz.models.size() == 2);
+    REQUIRE(previz.models[0].isGroup());
+    REQUIRE(previz.models[0].transformKeys.size() == 2);
+    REQUIRE(previz.models[1].parentModel == 0);
+    REQUIRE(previz.isDescendantOf(1, 0));
+
+    std::filesystem::remove_all(path);
+}
+
 TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     core::Project project("P");
     core::Cut& cut = project.addScene("S").addCut("C");

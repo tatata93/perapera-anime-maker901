@@ -13,6 +13,7 @@ add_executable(perapera_core_tests
     StrokeCommandTests.cpp
     MultiplaneTests.cpp
     PrevizMeshTests.cpp
+    PrevizTransformTests.cpp
     ../src/previz/GltfLoader.cpp
     ../src/previz/StlLoader.cpp
 )
@@ -25,8 +26,14 @@ target_include_directories(perapera_core_tests PRIVATE ${TINYGLTF_INCLUDE_DIRS})
 target_link_libraries(perapera_core_tests PRIVATE
     perapera_core
     Catch2::Catch2WithMain
+    Qt6::Gui
 )
 
 include(CTest)
 include(Catch)
-catch_discover_tests(perapera_core_tests)
+catch_discover_tests(
+    perapera_core_tests
+    DL_PATHS
+        "$<TARGET_FILE_DIR:Qt6::Core>"
+        "$<TARGET_FILE_DIR:Qt6::Gui>"
+)
