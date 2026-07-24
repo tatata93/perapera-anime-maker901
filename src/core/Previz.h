@@ -7,7 +7,7 @@
 
 namespace core {
 
-// 3Dベクトル(プリビズ用。座標系: 右手系、Y上、単位はメートル相当の任意単位)
+// 3Dベクトル(プリビズ用。座標系: 右手系、Y上、単位はメートル)
 struct Vec3 {
     float x = 0.0f;
     float y = 0.0f;
@@ -155,6 +155,11 @@ struct PrevizModel {
     PrevizHumanoidPose humanoidPose;
     PrevizHumanoidBody humanoidBody;
     std::map<size_t, PrevizHumanoidPose> poseKeys;
+    // 読み込み元メッシュの実寸バウンディング情報。組み込み形状はメートル、
+    // glTFは仕様どおりメートル、STLは読込時に最大寸法1mへ正規化した値を使う。
+    Vec3 sourceSizeMeters{1.0f, 1.0f, 1.0f};
+    Vec3 sourceCenterMeters{0.0f, 0.5f, 0.0f};
+    bool sourceBoundsKnown = false;
 
     PrevizTransform transformAt(size_t frame) const {
         return previz_detail::interpolateKeys(transformKeys, frame, transform,
@@ -172,6 +177,13 @@ struct PrevizModel {
             [](const PrevizHumanoidPose& a, const PrevizHumanoidPose& b, float t) {
                 return previz_detail::lerp(a, b, t);
             });
+    }
+
+    Vec3 physicalSizeAt(size_t frame) const {
+        const PrevizTransform tf = transformAt(frame);
+        return {std::abs(sourceSizeMeters.x * tf.scale.x),
+                std::abs(sourceSizeMeters.y * tf.scale.y),
+                std::abs(sourceSizeMeters.z * tf.scale.z)};
     }
 };
 
@@ -204,6 +216,12 @@ struct PrevizCamera {
     float horizontalFovDeg(size_t frame) const {
         const float focal = stateAt(frame).focalLengthMm;
         return 2.0f * std::atan(sensorWidthMm / (2.0f * focal)) * 180.0f / 3.14159265358979f;
+    }
+
+    // 光軸方向の距離にある面で、画面の左右端に入る実寸幅(m)。
+    float frameWidthMeters(float opticalDistanceMeters, size_t frame) const {
+        const float focal = std::max(0.001f, stateAt(frame).focalLengthMm);
+        return std::max(0.0f, opticalDistanceMeters) * sensorWidthMm / focal;
     }
 };
 

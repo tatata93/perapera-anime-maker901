@@ -450,6 +450,15 @@ TEST_CASE("Previz model and camera keys interpolate", "[core][previz]") {
     camera.keys[10] = {{0, 0, 5}, {}, 100.0f};
     REQUIRE(camera.horizontalFovDeg(10) < 21.0f);
     REQUIRE(camera.stateAt(5).focalLengthMm == 75.0f);  // 焦点距離も補間される
+    REQUIRE(camera.frameWidthMeters(5.0f, 0) == 3.6f);  // 50mm/36mm、距離5mで横幅3.6m
+
+    model.sourceSizeMeters = {0.8f, 2.0f, 0.5f};
+    model.transformKeys.clear();
+    model.transform.scale = {0.5f, 0.5f, 0.5f};
+    const core::Vec3 miniatureSize = model.physicalSizeAt(0);
+    REQUIRE(miniatureSize.x == 0.4f);
+    REQUIRE(miniatureSize.y == 1.0f);
+    REQUIRE(miniatureSize.z == 0.25f);
 }
 
 TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
@@ -464,6 +473,9 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     model.transformKeys[0] = {{0, 0, 0}, {0, 0, 0}, {1, 1, 1}};
     model.transformKeys[8] = {{5, 0, 0}, {0, 180, 0}, {2, 2, 2}};
     model.filePath = ":humanoid";
+    model.sourceSizeMeters = {0.9f, 2.3f, 0.55f};
+    model.sourceCenterMeters = {0.0f, 1.15f, 0.0f};
+    model.sourceBoundsKnown = true;
     model.humanoidPose.headYawDeg = 12.0f;
     model.humanoidBody.headWidth = 1.12f;
     model.humanoidBody.faceDepth = 1.35f;
@@ -500,6 +512,9 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     REQUIRE(previz.models.size() == 1);
     REQUIRE(previz.models[0].name == "キャラA");
     REQUIRE(previz.models[0].filePath == ":humanoid");
+    REQUIRE(previz.models[0].sourceBoundsKnown);
+    REQUIRE(previz.models[0].sourceSizeMeters.y == 2.3f);
+    REQUIRE(previz.models[0].sourceCenterMeters.y == 1.15f);
     REQUIRE(previz.models[0].transformKeys.size() == 2);
     REQUIRE(previz.models[0].transformAt(4).position.x == 2.5f);
     REQUIRE(previz.models[0].humanoidPose.headYawDeg == 12.0f);

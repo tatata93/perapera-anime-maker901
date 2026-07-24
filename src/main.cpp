@@ -907,6 +907,17 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // 実寸高さ・カメラ距離の入力がシーンへ反映され、撮影寸法表示も更新されることを確認する。
+    if (args.contains(QStringLiteral("--previz-physical-test"))) {
+        QTimer::singleShot(500, &window, [&window] {
+            window.debugOpenPreviz();
+            QTimer::singleShot(400, &window, [&window] {
+                QApplication::exit(
+                    window.previzWindow()->debugPhysicalCameraControls() ? 0 : 1);
+            });
+        });
+    }
+
     // 動作確認用: --shortcut-settings-test <PNG> でウインドウ別ショートカット設定を保存する
     const int shortcutSettingsIndex = args.indexOf("--shortcut-settings-test");
     if (shortcutSettingsIndex >= 0 && shortcutSettingsIndex + 1 < args.size()) {

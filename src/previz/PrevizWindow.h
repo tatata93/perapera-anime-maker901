@@ -40,6 +40,10 @@ public:
     void debugAddModelFile(const QString& path);
     // 動作確認用: 現在選択中モデルのスケールXYZをUI経由で設定する(非一様スケールの変形確認用)
     void debugSetSelectedScale(double sx, double sy, double sz);
+    void debugSetSelectedPhysicalHeight(double meters);
+    void debugSetCameraDistance(double meters);
+    QString debugMeasurementText() const;
+    bool debugPhysicalCameraControls();
     // 動作確認用: 現在選択中モデルの位置XYZをUI経由で設定する(デモで形状同士を離して見せる用)
     void debugSetSelectedPosition(double x, double y, double z);
     // 動作確認用: レンズ歪曲量を設定する(魚眼/樽/糸巻きの確認用)
@@ -60,10 +64,14 @@ private:
     void refreshModelList();
     void refreshCameraUi();
     void refreshTransformUi();
+    void refreshMeasurementUi();
     void refreshPoseUi();
     void refreshBodyUi();
     core::PrevizModel* selectedModel();
     void applyTransformFromUi();
+    void applyPhysicalHeightFromUi();
+    void applyCameraDistanceFromUi();
+    void aimCameraAtSelectedModel();
     void applyPoseFromUi();
     void applyBodyFromUi();
 
@@ -93,7 +101,9 @@ private:
     PrevizSheetPanel* m_sheetPanel = nullptr;
     QListWidget* m_modelList = nullptr;
     QDoubleSpinBox* m_focalSpin = nullptr;
+    QDoubleSpinBox* m_sensorWidthSpin = nullptr;
     QLabel* m_fovLabel = nullptr;
+    QLabel* m_cameraSummaryLabel = nullptr;
     QDoubleSpinBox* m_distortSpin = nullptr;  // レンズ歪曲(魚眼/樽/糸巻き)
     // 選択モデルのトランスフォーム編集(位置XYZ/回転XYZ/スケールXYZ=任意変形対応)
     QDoubleSpinBox* m_posX = nullptr;
@@ -105,6 +115,10 @@ private:
     QDoubleSpinBox* m_scaleX = nullptr;
     QDoubleSpinBox* m_scaleY = nullptr;
     QDoubleSpinBox* m_scaleZ = nullptr;
+    QDoubleSpinBox* m_physicalHeightSpin = nullptr;
+    QDoubleSpinBox* m_cameraDistanceSpin = nullptr;
+    QLabel* m_physicalSizeLabel = nullptr;
+    QLabel* m_frameWidthLabel = nullptr;
     QPushButton* m_openPoseWindowButton = nullptr;
     QPushButton* m_openBodyWindowButton = nullptr;
     QDialog* m_poseDialog = nullptr;

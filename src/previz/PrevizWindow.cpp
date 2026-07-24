@@ -10,18 +10,25 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QListWidget>
+#include <QMatrix4x4>
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QVector3D>
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
+#include "previz/GltfLoader.h"
 #include "previz/PrevizSheetPanel.h"
+#include "previz/StlLoader.h"
 #include "previz/PrevizViewport.h"
 #include "ui/DockPanelColumn.h"
 #include "ui/RetroTheme.h"
@@ -30,6 +37,87 @@ namespace {
 
 bool isHumanoidKind(const std::string& filePath) {
     return filePath == ":humanoid" || filePath == ":humanoid_box";
+}
+
+bool meshBounds(const previz::MeshData& data, core::Vec3& sizeOut, core::Vec3& centerOut) {
+    float minX = std::numeric_limits<float>::max();
+    float minY = std::numeric_limits<float>::max();
+    float minZ = std::numeric_limits<float>::max();
+    float maxX = std::numeric_limits<float>::lowest();
+    float maxY = std::numeric_limits<float>::lowest();
+    float maxZ = std::numeric_limits<float>::lowest();
+    bool hasVertex = false;
+    for (const previz::MeshPrimitive& primitive : data.primitives) {
+        for (size_t index = 0; index + 2 < primitive.vertices.size(); index += 6) {
+            const float x = primitive.vertices[index];
+            const float y = primitive.vertices[index + 1];
+            const float z = primitive.vertices[index + 2];
+            minX = std::min(minX, x);
+            minY = std::min(minY, y);
+            minZ = std::min(minZ, z);
+            maxX = std::max(maxX, x);
+            maxY = std::max(maxY, y);
+            maxZ = std::max(maxZ, z);
+            hasVertex = true;
+        }
+    }
+    if (!hasVertex) return false;
+    sizeOut = {std::max(0.001f, maxX - minX), std::max(0.001f, maxY - minY),
+               std::max(0.001f, maxZ - minZ)};
+    centerOut = {(minX + maxX) * 0.5f, (minY + maxY) * 0.5f,
+                 (minZ + maxZ) * 0.5f};
+    return true;
+}
+
+bool populateSourceBounds(core::PrevizModel& model) {
+    if (model.filePath == ":box" || model.filePath == ":cylinder" ||
+        model.filePath == ":sphere") {
+        model.sourceSizeMeters = {1.0f, 1.0f, 1.0f};
+        model.sourceCenterMeters = {0.0f, 0.5f, 0.0f};
+        model.sourceBoundsKnown = true;
+        return true;
+    }
+    if (isHumanoidKind(model.filePath)) {
+        // 生成モデルのニュートラル体型。体型比率やポーズにかかわらず「身長」の基準にする。
+        model.sourceSizeMeters = {0.9f, 2.3f, 0.55f};
+        model.sourceCenterMeters = {0.0f, 1.15f, 0.0f};
+        model.sourceBoundsKnown = true;
+        return true;
+    }
+
+    previz::MeshData data;
+    std::string error;
+    const QString suffix =
+        QFileInfo(QString::fromStdString(model.filePath)).suffix().toLower();
+    const bool loaded =
+        suffix == QStringLiteral("stl")
+            ? previz::loadStlMesh(model.filePath, data, &error)
+            : previz::loadGltfMesh(model.filePath, data, &error);
+    if (!loaded ||
+        !meshBounds(data, model.sourceSizeMeters, model.sourceCenterMeters)) {
+        return false;
+    }
+    model.sourceBoundsKnown = true;
+    return true;
+}
+
+QMatrix4x4 transformMatrix(const core::PrevizTransform& transform) {
+    QMatrix4x4 matrix;
+    matrix.translate(transform.position.x, transform.position.y, transform.position.z);
+    matrix.rotate(transform.rotationDeg.y, 0, 1, 0);
+    matrix.rotate(transform.rotationDeg.x, 1, 0, 0);
+    matrix.rotate(transform.rotationDeg.z, 0, 0, 1);
+    matrix.scale(transform.scale.x, transform.scale.y, transform.scale.z);
+    return matrix;
+}
+
+QMatrix4x4 cameraWorldMatrix(const core::PrevizCameraState& camera) {
+    QMatrix4x4 matrix;
+    matrix.translate(camera.position.x, camera.position.y, camera.position.z);
+    matrix.rotate(camera.rotationDeg.y, 0, 1, 0);
+    matrix.rotate(camera.rotationDeg.x, 1, 0, 0);
+    matrix.rotate(camera.rotationDeg.z, 0, 0, 1);
+    return matrix;
 }
 
 core::PrevizHumanoidPose humanoidPosePreset(int presetIndex) {
@@ -280,6 +368,8 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         if (m_playing) m_playTimer->start(1000 / std::max(1, fps));
     });
     toolBar->addWidget(m_playFpsSpin);
+    m_cameraSummaryLabel = new QLabel(this);
+    toolBar->addWidget(m_cameraSummaryLabel);
 
     m_playTimer = new QTimer(this);
     connect(m_playTimer, &QTimer::timeout, this, [this] {
@@ -335,6 +425,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_modelList, &QListWidget::currentRowChanged, this, [this](int row) {
         m_viewport->setSelectedModel(row);  // 作業視点の左ドラッグ移動対象
         refreshTransformUi();
+        refreshMeasurementUi();
         refreshPoseUi();
         refreshBodyUi();
         rebuildSheet();  // アクティブ列(選択モデル)の表示を追従させる
@@ -354,6 +445,9 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     m_posX = makeSpin(-1000, 1000, 0.1);
     m_posY = makeSpin(-1000, 1000, 0.1);
     m_posZ = makeSpin(-1000, 1000, 0.1);
+    m_posX->setSuffix(tr(" m"));
+    m_posY->setSuffix(tr(" m"));
+    m_posZ->setSuffix(tr(" m"));
     m_rotX = makeSpin(-180, 180, 5.0);
     m_rotY = makeSpin(-180, 180, 5.0);
     m_rotZ = makeSpin(-180, 180, 5.0);
@@ -369,9 +463,39 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         h->addWidget(w, 1);
         layout->addWidget(row);
     };
-    addRow(tr("X"), m_posX);
-    addRow(tr("Y"), m_posY);
-    addRow(tr("Z"), m_posZ);
+
+    auto* measurementLabel = new QLabel(tr("実寸・撮影距離"), container);
+    layout->addWidget(measurementLabel);
+    m_sensorWidthSpin = makeSpin(4.0, 70.0, 0.1);
+    m_sensorWidthSpin->setDecimals(1);
+    m_sensorWidthSpin->setSuffix(tr(" mm"));
+    m_sensorWidthSpin->setToolTip(tr("撮像面の横幅。フルサイズは36mm"));
+    addRow(tr("センサー幅"), m_sensorWidthSpin);
+    m_physicalHeightSpin = makeSpin(0.01, 1000.0, 0.1);
+    m_physicalHeightSpin->setDecimals(3);
+    m_physicalHeightSpin->setSuffix(tr(" m"));
+    m_physicalHeightSpin->setToolTip(tr("選択モデルの形を保ったまま実寸高さを変更"));
+    addRow(tr("実寸高さ"), m_physicalHeightSpin);
+    m_cameraDistanceSpin = makeSpin(0.01, 10000.0, 0.1);
+    m_cameraDistanceSpin->setDecimals(3);
+    m_cameraDistanceSpin->setSuffix(tr(" m"));
+    m_cameraDistanceSpin->setToolTip(tr("カメラから選択モデル中心までの直線距離"));
+    addRow(tr("カメラ距離"), m_cameraDistanceSpin);
+    m_physicalSizeLabel = new QLabel(container);
+    m_physicalSizeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_physicalSizeLabel->setWordWrap(true);
+    layout->addWidget(m_physicalSizeLabel);
+    m_frameWidthLabel = new QLabel(container);
+    m_frameWidthLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_frameWidthLabel->setWordWrap(true);
+    layout->addWidget(m_frameWidthLabel);
+    auto* aimCameraButton = new QPushButton(tr("選択をカメラ中央へ"), container);
+    aimCameraButton->setToolTip(tr("カメラを選択モデルの中心へ向けます"));
+    layout->addWidget(aimCameraButton);
+
+    addRow(tr("位置X"), m_posX);
+    addRow(tr("位置Y"), m_posY);
+    addRow(tr("位置Z"), m_posZ);
     addRow(tr("回転X°"), m_rotX);
     addRow(tr("回転Y°"), m_rotY);
     addRow(tr("回転Z°"), m_rotZ);
@@ -381,6 +505,19 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
     for (QDoubleSpinBox* spin : {m_posX, m_posY, m_posZ, m_rotX, m_rotY, m_rotZ, m_scaleX, m_scaleY, m_scaleZ}) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double) { applyTransformFromUi(); });
     }
+    connect(m_sensorWidthSpin, &QDoubleSpinBox::valueChanged, this, [this](double value) {
+        if (m_updating || !m_scene) return;
+        m_scene->camera.sensorWidthMm = static_cast<float>(value);
+        refreshCameraUi();
+        m_viewport->update();
+        emit sceneEdited();
+    });
+    connect(m_physicalHeightSpin, &QDoubleSpinBox::valueChanged, this,
+            [this](double) { applyPhysicalHeightFromUi(); });
+    connect(m_cameraDistanceSpin, &QDoubleSpinBox::valueChanged, this,
+            [this](double) { applyCameraDistanceFromUi(); });
+    connect(aimCameraButton, &QPushButton::clicked, this,
+            &PrevizWindow::aimCameraAtSelectedModel);
 
     m_openPoseWindowButton = new QPushButton(tr("人型ポーズ..."), container);
     m_openBodyWindowButton = new QPushButton(tr("人型体型..."), container);
@@ -897,7 +1034,10 @@ core::PrevizModel* PrevizWindow::selectedModel() {
 
 void PrevizWindow::refreshTransformUi() {
     core::PrevizModel* model = selectedModel();
-    if (!model) return;
+    if (!model) {
+        refreshMeasurementUi();
+        return;
+    }
     m_updating = true;
     const core::PrevizTransform tf = model->transformAt(m_viewport->frame());
     m_posX->setValue(tf.position.x);
@@ -909,6 +1049,68 @@ void PrevizWindow::refreshTransformUi() {
     m_scaleX->setValue(tf.scale.x);
     m_scaleY->setValue(tf.scale.y);
     m_scaleZ->setValue(tf.scale.z);
+    m_updating = false;
+    refreshMeasurementUi();
+}
+
+void PrevizWindow::refreshMeasurementUi() {
+    if (!m_sensorWidthSpin || !m_physicalHeightSpin || !m_cameraDistanceSpin ||
+        !m_physicalSizeLabel || !m_frameWidthLabel) {
+        return;
+    }
+
+    const bool hasScene = m_scene != nullptr;
+    core::PrevizModel* model = selectedModel();
+    const bool hasMeasuredModel = model && model->sourceBoundsKnown;
+    m_updating = true;
+    m_sensorWidthSpin->setEnabled(hasScene);
+    if (hasScene) m_sensorWidthSpin->setValue(m_scene->camera.sensorWidthMm);
+    m_physicalHeightSpin->setEnabled(hasMeasuredModel);
+    m_cameraDistanceSpin->setEnabled(hasMeasuredModel && hasScene);
+
+    if (!hasMeasuredModel || !hasScene) {
+        m_physicalHeightSpin->setValue(0.01);
+        m_cameraDistanceSpin->setValue(0.01);
+        m_physicalSizeLabel->setText(model ? tr("実寸: 取得できません") : tr("実寸: モデル未選択"));
+        m_frameWidthLabel->setText(tr("床グリッド: 1マス = 1 m"));
+        if (m_cameraSummaryLabel) m_cameraSummaryLabel->setText(tr(" | 被写体: 未選択"));
+        m_updating = false;
+        return;
+    }
+
+    const size_t frame = m_viewport->frame();
+    const core::PrevizTransform transform = model->transformAt(frame);
+    const core::Vec3 size = model->physicalSizeAt(frame);
+    const QVector3D sourceCenter(model->sourceCenterMeters.x, model->sourceCenterMeters.y,
+                                 model->sourceCenterMeters.z);
+    const QVector3D worldCenter = transformMatrix(transform).map(sourceCenter);
+    const core::PrevizCameraState camera = m_scene->camera.stateAt(frame);
+    const QVector3D cameraPosition(camera.position.x, camera.position.y, camera.position.z);
+    const float straightDistance = (worldCenter - cameraPosition).length();
+    const QVector3D cameraSpaceCenter =
+        cameraWorldMatrix(camera).inverted().map(worldCenter);
+    const float opticalDistance = std::max(0.0f, -cameraSpaceCenter.z());
+    const float frameWidth =
+        m_scene->camera.frameWidthMeters(opticalDistance, frame);
+
+    m_physicalHeightSpin->setValue(size.y);
+    m_cameraDistanceSpin->setValue(std::max(0.01f, straightDistance));
+    m_physicalSizeLabel->setText(
+        tr("実寸: 幅 %1 m × 高さ %2 m × 奥行 %3 m")
+            .arg(size.x, 0, 'f', 3)
+            .arg(size.y, 0, 'f', 3)
+            .arg(size.z, 0, 'f', 3));
+    m_frameWidthLabel->setText(
+        tr("光軸距離: %1 m / 画面横幅: %2 m\n床グリッド: 1マス = 1 m")
+            .arg(opticalDistance, 0, 'f', 3)
+            .arg(frameWidth, 0, 'f', 3));
+    if (m_cameraSummaryLabel) {
+        m_cameraSummaryLabel->setText(
+            tr(" | 被写体高 %1 m / 距離 %2 m / 画面横幅 %3 m")
+                .arg(size.y, 0, 'f', 3)
+                .arg(straightDistance, 0, 'f', 3)
+                .arg(frameWidth, 0, 'f', 3));
+    }
     m_updating = false;
 }
 
@@ -933,6 +1135,7 @@ void PrevizWindow::applyTransformFromUi() {
         model->transformKeys[m_viewport->frame()] = tf;
     }
     m_viewport->update();
+    refreshMeasurementUi();
     emit sceneEdited();
 }
 
@@ -1062,6 +1265,83 @@ void PrevizWindow::applyPoseFromUi() {
     pose.rightKneeDeg = static_cast<float>(m_poseRightKnee->value());
 
     m_viewport->update();
+    rebuildSheet();
+    refreshMeasurementUi();
+    emit sceneEdited();
+}
+
+void PrevizWindow::applyPhysicalHeightFromUi() {
+    if (m_updating) return;
+    core::PrevizModel* model = selectedModel();
+    if (!model || !model->sourceBoundsKnown) return;
+
+    core::PrevizTransform transform = model->transformAt(m_viewport->frame());
+    const float currentHeight =
+        std::abs(model->sourceSizeMeters.y * transform.scale.y);
+    if (currentHeight <= 0.000001f) return;
+    const float ratio =
+        static_cast<float>(m_physicalHeightSpin->value()) / currentHeight;
+    transform.scale.x *= ratio;
+    transform.scale.y *= ratio;
+    transform.scale.z *= ratio;
+    editableModelTransform(*model) = transform;
+
+    m_viewport->update();
+    refreshTransformUi();
+    rebuildSheet();
+    emit sceneEdited();
+}
+
+void PrevizWindow::applyCameraDistanceFromUi() {
+    if (m_updating || !m_scene) return;
+    core::PrevizModel* model = selectedModel();
+    if (!model || !model->sourceBoundsKnown) return;
+
+    const core::PrevizTransform transform = model->transformAt(m_viewport->frame());
+    const QVector3D sourceCenter(model->sourceCenterMeters.x, model->sourceCenterMeters.y,
+                                 model->sourceCenterMeters.z);
+    const QVector3D worldCenter = transformMatrix(transform).map(sourceCenter);
+    core::PrevizCameraState camera = m_scene->camera.stateAt(m_viewport->frame());
+    QVector3D direction =
+        QVector3D(camera.position.x, camera.position.y, camera.position.z) - worldCenter;
+    if (direction.lengthSquared() < 0.000001f) {
+        direction = cameraWorldMatrix(camera).mapVector(QVector3D(0.0f, 0.0f, 1.0f));
+    }
+    direction.normalize();
+    const QVector3D position =
+        worldCenter + direction * static_cast<float>(m_cameraDistanceSpin->value());
+    camera.position = {position.x(), position.y(), position.z()};
+    editableCamera() = camera;
+
+    m_viewport->update();
+    refreshCameraUi();
+    rebuildSheet();
+    emit sceneEdited();
+}
+
+void PrevizWindow::aimCameraAtSelectedModel() {
+    if (!m_scene) return;
+    core::PrevizModel* model = selectedModel();
+    if (!model || !model->sourceBoundsKnown) return;
+
+    const core::PrevizTransform transform = model->transformAt(m_viewport->frame());
+    const QVector3D sourceCenter(model->sourceCenterMeters.x, model->sourceCenterMeters.y,
+                                 model->sourceCenterMeters.z);
+    const QVector3D worldCenter = transformMatrix(transform).map(sourceCenter);
+    core::PrevizCameraState camera = m_scene->camera.stateAt(m_viewport->frame());
+    const QVector3D cameraPosition(camera.position.x, camera.position.y, camera.position.z);
+    QVector3D direction = worldCenter - cameraPosition;
+    if (direction.lengthSquared() < 0.000001f) return;
+    direction.normalize();
+    constexpr float kRadiansToDegrees = 57.2957795131f;
+    camera.rotationDeg.x =
+        std::asin(std::clamp(direction.y(), -1.0f, 1.0f)) * kRadiansToDegrees;
+    camera.rotationDeg.y =
+        std::atan2(-direction.x(), -direction.z()) * kRadiansToDegrees;
+    editableCamera() = camera;
+
+    m_viewport->update();
+    refreshCameraUi();
     rebuildSheet();
     emit sceneEdited();
 }
@@ -1301,6 +1581,44 @@ void PrevizWindow::debugSetSelectedScale(double sx, double sy, double sz) {
     m_scaleZ->setValue(sz);
 }
 
+void PrevizWindow::debugSetSelectedPhysicalHeight(double meters) {
+    if (m_physicalHeightSpin) m_physicalHeightSpin->setValue(meters);
+}
+
+void PrevizWindow::debugSetCameraDistance(double meters) {
+    if (m_cameraDistanceSpin) m_cameraDistanceSpin->setValue(meters);
+}
+
+QString PrevizWindow::debugMeasurementText() const {
+    const QString size =
+        m_physicalSizeLabel ? m_physicalSizeLabel->text() : QString();
+    const QString frame =
+        m_frameWidthLabel ? m_frameWidthLabel->text() : QString();
+    return size + QLatin1Char('\n') + frame;
+}
+
+bool PrevizWindow::debugPhysicalCameraControls() {
+    if (!m_scene || !selectedModel()) return false;
+    debugSetSelectedPhysicalHeight(0.25);
+    debugSetCameraDistance(0.75);
+    aimCameraAtSelectedModel();
+
+    core::PrevizModel* model = selectedModel();
+    const core::Vec3 size = model->physicalSizeAt(m_viewport->frame());
+    const core::PrevizTransform transform = model->transformAt(m_viewport->frame());
+    const QVector3D sourceCenter(model->sourceCenterMeters.x, model->sourceCenterMeters.y,
+                                 model->sourceCenterMeters.z);
+    const QVector3D worldCenter = transformMatrix(transform).map(sourceCenter);
+    const core::PrevizCameraState camera =
+        m_scene->camera.stateAt(m_viewport->frame());
+    const float distance =
+        (worldCenter - QVector3D(camera.position.x, camera.position.y, camera.position.z))
+            .length();
+    return std::abs(size.y - 0.25f) < 0.001f &&
+           std::abs(distance - 0.75f) < 0.001f &&
+           debugMeasurementText().contains(QStringLiteral("高さ 0.250 m"));
+}
+
 void PrevizWindow::debugSetSelectedPosition(double x, double y, double z) {
     if (!selectedModel()) return;
     m_posX->setValue(x);
@@ -1340,6 +1658,7 @@ void PrevizWindow::addPrimitive(const QString& kind, bool select) {
     }
     primitive.name = tr("%1 %2").arg(label).arg(number).toStdString();
     primitive.filePath = kind.toStdString();  // 組み込みプリミティブ
+    populateSourceBounds(primitive);
     m_scene->models.push_back(std::move(primitive));
     refreshModelList();
     if (select) m_modelList->setCurrentRow(static_cast<int>(m_scene->models.size()) - 1);
@@ -1350,6 +1669,11 @@ void PrevizWindow::addPrimitive(const QString& kind, bool select) {
 
 void PrevizWindow::setScene(core::PrevizScene* scene) {
     m_scene = scene;
+    if (m_scene) {
+        for (core::PrevizModel& model : m_scene->models) {
+            if (!model.sourceBoundsKnown) populateSourceBounds(model);
+        }
+    }
     m_viewport->setScene(scene);
     // 空のシーンには最初から操作できる箱を1つ置く(目安キューブの実体化)
     if (m_scene && m_scene->models.empty()) {
@@ -1357,6 +1681,7 @@ void PrevizWindow::setScene(core::PrevizScene* scene) {
     }
     refreshModelList();
     refreshCameraUi();
+    refreshMeasurementUi();
     refreshPoseUi();
     refreshBodyUi();
     rebuildSheet();
@@ -1384,6 +1709,7 @@ void PrevizWindow::addModel() {
     core::PrevizModel model;
     model.name = QFileInfo(path).completeBaseName().toStdString();
     model.filePath = path.toStdString();
+    populateSourceBounds(model);
     m_scene->models.push_back(std::move(model));
 
     refreshModelList();
@@ -1400,6 +1726,7 @@ void PrevizWindow::debugAddModelFile(const QString& path) {
     core::PrevizModel model;
     model.name = QFileInfo(path).completeBaseName().toStdString();
     model.filePath = path.toStdString();
+    populateSourceBounds(model);
     m_scene->models.push_back(std::move(model));
 
     refreshModelList();
@@ -1421,14 +1748,22 @@ void PrevizWindow::removeSelectedModel() {
 }
 
 void PrevizWindow::refreshModelList() {
+    const int previousRow = m_modelList->currentRow();
     m_updating = true;
-    m_modelList->clear();
-    if (m_scene) {
-        for (const core::PrevizModel& model : m_scene->models) {
-            m_modelList->addItem(QString::fromStdString(model.name));
+    {
+        const QSignalBlocker blocker(m_modelList);
+        m_modelList->clear();
+        if (m_scene) {
+            for (const core::PrevizModel& model : m_scene->models) {
+                m_modelList->addItem(QString::fromStdString(model.name));
+            }
         }
     }
     m_updating = false;
+    if (m_modelList->count() > 0) {
+        m_modelList->setCurrentRow(
+            std::clamp(previousRow < 0 ? 0 : previousRow, 0, m_modelList->count() - 1));
+    }
 }
 
 void PrevizWindow::refreshCameraUi() {
@@ -1436,8 +1771,10 @@ void PrevizWindow::refreshCameraUi() {
     m_updating = true;
     m_focalSpin->setValue(m_scene->camera.stateAt(m_viewport->frame()).focalLengthMm);
     m_fovLabel->setText(tr(" 水平画角: %1°").arg(m_scene->camera.horizontalFovDeg(m_viewport->frame()), 0, 'f', 1));
+    if (m_sensorWidthSpin) m_sensorWidthSpin->setValue(m_scene->camera.sensorWidthMm);
     if (m_distortSpin) m_distortSpin->setValue(m_scene->camera.lensDistortion);
     m_updating = false;
+    refreshMeasurementUi();
 }
 
 // プリビズシートの列(カメラ+モデル)とキー有無を集めて反映する

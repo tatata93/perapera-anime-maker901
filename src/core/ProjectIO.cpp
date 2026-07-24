@@ -274,6 +274,10 @@ json previzToJson(const PrevizScene& scene) {
                        {"filePath", model.filePath},
                        {"transform", transformToJson(model.transform)},
                        {"keys", std::move(jKeys)}};
+        if (model.sourceBoundsKnown) {
+            jModel["sourceSizeMeters"] = vec3ToJson(model.sourceSizeMeters);
+            jModel["sourceCenterMeters"] = vec3ToJson(model.sourceCenterMeters);
+        }
         if (isHumanoidModelPath(model.filePath) || !model.poseKeys.empty()) {
             json jPoseKeys = json::array();
             for (const auto& [frame, pose] : model.poseKeys) {
@@ -303,6 +307,11 @@ void previzFromJson(const json& j, PrevizScene& scene) {
         model.name = jModel.at("name").get<std::string>();
         model.filePath = jModel.at("filePath").get<std::string>();
         model.transform = transformFromJson(jModel.at("transform"));
+        if (jModel.contains("sourceSizeMeters") && jModel.contains("sourceCenterMeters")) {
+            model.sourceSizeMeters = vec3FromJson(jModel.at("sourceSizeMeters"));
+            model.sourceCenterMeters = vec3FromJson(jModel.at("sourceCenterMeters"));
+            model.sourceBoundsKnown = true;
+        }
         for (const json& jKey : jModel.at("keys")) {
             model.transformKeys[jKey.at("frame").get<size_t>()] = transformFromJson(jKey.at("transform"));
         }
