@@ -24,5 +24,6 @@ void removeRetroDockTitleBars(QWidget* root);
 void installRetroWindowFrame(QMainWindow* window);
 void removeRetroWindowFrame(QMainWindow* window);
 void keepWindowOnScreen(QWidget* window);
+void showAndActivateWindow(QWidget* window);
 
 }  // namespace perapera::ui

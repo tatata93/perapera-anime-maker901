@@ -1266,4 +1266,17 @@ void keepWindowOnScreen(QWidget* window) {
     if (topLeft != frame.topLeft()) window->move(window->pos() + (topLeft - frame.topLeft()));
 }
 
+void showAndActivateWindow(QWidget* window) {
+    if (!window) return;
+
+    if (window->isMinimized()) {
+        window->showNormal();
+    } else {
+        window->show();
+    }
+    keepWindowOnScreen(window);
+    window->raise();
+    window->activateWindow();
+}
+
 }  // namespace perapera::ui

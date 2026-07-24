@@ -907,7 +907,11 @@ void SettingBoardWindow::updateFinalStampOverlay() {
 }
 
 void SettingBoardWindow::detachCanvas() {
-    if (m_floatingCanvasWindow || !m_canvas || !m_canvasLayout) return;
+    if (m_floatingCanvasWindow) {
+        perapera::ui::showAndActivateWindow(m_floatingCanvasWindow);
+        return;
+    }
+    if (!m_canvas || !m_canvasLayout) return;
     m_canvasLayout->removeWidget(m_canvas);
     m_canvas->deleteLater();
     m_canvas = nullptr;
@@ -920,8 +924,7 @@ void SettingBoardWindow::detachCanvas() {
     connect(window, &QObject::destroyed, this, [this, window] {
         if (m_floatingCanvasWindow == window) m_floatingCanvasWindow = nullptr;
     });
-    window->show();
-    perapera::ui::keepWindowOnScreen(window);
+    perapera::ui::showAndActivateWindow(window);
 }
 
 void SettingBoardWindow::restoreCanvas() {

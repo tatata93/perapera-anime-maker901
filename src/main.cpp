@@ -36,6 +36,10 @@
 
 namespace {
 
+bool isIndependentApplicationWindow(QWidget* window) {
+    return window && window->isWindow() && window->parentWidget() == nullptr && window->windowType() == Qt::Window;
+}
+
 // core::BitmapをQImage(Format_RGBA8888)に変換する(--multiplane-testの保存用)
 QImage bitmapToQImage(const core::Bitmap& bmp) {
     QImage image(bmp.width(), bmp.height(), QImage::Format_RGBA8888);
@@ -1142,15 +1146,29 @@ int main(int argc, char* argv[]) {
                         QApplication::exit(1);
                         return;
                     }
-                    auto* canvas = floating->findChild<GLCanvas*>();
-                    if (!canvas) {
+                    if (!isIndependentApplicationWindow(floating)) {
                         QApplication::exit(1);
                         return;
                     }
-                    canvas->debugSimulateStroke();
-                    floating->grab().save(outputPath);
-                    floating->close();
-                    QTimer::singleShot(100, &window, [] { QApplication::exit(0); });
+                    floating->showMinimized();
+                    QTimer::singleShot(100, &window, [&window, outputPath, floating] {
+                        window.storyboardWindow()->debugDetachCanvas();
+                        QTimer::singleShot(100, &window, [&window, outputPath, floating] {
+                            if (!floating->isVisible() || floating->isMinimized()) {
+                                QApplication::exit(1);
+                                return;
+                            }
+                            auto* canvas = floating->findChild<GLCanvas*>();
+                            if (!canvas) {
+                                QApplication::exit(1);
+                                return;
+                            }
+                            canvas->debugSimulateStroke();
+                            floating->grab().save(outputPath);
+                            floating->close();
+                            QTimer::singleShot(100, &window, [] { QApplication::exit(0); });
+                        });
+                    });
                 });
             });
         });
@@ -1204,15 +1222,29 @@ int main(int argc, char* argv[]) {
                         QApplication::exit(1);
                         return;
                     }
-                    auto* canvas = floating->findChild<GLCanvas*>();
-                    if (!canvas) {
+                    if (!isIndependentApplicationWindow(floating)) {
                         QApplication::exit(1);
                         return;
                     }
-                    canvas->debugSimulateStroke();
-                    floating->grab().save(outputPath);
-                    floating->close();
-                    QTimer::singleShot(100, &window, [] { QApplication::exit(0); });
+                    floating->showMinimized();
+                    QTimer::singleShot(100, &window, [&window, outputPath, floating] {
+                        window.settingBoardWindow()->debugDetachCanvas();
+                        QTimer::singleShot(100, &window, [&window, outputPath, floating] {
+                            if (!floating->isVisible() || floating->isMinimized()) {
+                                QApplication::exit(1);
+                                return;
+                            }
+                            auto* canvas = floating->findChild<GLCanvas*>();
+                            if (!canvas) {
+                                QApplication::exit(1);
+                                return;
+                            }
+                            canvas->debugSimulateStroke();
+                            floating->grab().save(outputPath);
+                            floating->close();
+                            QTimer::singleShot(100, &window, [] { QApplication::exit(0); });
+                        });
+                    });
                 });
             });
         });

@@ -3,10 +3,22 @@
 #include <QCloseEvent>
 #include <QTimer>
 
-FloatingCanvasWindow::FloatingCanvasWindow(const QString& title, QWidget* parent) : QMainWindow(parent, Qt::Window) {
+FloatingCanvasWindow::FloatingCanvasWindow(const QString& title, QWidget* owner)
+    : QMainWindow(nullptr, Qt::Window | Qt::WindowTitleHint | Qt::WindowSystemMenuHint |
+                              Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint |
+                              Qt::WindowCloseButtonHint) {
     setWindowTitle(title);
     setAttribute(Qt::WA_DeleteOnClose);
+    setAttribute(Qt::WA_QuitOnClose, false);
     resize(1000, 720);
+
+    if (owner) {
+        connect(owner, &QObject::destroyed, this, [this] {
+            m_restoreQueued = true;
+            hide();
+            deleteLater();
+        });
+    }
 }
 
 void FloatingCanvasWindow::closeEvent(QCloseEvent* event) {

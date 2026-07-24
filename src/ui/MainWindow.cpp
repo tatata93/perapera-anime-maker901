@@ -161,11 +161,7 @@ Window* createSecondaryWindow() {
 }
 
 void showTopLevelOnScreen(QWidget* window) {
-    if (!window) return;
-    window->show();
-    perapera::ui::keepWindowOnScreen(window);
-    window->raise();
-    window->activateWindow();
+    perapera::ui::showAndActivateWindow(window);
 }
 
 // プリビズなぞり作画用: 筆圧ペンで点列(ポリライン)をBitmapへ描く。debugSimulateStroke
@@ -1204,8 +1200,7 @@ void MainWindow::updatePenColorButton() {
 
 void MainWindow::detachMainCanvas() {
     if (m_floatingCanvasWindow) {
-        m_floatingCanvasWindow->raise();
-        m_floatingCanvasWindow->activateWindow();
+        perapera::ui::showAndActivateWindow(m_floatingCanvasWindow);
         return;
     }
     if (!m_canvas) return;
@@ -1231,8 +1226,7 @@ void MainWindow::detachMainCanvas() {
     window->setCentralWidget(m_canvas);
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &MainWindow::restoreMainCanvas);
     connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
-    window->show();
-    perapera::ui::keepWindowOnScreen(window);
+    perapera::ui::showAndActivateWindow(window);
 }
 
 void MainWindow::restoreMainCanvas() {
