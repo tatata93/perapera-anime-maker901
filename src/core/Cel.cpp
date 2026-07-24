@@ -61,6 +61,15 @@ void Cel::setDrawingKind(size_t drawing, DrawingKind kind) {
     m_drawingKinds[drawing] = kind;
 }
 
+void Cel::insertDrawingMetadata(size_t drawing, DrawingKind kind) {
+    const size_t count = drawingCount();
+    if (m_drawingKinds.size() < count) {
+        m_drawingKinds.resize(count, DrawingKind::Unspecified);
+    }
+    drawing = std::min(drawing, count);
+    m_drawingKinds.insert(m_drawingKinds.begin() + static_cast<ptrdiff_t>(drawing), kind);
+}
+
 void Cel::removeDrawingMetadata(size_t drawing) {
     if (drawing >= m_drawingKinds.size()) return;
     m_drawingKinds.erase(m_drawingKinds.begin() + static_cast<ptrdiff_t>(drawing));

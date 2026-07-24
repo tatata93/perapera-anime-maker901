@@ -654,3 +654,20 @@ TEST_CASE("Cel keeps ACTION entries and drawing kinds", "[core][sheet]") {
     REQUIRE(cel.actionEntry(2) == "1");
     REQUIRE(cel.actionEntry(3).empty());
 }
+
+TEST_CASE("Cel inserts drawing kind metadata with a drawing", "[core][sheet]") {
+    core::Cel cel("A");
+    core::Layer& layer = cel.addLayer("L");
+    layer.addFrame();
+    layer.addFrame();
+    cel.setDrawingKind(0, core::DrawingKind::Key);
+    cel.setDrawingKind(1, core::DrawingKind::Key);
+
+    cel.insertDrawingMetadata(1, core::DrawingKind::Inbetween);
+    layer.insertFrame(1);
+
+    REQUIRE(cel.drawingCount() == 3);
+    REQUIRE(cel.drawingKind(0) == core::DrawingKind::Key);
+    REQUIRE(cel.drawingKind(1) == core::DrawingKind::Inbetween);
+    REQUIRE(cel.drawingKind(2) == core::DrawingKind::Key);
+}

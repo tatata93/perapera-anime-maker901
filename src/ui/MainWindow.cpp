@@ -140,13 +140,16 @@ core::Bitmap makeTransparentCelForCel(const core::Cel& cel, int canvasW, int can
     const int h = cel.paperHeight() > 0 ? cel.paperHeight() : canvasH;
     return makeTransparentCel(w, h);
 }
-// 新規カットの最小構成(セルA+レイヤー1+動画1、尺1コマ)を作る。canvasW/canvasHは新規セルのサイズに使う
+// 新規カットの最小構成(セルA+レイヤー1+原画1、尺1コマ)を作る。
+// 制作工程は必ず原画から始め、中割は原画が揃った後に利用者が追加する。
 void initializeCut(core::Cut& cut, int canvasW, int canvasH) {
     core::Cel& cel = cut.addCel("A");
     core::Layer& layer = cel.addLayer("レイヤー 1");
     layer.addFrame().bitmap() = makeTransparentCel(canvasW, canvasH);
     cut.setFrameCount(1);
     cel.setExposure(0, 0);
+    cel.setDrawingKind(0, core::DrawingKind::Key);
+    cel.setActionEntry(0, "1");
 }
 
 template <typename Window>
@@ -624,34 +627,104 @@ void MainWindow::addInbetweenDrawingAtCurrent() {
 
 void MainWindow::addDrawingAtCurrent(core::DrawingKind kind) {
     if (m_playing) return;
-    // 新しい動画を作る(セル内全レイヤーに同時追加)。
-    // 原画/中割は選択したコマへ直接作る。通常の「動画追加」は従来どおり、
-    // 現在コマが割付済みなら次のコマへ進める。
     core::Cel& cel = activeCel();
-    const int newDrawing = static_cast<int>(cel.drawingCount());
-    for (size_t li = 0; li < cel.layerCount(); ++li) {
-        cel.layer(li).addFrame().bitmap() = makeTransparentCelForCel(cel, canvasWidth(), canvasHeight());
-    }
     const bool currentIsEmpty = cel.exposure(m_currentFrame) == -1;
     const bool placeAtSelectedFrame = kind != core::DrawingKind::Unspecified;
     const size_t target =
         placeAtSelectedFrame || currentIsEmpty ? m_currentFrame : m_currentFrame + 1;
     core::Cut& cut = activeCut();
     if (target >= cut.frameCount()) cut.setFrameCount(target + 1);
-    cel.setDrawingKind(static_cast<size_t>(newDrawing), kind);
-    cel.setExposure(target, newDrawing);
-    if (kind == core::DrawingKind::Key) {
-        int keyNumber = 1;
-        for (int drawing = 0; drawing < newDrawing; ++drawing) {
-            if (cel.drawingKind(static_cast<size_t>(drawing)) == core::DrawingKind::Key) ++keyNumber;
+
+    const int oldDrawing = cel.exposure(target);
+    if (placeAtSelectedFrame && oldDrawing >= 0 &&
+        static_cast<size_t>(oldDrawing) < cel.drawingCount() &&
+        cel.drawingKind(static_cast<size_t>(oldDrawing)) == kind &&
+        (target == 0 || cel.exposure(target - 1) != oldDrawing)) {
+        bool blank = true;
+        for (size_t li = 0; li < cel.layerCount() && blank; ++li) {
+            const core::Bitmap& bitmap = cel.layer(li).frame(static_cast<size_t>(oldDrawing)).bitmap();
+            for (size_t byte = 3; byte < bitmap.byteSize(); byte += 4) {
+                if (bitmap.data()[byte] != 0) {
+                    blank = false;
+                    break;
+                }
+            }
         }
-        cel.setActionEntry(target, QString::number(keyNumber).toStdString());
+        if (blank) {
+            setCurrentFrame(target);
+            return;
+        }
+    }
+
+    size_t runEnd = target + 1;
+    while (placeAtSelectedFrame && runEnd < cut.frameCount() &&
+           cel.exposure(runEnd) == oldDrawing) {
+        ++runEnd;
+    }
+
+    size_t insertDrawing = cel.drawingCount();
+    if (placeAtSelectedFrame) {
+        insertDrawing = 0;
+        for (size_t drawing = 0; drawing < cel.drawingCount(); ++drawing) {
+            size_t firstUse = cut.frameCount();
+            for (size_t frame = 0; frame < cut.frameCount(); ++frame) {
+                if (cel.exposure(frame) == static_cast<int>(drawing)) {
+                    firstUse = frame;
+                    break;
+                }
+            }
+            if (firstUse < target) ++insertDrawing;
+        }
+        cel.insertDrawingMetadata(insertDrawing, kind);
+        for (size_t li = 0; li < cel.layerCount(); ++li) {
+            cel.layer(li).insertFrame(insertDrawing).bitmap() =
+                makeTransparentCelForCel(cel, canvasWidth(), canvasHeight());
+        }
+        for (size_t frame = 0; frame < cut.frameCount(); ++frame) {
+            const int drawing = cel.exposure(frame);
+            if (drawing >= static_cast<int>(insertDrawing)) {
+                cel.setExposure(frame, drawing + 1);
+            }
+        }
+        for (size_t frame = target; frame < runEnd; ++frame) {
+            cel.setExposure(frame, static_cast<int>(insertDrawing));
+        }
+    } else {
+        for (size_t li = 0; li < cel.layerCount(); ++li) {
+            cel.layer(li).addFrame().bitmap() =
+                makeTransparentCelForCel(cel, canvasWidth(), canvasHeight());
+        }
+        cel.setDrawingKind(insertDrawing, kind);
+        cel.setExposure(target, static_cast<int>(insertDrawing));
+    }
+
+    if (kind == core::DrawingKind::Key) {
+        for (size_t frame = 0; frame < cut.frameCount(); ++frame) {
+            const std::string& entry = cel.actionEntry(frame);
+            const bool numeric =
+                !entry.empty() &&
+                std::all_of(entry.begin(), entry.end(),
+                            [](unsigned char ch) { return ch >= '0' && ch <= '9'; });
+            if (numeric) cel.setActionEntry(frame, {});
+        }
+        std::vector<bool> numbered(cel.drawingCount(), false);
+        int keyNumber = 1;
+        for (size_t frame = 0; frame < cut.frameCount(); ++frame) {
+            const int drawing = cel.exposure(frame);
+            if (drawing < 0 || static_cast<size_t>(drawing) >= cel.drawingCount() ||
+                numbered[static_cast<size_t>(drawing)] ||
+                cel.drawingKind(static_cast<size_t>(drawing)) != core::DrawingKind::Key) {
+                continue;
+            }
+            numbered[static_cast<size_t>(drawing)] = true;
+            cel.setActionEntry(frame, QString::number(keyNumber++).toStdString());
+        }
     } else if (kind == core::DrawingKind::Inbetween) {
         cel.setActionEntry(target, QStringLiteral("○").toStdString());
     }
 
     clearUndoHistory();             // 構造変更のためUndo履歴を破棄
-    m_canvas->clearTextureCache();  // 動画構造が変わったため
+    m_canvas->clearTextureCache();  // 作画構造が変わったため
     setCurrentFrame(target);
     markCutDirty(cut);
     updateWindowTitle();
@@ -749,7 +822,7 @@ void MainWindow::applyTimesheetEdits(const QList<int>& exposureCelIndices,
 
     if (changes.empty() && actionChanges.empty()) {
         updateXsheetPanel();
-        if (invalidDrawing) statusBar()->showMessage(tr("存在しない動画番号は割り付けできません"), 4000);
+        if (invalidDrawing) statusBar()->showMessage(tr("存在しない作画番号はセル指定できません"), 4000);
         return;
     }
 
@@ -762,7 +835,7 @@ void MainWindow::applyTimesheetEdits(const QList<int>& exposureCelIndices,
     updateXsheetPanel();
     updateWindowTitle();
     updateUndoActions();
-    if (invalidDrawing) statusBar()->showMessage(tr("存在しない動画番号は割り付けできません"), 4000);
+    if (invalidDrawing) statusBar()->showMessage(tr("存在しない作画番号はセル指定できません"), 4000);
 }
 
 void MainWindow::togglePlayback() {
@@ -896,7 +969,7 @@ void MainWindow::updateFrameLabel() {
             drawingKinds.append(static_cast<int>(cel.drawingKind(static_cast<size_t>(drawing))));
         }
         m_framePanel->setDrawings(displayOrder, drawingKinds, cel.exposure(m_currentFrame));
-        m_framePanel->setWindowTitle(tr("動画 - セル %1").arg(QString::fromStdString(cel.name())));
+        m_framePanel->setWindowTitle(tr("作画 - セル %1").arg(QString::fromStdString(cel.name())));
     }
     // 動画一覧(チェック状態)の再構築後にライトテーブルも追従させる(構造変更後の破棄漏れ防止)
     updateLightTable();
@@ -1084,16 +1157,18 @@ void MainWindow::addCut() {
     if (dlg.exec() != QDialog::Accepted) return;
 
     core::Cut& cut = scene.addCut(dlg.cutName().toStdString());
-    initializeCut(cut, canvasWidth(), canvasHeight());  // セルA(レイヤー1・1コマ)
+    initializeCut(cut, canvasWidth(), canvasHeight());  // セルA(レイヤー1・原画1)
     cut.setFrameCount(static_cast<size_t>(std::max(1, dlg.frameCount())));
 
-    // 追加セル(B, C, …)。それぞれレイヤー1枚+透明1コマで初期化する
+    // 追加セル(B, C, …)。それぞれ原画1から始める
     for (int c = 1; c < dlg.celCount(); ++c) {
         core::Cel& extra = cut.addCel(QString(QChar::fromLatin1(static_cast<char>('A' + c))).toStdString());
         core::Layer& layer = extra.addLayer(tr("レイヤー 1").toStdString());
         layer.addFrame().bitmap() = makeTransparentCel(canvasWidth(), canvasHeight());
+        extra.setDrawingKind(0, core::DrawingKind::Key);
+        extra.setActionEntry(0, "1");
     }
-    // 全セルを止め(動画0)で全コマに割り付けておく(尺を伸ばしても絵が消えない初期状態)
+    // 全セルの原画1を止めで全コマに割り付ける
     for (size_t ci = 0; ci < cut.celCount(); ++ci)
         for (size_t t = 0; t < cut.frameCount(); ++t) cut.cel(ci).setExposure(t, 0);
 
@@ -1105,6 +1180,7 @@ void MainWindow::addCut() {
     markCutDirty(cut);
     updateWindowTitle();
     setActiveCut(static_cast<int>(scene.cutCount() - 1));
+    if (m_xsheetPanel) m_xsheetPanel->startKeyDrawingWorkflow();
     refreshEditWindowIfOpen();
 }
 
@@ -1143,7 +1219,7 @@ void MainWindow::setupPanels() {
         if (m_playing) return;
         applyExposureEdits({static_cast<int>(m_activeCel)}, {static_cast<int>(m_currentFrame)}, {index});
     });
-    connect(m_framePanel, &FramePanel::addRequested, this, &MainWindow::addFrameAfterCurrent);
+    connect(m_framePanel, &FramePanel::addRequested, this, &MainWindow::addKeyDrawingAtCurrent);
     connect(m_framePanel, &FramePanel::duplicateRequested, this, &MainWindow::duplicateDrawing);
     connect(m_framePanel, &FramePanel::deleteRequested, this, &MainWindow::deleteDrawing);
     connect(m_framePanel, &FramePanel::sortModeChanged, this, [this] { updateFrameLabel(); });
@@ -1632,7 +1708,9 @@ void MainWindow::addCel() {
     core::Cel& cel = cut.addCel(name.toStdString());
     core::Layer& layer = cel.addLayer(tr("レイヤー 1").toStdString());
     layer.addFrame().bitmap() = makeTransparentCel(canvasWidth(), canvasHeight());
-    cel.setExposure(m_currentFrame, 0);  // 現在コマに動画1を割り付け、すぐ描ける状態にする
+    cel.setExposure(m_currentFrame, 0);
+    cel.setDrawingKind(0, core::DrawingKind::Key);
+    cel.setActionEntry(m_currentFrame, "1");  // 新しいセルも原画1から始める
     m_activeCel = static_cast<size_t>(index);
 
     // 新規セル・レイヤー・動画は既存のBitmapに影響しないためUndo履歴/テクスチャキャッシュの破棄は不要
@@ -2222,6 +2300,7 @@ void MainWindow::newDocument() {
     clearUndoHistory();  // 旧プロジェクトのBitmapを参照するコマンドを破棄
     createNewDocument();
     finishProjectReplacement();
+    if (m_xsheetPanel) m_xsheetPanel->startKeyDrawingWorkflow();
 }
 
 void MainWindow::onNewProject() {
@@ -2247,6 +2326,7 @@ void MainWindow::onNewProject() {
     updateCanvasLayers();
     updateOnionSkin();
     finishProjectReplacement();
+    if (m_xsheetPanel) m_xsheetPanel->startKeyDrawingWorkflow();
 }
 
 // プロジェクトを新規/読込で丸ごと差し替えた後の共通処理(各ウィンドウ・パネルの追従、
@@ -2526,9 +2606,9 @@ void MainWindow::setupToolBar() {
         if (!m_playing) setCurrentFrame(m_currentFrame + 1);
     });
 
-    QAction* addAction = toolBar->addAction(tr("動画追加"));
+    QAction* addAction = toolBar->addAction(tr("原画追加"));
     // Key_Aは「操作」メニューのゲーム風ショートカット(前のコマ)に割り当てるため、ここでは単キーを持たせない
-    connect(addAction, &QAction::triggered, this, &MainWindow::addFrameAfterCurrent);
+    connect(addAction, &QAction::triggered, this, &MainWindow::addKeyDrawingAtCurrent);
 
     QAction* deleteAction = toolBar->addAction(tr("割付クリア"));
     deleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
@@ -4083,6 +4163,12 @@ void MainWindow::debugSetupXsheetUiDemo() {
 }
 
 int MainWindow::debugXsheetEditUndoRedo() {
+    const core::Cel& initialCel = activeCel();
+    const bool startsWithKeyDrawing =
+        initialCel.drawingCount() == 1 &&
+        initialCel.drawingKind(0) == core::DrawingKind::Key &&
+        initialCel.actionEntry(0) == "1" && initialCel.exposure(0) == 0;
+
     debugSetupXsheetUiDemo();
     core::Cel& cel = activeCut().cel(0);
     cel.setExposure(0, 0);
@@ -4090,6 +4176,7 @@ int MainWindow::debugXsheetEditUndoRedo() {
     clearUndoHistory();
     updateXsheetPanel();
 
+    m_xsheetPanel->debugSetViewMode(1);  // 動画工程(CELL)
     m_xsheetPanel->debugSelectExposureRange(0, 0, 3);
     m_xsheetPanel->debugFillHoldSelection();
     const bool filled = cel.exposure(0) == 0 && cel.exposure(1) == 0 && cel.exposure(2) == 0 &&
@@ -4103,6 +4190,7 @@ int MainWindow::debugXsheetEditUndoRedo() {
     const bool redone = cel.exposure(0) == 0 && cel.exposure(1) == 0 && cel.exposure(2) == 0 &&
                         cel.exposure(3) == 0;
 
+    m_xsheetPanel->debugSetViewMode(0);  // 原画工程(ACTION)
     m_xsheetPanel->debugSelectActionCell(0, 5);
     m_xsheetPanel->debugSetActionMarker(QStringLiteral("3"));
     const bool actionSet = cel.actionEntry(5) == "3";
@@ -4111,20 +4199,22 @@ int MainWindow::debugXsheetEditUndoRedo() {
     redo();
     const bool actionRedone = cel.actionEntry(5) == "3";
 
-    const size_t keyDrawing = cel.drawingCount();
     addKeyDrawingAtCurrent();
+    const int keyDrawing = cel.exposure(7);
     const bool keyAdded =
-        cel.drawingKind(keyDrawing) == core::DrawingKind::Key &&
-        cel.exposure(7) == static_cast<int>(keyDrawing) && cel.actionEntry(7) == "3";
+        keyDrawing >= 0 &&
+        cel.drawingKind(static_cast<size_t>(keyDrawing)) == core::DrawingKind::Key &&
+        cel.actionEntry(7) == "2" && cel.exposure(11) == keyDrawing;
 
     setCurrentFrame(8);
-    const size_t inbetweenDrawing = cel.drawingCount();
     addInbetweenDrawingAtCurrent();
+    const int inbetweenDrawing = cel.exposure(8);
     const bool inbetweenAdded =
-        cel.drawingKind(inbetweenDrawing) == core::DrawingKind::Inbetween &&
-        cel.exposure(8) == static_cast<int>(inbetweenDrawing) && cel.actionEntry(8) == "○";
+        inbetweenDrawing >= 0 &&
+        cel.drawingKind(static_cast<size_t>(inbetweenDrawing)) == core::DrawingKind::Inbetween &&
+        cel.actionEntry(8) == "○" && cel.exposure(11) == inbetweenDrawing;
 
-    return filled && undone && redone && actionSet && actionUndone && actionRedone &&
+    return startsWithKeyDrawing && filled && undone && redone && actionSet && actionUndone && actionRedone &&
                    keyAdded && inbetweenAdded
                ? 0
                : 1;

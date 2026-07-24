@@ -1,5 +1,6 @@
 #include "XsheetPanel.h"
 
+#include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
@@ -98,12 +99,16 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
 
     m_viewModeButtons = new QButtonGroup(this);
     m_viewModeButtons->setExclusive(true);
-    const QStringList viewLabels = {tr("全部"), tr("原画"), tr("動画")};
+    const QStringList viewLabels = {tr("原画工程"), tr("動画工程"), tr("シート確認")};
     for (int mode = 0; mode < viewLabels.size(); ++mode) {
         auto* button = new QToolButton(container);
         button->setText(viewLabels.at(mode));
         button->setCheckable(true);
         button->setChecked(mode == 0);
+        button->setToolTip(mode == 0
+                               ? tr("レイアウト・原画を作る工程")
+                               : (mode == 1 ? tr("原画をもとに中割とセル指定を作る工程")
+                                            : tr("原画欄とセル欄を並べて確認")));
         m_viewModeButtons->addButton(button, mode);
         statusLayout->addWidget(button);
     }
@@ -112,10 +117,11 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     statusLayout->addStretch();
 
     auto* drawingMenu = new QMenu(container);
-    QAction* drawingAddAction = drawingMenu->addAction(tr("新しい動画を追加"));
-    QAction* drawingDeleteAction = drawingMenu->addAction(tr("現在の動画を削除"));
+    QAction* keyDrawingAddAction = drawingMenu->addAction(tr("原画を作る"));
+    QAction* inbetweenDrawingAddAction = drawingMenu->addAction(tr("中割を作る"));
+    QAction* drawingDeleteAction = drawingMenu->addAction(tr("現在の作画を削除"));
     auto* drawingButton = new QToolButton(container);
-    drawingButton->setText(tr("動画管理"));
+    drawingButton->setText(tr("作画管理"));
     drawingButton->setMenu(drawingMenu);
     drawingButton->setPopupMode(QToolButton::InstantPopup);
     statusLayout->addWidget(drawingButton);
@@ -158,28 +164,28 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     m_pasteAction = new QAction(tr("貼り付け"), m_table);
     m_clearAction = new QAction(tr("消去"), m_table);
     m_holdAction = new QAction(tr("同じ絵を延長"), m_table);
-    auto* addKeyShortcutAction = new QAction(tr("原画追加"), m_table);
-    auto* addInbetweenShortcutAction = new QAction(tr("中割追加"), m_table);
+    m_addKeyAction = new QAction(tr("原画追加"), m_table);
+    m_addInbetweenAction = new QAction(tr("中割追加"), m_table);
 
     perapera::ui::bindShortcut(m_copyAction, perapera::ui::ShortcutScope::Xsheet, QStringLiteral("copy"));
     perapera::ui::bindShortcut(m_cutAction, perapera::ui::ShortcutScope::Xsheet, QStringLiteral("cut"));
     perapera::ui::bindShortcut(m_pasteAction, perapera::ui::ShortcutScope::Xsheet, QStringLiteral("paste"));
     perapera::ui::bindShortcut(m_clearAction, perapera::ui::ShortcutScope::Xsheet, QStringLiteral("clear"));
     perapera::ui::bindShortcut(m_holdAction, perapera::ui::ShortcutScope::Xsheet, QStringLiteral("hold"));
-    perapera::ui::bindShortcut(addKeyShortcutAction, perapera::ui::ShortcutScope::Xsheet,
+    perapera::ui::bindShortcut(m_addKeyAction, perapera::ui::ShortcutScope::Xsheet,
                                QStringLiteral("addKey"));
-    perapera::ui::bindShortcut(addInbetweenShortcutAction, perapera::ui::ShortcutScope::Xsheet,
+    perapera::ui::bindShortcut(m_addInbetweenAction, perapera::ui::ShortcutScope::Xsheet,
                                QStringLiteral("addInbetween"));
     for (QAction* action : {m_copyAction, m_cutAction, m_pasteAction, m_clearAction, m_holdAction}) {
         action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         m_table->addAction(action);
     }
-    for (QAction* action : {addKeyShortcutAction, addInbetweenShortcutAction}) {
+    for (QAction* action : {m_addKeyAction, m_addInbetweenAction}) {
         action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         m_table->addAction(action);
     }
 
-    m_holdAction->setToolTip(tr("選択範囲を、先頭の動画で埋めます"));
+    m_holdAction->setToolTip(tr("選択範囲を、先頭の作画で埋めます"));
     m_clearAction->setToolTip(tr("選択したACTIONまたはCELLの記入だけを消します"));
 
     auto* editBar = new QWidget(container);
@@ -192,14 +198,14 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     createLayout->setContentsMargins(0, 0, 0, 0);
     createLayout->setSpacing(3);
     createLayout->addWidget(new QLabel(tr("新しい絵:"), createControls));
-    auto* addKeyButton = new QToolButton(createControls);
-    addKeyButton->setText(tr("原画を作る"));
-    addKeyButton->setToolTip(tr("選択したコマに新しい原画を作ります（K）"));
-    createLayout->addWidget(addKeyButton);
-    auto* addInbetweenButton = new QToolButton(createControls);
-    addInbetweenButton->setText(tr("中割を作る"));
-    addInbetweenButton->setToolTip(tr("選択したコマに新しい中割を作ります（I）"));
-    createLayout->addWidget(addInbetweenButton);
+    m_addKeyButton = new QToolButton(createControls);
+    m_addKeyButton->setText(tr("原画を作る"));
+    m_addKeyButton->setToolTip(tr("選択したコマに新しい原画を作ります（K）"));
+    createLayout->addWidget(m_addKeyButton);
+    m_addInbetweenButton = new QToolButton(createControls);
+    m_addInbetweenButton->setText(tr("中割を作る"));
+    m_addInbetweenButton->setToolTip(tr("原画の間へ新しい中割を作ります（I）"));
+    createLayout->addWidget(m_addInbetweenButton);
     editBarLayout->addWidget(createControls);
     editBarLayout->addSpacing(8);
 
@@ -227,11 +233,11 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     auto* cellLayout = new QHBoxLayout(m_cellControls);
     cellLayout->setContentsMargins(0, 0, 0, 0);
     cellLayout->setSpacing(3);
-    cellLayout->addWidget(new QLabel(tr("動画の割付:"), m_cellControls));
+    cellLayout->addWidget(new QLabel(tr("セル指定:"), m_cellControls));
     for (int step = 1; step <= 3; ++step) {
         auto* stepButton = new QToolButton(m_cellControls);
         stepButton->setText(tr("%1コマ").arg(step));
-        stepButton->setToolTip(tr("選択範囲へ動画1から順番に割り付けます"));
+        stepButton->setToolTip(tr("選択範囲へ作画1から順番にセル指定します"));
         connect(stepButton, &QToolButton::clicked, this, [this, step] { requestStepPattern(step); });
         cellLayout->addWidget(stepButton);
     }
@@ -255,7 +261,9 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     connect(m_frameCountSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
         if (!m_updating) emit frameCountChanged(value);
     });
-    connect(drawingAddAction, &QAction::triggered, this, &XsheetPanel::addDrawingRequested);
+    connect(keyDrawingAddAction, &QAction::triggered, this, &XsheetPanel::addKeyDrawingRequested);
+    connect(inbetweenDrawingAddAction, &QAction::triggered, this,
+            &XsheetPanel::addInbetweenDrawingRequested);
     connect(drawingDeleteAction, &QAction::triggered, this, &XsheetPanel::deleteDrawingRequested);
     connect(celAddAction, &QAction::triggered, this, &XsheetPanel::celAddRequested);
     connect(celRemoveAction, &QAction::triggered, this, &XsheetPanel::celRemoveRequested);
@@ -268,10 +276,11 @@ XsheetPanel::XsheetPanel(QWidget* parent) : QDockWidget(tr("タイムシート")
     connect(m_pasteAction, &QAction::triggered, this, &XsheetPanel::pasteSelection);
     connect(m_clearAction, &QAction::triggered, this, &XsheetPanel::clearSelection);
     connect(m_holdAction, &QAction::triggered, this, &XsheetPanel::fillHoldSelection);
-    connect(addKeyButton, &QToolButton::clicked, addKeyShortcutAction, &QAction::trigger);
-    connect(addInbetweenButton, &QToolButton::clicked, addInbetweenShortcutAction, &QAction::trigger);
-    connect(addKeyShortcutAction, &QAction::triggered, this, &XsheetPanel::addKeyDrawingRequested);
-    connect(addInbetweenShortcutAction, &QAction::triggered, this,
+    connect(m_addKeyButton, &QToolButton::clicked, m_addKeyAction, &QAction::trigger);
+    connect(m_addInbetweenButton, &QToolButton::clicked, m_addInbetweenAction,
+            &QAction::trigger);
+    connect(m_addKeyAction, &QAction::triggered, this, &XsheetPanel::addKeyDrawingRequested);
+    connect(m_addInbetweenAction, &QAction::triggered, this,
             &XsheetPanel::addInbetweenDrawingRequested);
     connect(keyNumberButton, &QToolButton::clicked, this, &XsheetPanel::promptKeyNumber);
 
@@ -393,7 +402,6 @@ void XsheetPanel::showCellContextMenu(const QPoint& pos) {
         menu.addAction(m_clearAction);
         menu.addSeparator();
         QAction* addKeyAction = menu.addAction(tr("原画を追加"));
-        QAction* addInbetweenAction = menu.addAction(tr("中割を追加"));
         connect(keyNumberAction, &QAction::triggered, this, &XsheetPanel::promptKeyNumber);
         connect(circleAction, &QAction::triggered, this,
                 [this] { setActionSelection(QStringLiteral("○")); });
@@ -402,8 +410,6 @@ void XsheetPanel::showCellContextMenu(const QPoint& pos) {
         connect(blankAction, &QAction::triggered, this,
                 [this] { setActionSelection(QStringLiteral("*")); });
         connect(addKeyAction, &QAction::triggered, this, &XsheetPanel::addKeyDrawingRequested);
-        connect(addInbetweenAction, &QAction::triggered, this,
-                &XsheetPanel::addInbetweenDrawingRequested);
     } else {
         menu.addAction(m_holdAction);
         menu.addAction(m_clearAction);
@@ -413,8 +419,9 @@ void XsheetPanel::showCellContextMenu(const QPoint& pos) {
             connect(action, &QAction::triggered, this, [this, step] { requestStepPattern(step); });
         }
         menu.addSeparator();
-        QAction* addDrawingAction = menu.addAction(tr("新しい動画を追加"));
-        connect(addDrawingAction, &QAction::triggered, this, &XsheetPanel::addDrawingRequested);
+        QAction* addDrawingAction = menu.addAction(tr("中割を作る"));
+        connect(addDrawingAction, &QAction::triggered, this,
+                &XsheetPanel::addInbetweenDrawingRequested);
     }
     menu.exec(m_table->viewport()->mapToGlobal(pos));
 }
@@ -680,6 +687,10 @@ void XsheetPanel::updateEditControls() {
     }
     m_actionControls->setVisible(showAction);
     m_cellControls->setVisible(!showAction);
+    if (m_addKeyButton) m_addKeyButton->setVisible(m_viewMode != ViewMode::Cell);
+    if (m_addInbetweenButton) m_addInbetweenButton->setVisible(m_viewMode != ViewMode::Action);
+    if (m_addKeyAction) m_addKeyAction->setEnabled(m_viewMode != ViewMode::Cell);
+    if (m_addInbetweenAction) m_addInbetweenAction->setEnabled(m_viewMode != ViewMode::Action);
 }
 
 int XsheetPanel::selectedEditableCount() const {
@@ -773,6 +784,19 @@ int XsheetPanel::celToPrimaryCol(int celIndex) const {
 
 int XsheetPanel::sheetColumnCount(int celCount) const {
     return 1 + (m_viewMode == ViewMode::Both ? celCount * 2 : celCount);
+}
+
+void XsheetPanel::debugSetViewMode(int mode) {
+    setViewMode(static_cast<ViewMode>(std::clamp(mode, 0, 2)));
+}
+
+void XsheetPanel::startKeyDrawingWorkflow() {
+    if (m_viewModeButtons) {
+        if (QAbstractButton* button = m_viewModeButtons->button(static_cast<int>(ViewMode::Action))) {
+            button->setChecked(true);
+        }
+    }
+    setViewMode(ViewMode::Action);
 }
 
 QString XsheetPanel::timeLabel(int zeroBasedFrame) const {
@@ -885,7 +909,7 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
         for (int col : {celToActionCol(cel), celToCellCol(cel)}) {
             if (col < 0) continue;
             QString label =
-                tr("%1 %2").arg(celNames.at(cel), isActionColumn(col) ? tr("原画") : tr("動画"));
+                tr("%1 %2").arg(celNames.at(cel), isActionColumn(col) ? tr("原画") : tr("セル"));
             if (!visible) label += tr(" [非表示]");
             auto* headerItem = new QTableWidgetItem(label);
             QFont font = headerItem->font();
@@ -897,7 +921,7 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
             }
             headerItem->setToolTip(
                 isActionColumn(col) ? tr("ACTION：原画番号や中割記号を書く欄")
-                                    : tr("CELL：このコマで実際に表示する動画"));
+                                    : tr("CELL：このコマで表示する原画・中割の番号"));
             m_table->setHorizontalHeaderItem(col, headerItem);
             m_table->horizontalHeader()->setSectionResizeMode(col, QHeaderView::Interactive);
             m_table->setColumnWidth(col, isActionColumn(col) ? 84 : 82);
@@ -989,7 +1013,7 @@ void XsheetPanel::setSheet(const QStringList& celNames, const QList<bool>& celVi
 
             const QString state =
                 drawing < 0 ? tr("空セル")
-                            : (held ? tr("動画%1（継続）").arg(drawing + 1) : tr("動画%1").arg(drawing + 1));
+                            : (held ? tr("作画%1（継続）").arg(drawing + 1) : tr("作画%1").arg(drawing + 1));
             item->setToolTip(tr("%1セル / %2 / %3").arg(celNames.at(cel), timeLabel(frame), state));
         }
     }

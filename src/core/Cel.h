@@ -56,6 +56,7 @@ public:
         return drawing < m_drawingKinds.size() ? m_drawingKinds[drawing] : DrawingKind::Unspecified;
     }
     void setDrawingKind(size_t drawing, DrawingKind kind);
+    void insertDrawingMetadata(size_t drawing, DrawingKind kind);
     void removeDrawingMetadata(size_t drawing);
     const std::vector<DrawingKind>& drawingKinds() const { return m_drawingKinds; }
 

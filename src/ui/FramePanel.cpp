@@ -7,7 +7,7 @@
 #include <QWidget>
 #include <algorithm>
 
-FramePanel::FramePanel(QWidget* parent) : QDockWidget(tr("動画"), parent) {
+FramePanel::FramePanel(QWidget* parent) : QDockWidget(tr("作画"), parent) {
     setObjectName(QStringLiteral("FramePanel"));  // レイアウト保存用の識別子
 
     auto* container = new QWidget(this);
@@ -22,13 +22,13 @@ FramePanel::FramePanel(QWidget* parent) : QDockWidget(tr("動画"), parent) {
     m_list = new QListWidget(container);
     layout->addWidget(m_list);
 
-    m_addButton = new QPushButton(tr("動画追加"), container);
+    m_addButton = new QPushButton(tr("原画を追加"), container);
     layout->addWidget(m_addButton);
 
-    m_duplicateButton = new QPushButton(tr("動画複製"), container);
+    m_duplicateButton = new QPushButton(tr("作画を複製"), container);
     layout->addWidget(m_duplicateButton);
 
-    m_deleteButton = new QPushButton(tr("動画削除"), container);
+    m_deleteButton = new QPushButton(tr("作画を削除"), container);
     layout->addWidget(m_deleteButton);
 
     setWidget(container);
@@ -95,7 +95,7 @@ void FramePanel::setDrawings(const QList<int>& displayOrder, const QList<int>& d
         QListWidgetItem* item = m_list->item(row);
         const int drawing = displayOrder.at(row);
         const int kind = drawing >= 0 && drawing < drawingKinds.size() ? drawingKinds.at(drawing) : 0;
-        const QString label = kind == 1 ? tr("原画") : (kind == 2 ? tr("中割") : tr("動画"));
+        const QString label = kind == 1 ? tr("原画") : (kind == 2 ? tr("中割") : tr("作画"));
         item->setText(tr("%1 %2").arg(label).arg(drawing + 1));
         item->setCheckState(m_lightTableChecked.contains(drawing) ? Qt::Checked : Qt::Unchecked);
     }
