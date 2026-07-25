@@ -2,6 +2,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QIcon>
 #include <QImage>
 #include <QPainter>
 #include <QPixmap>
@@ -152,6 +153,7 @@ QString writeDebugCubeStl(const QString& path) {
 int main(int argc, char* argv[]) {
     QApplication::setAttribute(Qt::AA_UseStyleSheetPropagationInWidgetStyles, true);
     QApplication app(argc, argv);
+    app.setWindowIcon(QIcon(QStringLiteral(":/icons/app_icon.png")));
     const QStringList args = app.arguments();
 
     perapera::ui::RetroThemeVariant retroVariant = perapera::ui::RetroThemeVariant::Windows95;

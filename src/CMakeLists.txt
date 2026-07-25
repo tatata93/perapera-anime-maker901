@@ -52,6 +52,7 @@ set(PERAPERA_APP_SOURCES
     ui/RetroArrows.qrc
     ui/RetroTheme.cpp
     ui/RetroTheme.h
+    resources/app_icon.qrc
     render/GLCanvas.cpp
     render/GLCanvas.h
     previz/GltfLoader.cpp
@@ -66,6 +67,10 @@ set(PERAPERA_APP_SOURCES
     previz/PrevizWindow.cpp
     previz/PrevizWindow.h
 )
+
+if(WIN32)
+    list(APPEND PERAPERA_APP_SOURCES resources/app_icon.rc)
+endif()
 
 # tinygltf(ヘッダオンリー、MIT)
 find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h" REQUIRED)
