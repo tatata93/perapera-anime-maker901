@@ -17,4 +17,6 @@
 
 - フォルダ内のDLLやサブフォルダは消さないでください。
 - Windows 10/11 x64向けです。
-- mp4書き出しには別途 `ffmpeg.exe` が必要です。PNG書き出しはこのzipだけで使えます。
+- PNG/TIFF/JPEG連番はこのzipだけで使えます。
+- MP4/MOV/OpenEXR/DPX書き出しには別途 `ffmpeg.exe` が必要です。アプリと同じフォルダに
+  置くか、PATHへ追加してください。

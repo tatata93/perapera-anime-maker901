@@ -11,6 +11,7 @@
 
 #include "core/CommandStack.h"
 #include "core/Project.h"
+#include "ui/ExportSettings.h"
 #include "ui/RetroTheme.h"
 
 class CameraPanel;
@@ -125,6 +126,8 @@ public:
     bool debugExportFrame(const QString& pngPath, int mode, bool transparent);
     // 動作確認用: 全カット通しを連番PNGで書き出す。書き出したコマ数を返す(0=失敗)
     int debugExportAllCuts(const QString& dir);
+    // 動作確認用: 代表的な連番・動画形式を2コマずつ書き出す。失敗した形式数を返す
+    int debugExportProfessionalFormats(const QString& dir);
     // タップ移動確認用: 1枚の動画を尺3で止めにし、位置キー(コマ1=原点、コマ3=右下)を打つ
     void debugSetupTapDemo();
     // カメラフレーム確認用: ストローク1本+コマ0(中心・100%)とコマ23(左上寄り・50%)に
@@ -395,17 +398,17 @@ private:
         core::Cut* cut;
         size_t frame;
     };
-    // frames順に連番PNG(frame_0001.png…)をdirへ書き出す
+    // frames順に指定形式の連番をdirへ書き出す
     bool exportFramesToDir(const QString& dir, const std::vector<ExportFrameRef>& frames,
-                           const core::RenderOptions& opts, int outW, int outH, bool includeDrawing,
-                           bool includePreviz);
-    // frames順に一時連番PNG→ffmpegでmp4へエンコードする
-    bool exportMovieFrames(const QString& mp4Path, const std::vector<ExportFrameRef>& frames, int fps,
-                           const core::RenderOptions& opts, int outW, int outH, bool includeDrawing,
-                           bool includePreviz);
+                           const perapera::ui::ExportSettings& settings, const core::RenderOptions& opts,
+                           bool includeDrawing, bool includePreviz);
+    // frames順に一時連番PNG→ffmpegで指定動画形式へエンコードする
+    bool exportMovieFrames(const QString& moviePath, const std::vector<ExportFrameRef>& frames,
+                           const perapera::ui::ExportSettings& settings, const core::RenderOptions& opts,
+                           bool includeDrawing, bool includePreviz);
     // 1コマ分の最終画像(作画/プリビズ/両方)をoutW×outHで作る。書き出しの共通描画
     QImage renderExportFrameImage(core::Cut& cut, size_t frame, int outW, int outH, const core::RenderOptions& opts,
-                                  bool includeDrawing, bool includePreviz);
+                                  bool includeDrawing, bool includePreviz, bool preserveAspectRatio = false);
     // カットのプリビズ(3Dレイアウト)を指定コマでoutW×outHのQImageへレンダリングする
     QImage renderPrevizExportImage(core::Cut& cut, size_t frame, int outW, int outH);
 

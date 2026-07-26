@@ -38,6 +38,8 @@ set(PERAPERA_APP_SOURCES
     ui/XsheetPanel.h
     ui/ExportDialog.cpp
     ui/ExportDialog.h
+    ui/ExportSettings.cpp
+    ui/ExportSettings.h
     ui/CelSizeDialog.cpp
     ui/CelSizeDialog.h
     ui/CanvasSizeDialog.cpp

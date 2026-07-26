@@ -7,6 +7,7 @@ add_executable(perapera_core_tests
     BrushEngineTests.cpp
     CompositorTests.cpp
     EffectTests.cpp
+    ExportSettingsTests.cpp
     FillToolTests.cpp
     LassoFillToolTests.cpp
     ProjectIOTests.cpp
@@ -16,12 +17,16 @@ add_executable(perapera_core_tests
     PrevizTransformTests.cpp
     ../src/previz/GltfLoader.cpp
     ../src/previz/StlLoader.cpp
+    ../src/ui/ExportSettings.cpp
 )
 
 # GltfLoader.cppはtinygltf(ヘッダオンリー)に依存する。previz名前空間自体はQt非依存なので
 # テスト実行ファイルへ直接コンパイルできる
 find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h" REQUIRED)
-target_include_directories(perapera_core_tests PRIVATE ${TINYGLTF_INCLUDE_DIRS})
+target_include_directories(perapera_core_tests PRIVATE
+    ${TINYGLTF_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/src
+)
 
 target_link_libraries(perapera_core_tests PRIVATE
     perapera_core

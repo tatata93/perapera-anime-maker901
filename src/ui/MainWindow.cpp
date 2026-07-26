@@ -6,11 +6,13 @@
 #include <QComboBox>
 #include <QColorDialog>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
 #include <QImage>
+#include <QImageWriter>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
@@ -77,6 +79,42 @@ constexpr int kDefaultFps = 24;  // タイムシートは24fps基準
 // 自動保存: フォルダ名と保存間隔(3分)
 const QString kAutosaveFileName = QStringLiteral("autosave.ppproj");
 constexpr int kAutosaveIntervalMs = 180 * 1000;
+
+std::pair<bool, QString> runFfmpegProcess(QWidget* parent, const QString& executable, const QStringList& arguments,
+                                         const QString& progressText) {
+    QProcess process;
+    process.start(executable, arguments);
+    if (!process.waitForStarted(5000)) return {false, process.errorString()};
+
+    QProgressDialog progress(progressText, QObject::tr("キャンセル"), 0, 0, parent);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(500);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QByteArray errorOutput;
+    while (process.state() != QProcess::NotRunning) {
+        process.waitForFinished(100);
+        errorOutput += process.readAllStandardError();
+        if (errorOutput.size() > 1024 * 1024) errorOutput = errorOutput.right(1024 * 1024);
+        QApplication::processEvents();
+        if (progress.wasCanceled()) {
+            process.kill();
+            process.waitForFinished(5000);
+            return {false, QObject::tr("書き出しをキャンセルしました。")};
+        }
+        if (elapsed.elapsed() > 30 * 60 * 1000) {
+            process.kill();
+            process.waitForFinished(5000);
+            return {false, QObject::tr("FFmpegの処理が30分を超えたため停止しました。")};
+        }
+    }
+    errorOutput += process.readAllStandardError();
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        return {false, QString::fromLocal8Bit(errorOutput)};
+    }
+    return {true, QString()};
+}
 
 void drawSettingBoardDecorations(QImage& image, const core::SettingBoard& board) {
     if (image.isNull()) return;
@@ -5142,56 +5180,64 @@ void MainWindow::openExportDialog() {
         celNames.append(QString::fromStdString(cut.cel(ci).name()));
     }
 
-    ExportDialog dialog(celNames, static_cast<int>(cut.frameCount()), this);
-    dialog.setOutputPath(m_lastExportPath);  // 前回の書き出し先を復元(毎回入力し直す手間を省く)
+    ExportDialog dialog(celNames, static_cast<int>(cut.frameCount()), canvasWidth(), canvasHeight(),
+                        static_cast<int>(m_currentFrame), this);
+    dialog.setOutputPath(m_lastExportPath);
     if (dialog.exec() != QDialog::Accepted) return;
 
-    const QString outputPath = dialog.outputPath();
-    m_lastExportPath = outputPath;  // 次回のために記憶する
-    if (outputPath.isEmpty()) {
-        QMessageBox::warning(this, tr("書き出しエラー"), tr("出力先を指定してください"));
-        return;
-    }
-
-    const ExportDialog::Content content = dialog.content();
-    const bool includeDrawing = content != ExportDialog::Content::Previz;
-    const bool includePreviz = content != ExportDialog::Content::Drawing;
+    perapera::ui::ExportSettings settings = dialog.settings();
+    m_lastExportPath = settings.outputPath;
+    const bool includeDrawing = settings.content != perapera::ui::ExportContent::Previz;
+    const bool includePreviz = settings.content != perapera::ui::ExportContent::Drawing;
 
     core::RenderOptions opts;
-    opts.includeColorTrace = dialog.includeColorTrace();
-    opts.includeCorrection = dialog.includeCorrection();
-    opts.onlyCel = dialog.onlyCel();
+    opts.includeColorTrace = settings.includeColorTrace;
+    opts.includeCorrection = settings.includeCorrection;
+    opts.onlyCel = settings.onlyCel;
     opts.useExportSamples = true;  // 書き出しはクラシック撮影を高サンプルでなめらかに
-    // 作画+プリビズ(Both)は作画を透明背景で合成してプリビズの上へ重ねる。
-    // 作画のみ(Drawing)はユーザーの透明背景指定に従う
     opts.transparentBackground =
-        content == ExportDialog::Content::Both || (includeDrawing && dialog.transparentBackground());
+        settings.content == perapera::ui::ExportContent::Both || (includeDrawing && settings.transparentBackground);
 
-    // 出力解像度: キャンバス×スケール%(mp4のため常に2の倍数へ切り下げ)
-    const double scale = std::max(1, dialog.outputScalePercent()) / 100.0;
-    const int outW = std::max(2, static_cast<int>(std::lround(canvasWidth() * scale))) & ~1;
-    const int outH = std::max(2, static_cast<int>(std::lround(canvasHeight() * scale))) & ~1;
+    if (!perapera::ui::isImageSequence(settings.format)) {
+        settings.outputWidth = std::max(2, settings.outputWidth) & ~1;
+        settings.outputHeight = std::max(2, settings.outputHeight) & ~1;
+    }
 
-    // 書き出す1コマの並びを作る: 全カット通しなら全カットの全コマを連結、そうでなければ現在カットの範囲
     std::vector<ExportFrameRef> frames;
-    if (dialog.exportAllCuts() && m_project && m_project->sceneCount() > 0) {
+    if (settings.scope == perapera::ui::ExportScope::AllCuts && m_project && m_project->sceneCount() > 0) {
         core::Scene& scene = m_project->scene(0);
         for (size_t ci = 0; ci < scene.cutCount(); ++ci) {
             core::Cut& c = scene.cut(ci);
             for (size_t f = 0; f < c.frameCount(); ++f) frames.push_back({&c, f});
         }
     } else {
-        // ダイアログのコマ番号は1始まり、内部は0始まり
         core::Cut& c = activeCut();
-        const int from = std::max(0, dialog.fromFrame() - 1);
-        const int to = std::min(static_cast<int>(c.frameCount()) - 1, dialog.toFrame() - 1);
+        int from = 0;
+        int to = std::max(0, static_cast<int>(c.frameCount()) - 1);
+        if (settings.scope == perapera::ui::ExportScope::CurrentFrame) {
+            from = to = std::clamp(static_cast<int>(m_currentFrame), 0, to);
+        } else if (settings.scope == perapera::ui::ExportScope::CurrentCutRange) {
+            from = std::clamp(settings.fromFrame - 1, 0, to);
+            to = std::clamp(settings.toFrame - 1, from, to);
+        }
         for (int f = from; f <= to; ++f) frames.push_back({&c, static_cast<size_t>(f)});
     }
 
-    const bool success =
-        dialog.format() == ExportDialog::Format::Sequence
-            ? exportFramesToDir(outputPath, frames, opts, outW, outH, includeDrawing, includePreviz)
-            : exportMovieFrames(outputPath, frames, dialog.fps(), opts, outW, outH, includeDrawing, includePreviz);
+    const int retimedCount =
+        perapera::ui::retimedFrameCount(static_cast<int>(frames.size()), settings.playbackSpeedPercent);
+    std::vector<ExportFrameRef> retimedFrames;
+    retimedFrames.reserve(static_cast<size_t>(retimedCount));
+    for (int i = 0; i < retimedCount; ++i) {
+        const int sourceIndex = perapera::ui::retimedSourceIndex(
+            i, static_cast<int>(frames.size()), settings.playbackSpeedPercent);
+        retimedFrames.push_back(frames[static_cast<size_t>(sourceIndex)]);
+    }
+
+    const bool success = perapera::ui::isImageSequence(settings.format)
+                             ? exportFramesToDir(settings.outputPath, retimedFrames, settings, opts, includeDrawing,
+                                                 includePreviz)
+                             : exportMovieFrames(settings.outputPath, retimedFrames, settings, opts, includeDrawing,
+                                                 includePreviz);
 
     // プリビズ書き出しでビューポートのシーン/コマを触った分を現在カットへ戻す
     if (includePreviz && m_previzWindow) {
@@ -5201,7 +5247,7 @@ void MainWindow::openExportDialog() {
     }
 
     if (success) {
-        statusBar()->showMessage(tr("書き出しました: %1").arg(outputPath), 5000);
+        statusBar()->showMessage(tr("書き出しました: %1").arg(settings.outputPath), 5000);
     }
 }
 
@@ -5223,37 +5269,123 @@ QImage MainWindow::renderPrevizExportImage(core::Cut& cut, size_t frame, int out
 }
 
 QImage MainWindow::renderExportFrameImage(core::Cut& cut, size_t frame, int outW, int outH,
-                                          const core::RenderOptions& opts, bool includeDrawing, bool includePreviz) {
-    QImage result(outW, outH, QImage::Format_RGBA8888);
+                                          const core::RenderOptions& opts, bool includeDrawing, bool includePreviz,
+                                          bool preserveAspectRatio) {
+    QSize contentSize(outW, outH);
+    if (preserveAspectRatio) {
+        contentSize = QSize(canvasWidth(), canvasHeight()).scaled(outW, outH, Qt::KeepAspectRatio);
+    }
+    const int contentW = std::max(1, contentSize.width());
+    const int contentH = std::max(1, contentSize.height());
+
+    QImage contentImage(contentW, contentH, QImage::Format_RGBA8888);
     if (includePreviz) {
-        result = renderPrevizExportImage(cut, frame, outW, outH);  // 不透明な3Dレイアウト
+        contentImage = renderPrevizExportImage(cut, frame, contentW, contentH);
     } else {
-        result.fill(opts.transparentBackground ? Qt::transparent : Qt::white);
+        contentImage.fill(opts.transparentBackground ? Qt::transparent : Qt::white);
     }
 
     if (includeDrawing) {
-        const core::Bitmap bmp = core::renderCutFrame(cut, frame, outW, outH, opts);
-        const QImage draw(bmp.data(), bmp.width(), bmp.height(), QImage::Format_RGBA8888);
+        const core::Bitmap bmp = core::renderCutFrame(cut, frame, canvasWidth(), canvasHeight(), opts);
+        const QImage source(bmp.data(), bmp.width(), bmp.height(), QImage::Format_RGBA8888);
+        const QImage draw = (source.width() == contentW && source.height() == contentH)
+                                ? source.copy()
+                                : source.scaled(contentW, contentH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                                      .convertToFormat(QImage::Format_RGBA8888);
         if (includePreviz) {
             // プリビズの上へ作画(透明背景)を重ねる
-            QPainter p(&result);
+            QPainter p(&contentImage);
             p.drawImage(0, 0, draw);
             p.end();
         } else {
-            result = draw.copy();  // 作画のみ(bmpの寿命に依存しないようコピー)
+            contentImage = draw.copy();
         }
     }
+
+    if (contentW == outW && contentH == outH) return contentImage;
+
+    QImage result(outW, outH, QImage::Format_RGBA8888);
+    result.fill(opts.transparentBackground && !includePreviz ? Qt::transparent : Qt::white);
+    QPainter painter(&result);
+    painter.drawImage((outW - contentW) / 2, (outH - contentH) / 2, contentImage);
     return result;
 }
 
 bool MainWindow::exportFramesToDir(const QString& dir, const std::vector<ExportFrameRef>& frames,
-                                   const core::RenderOptions& opts, int outW, int outH, bool includeDrawing,
-                                   bool includePreviz) {
+                                   const perapera::ui::ExportSettings& settings, const core::RenderOptions& opts,
+                                   bool includeDrawing, bool includePreviz) {
     QDir outDir(dir);
-    if (!outDir.exists() && !QDir().mkpath(dir)) return false;
+    if (!outDir.exists() && !QDir().mkpath(dir)) {
+        QMessageBox::warning(this, tr("書き出しエラー"), tr("出力先フォルダを作成できません:\n%1").arg(dir));
+        return false;
+    }
 
     const int total = static_cast<int>(frames.size());
     if (total <= 0) return false;
+
+    if (settings.format == perapera::ui::ExportFormat::OpenExrSequence ||
+        settings.format == perapera::ui::ExportFormat::DpxSequence) {
+        QTemporaryDir tempDir;
+        if (!tempDir.isValid()) return false;
+
+        perapera::ui::ExportSettings tempSettings = settings;
+        tempSettings.format = perapera::ui::ExportFormat::PngSequence;
+        tempSettings.sequencePrefix = QStringLiteral("source_");
+        tempSettings.sequenceStartNumber = 1;
+        tempSettings.sequencePadding = 8;
+        tempSettings.pngCompression = 1;
+        if (!exportFramesToDir(tempDir.path(), frames, tempSettings, opts, includeDrawing, includePreviz)) {
+            return false;
+        }
+
+        const QString ffmpeg = perapera::ui::findFfmpegExecutable();
+        if (ffmpeg.isEmpty()) {
+            QMessageBox::warning(this, tr("書き出しエラー"), tr("ffmpeg.exeが見つかりません。"));
+            return false;
+        }
+
+        const QString inputPattern = QDir(tempDir.path()).filePath(QStringLiteral("source_%08d.png"));
+        const QString extension = perapera::ui::exportExtension(settings.format);
+        const QString outputPattern =
+            outDir.filePath(settings.sequencePrefix + QStringLiteral("%0") +
+                            QString::number(settings.sequencePadding) + QStringLiteral("d.") + extension);
+        QStringList args{QStringLiteral("-y"),
+                         QStringLiteral("-framerate"),
+                         QString::number(settings.fps, 'f', 3),
+                         QStringLiteral("-start_number"),
+                         QStringLiteral("1"),
+                         QStringLiteral("-i"),
+                         inputPattern,
+                         QStringLiteral("-frames:v"),
+                         QString::number(total)};
+        if (settings.format == perapera::ui::ExportFormat::OpenExrSequence) {
+            args << QStringLiteral("-c:v") << QStringLiteral("exr") << QStringLiteral("-compression")
+                 << QString::number(settings.exrCompression) << QStringLiteral("-format") << QStringLiteral("half")
+                 << QStringLiteral("-pix_fmt")
+                 << (settings.transparentBackground ? QStringLiteral("gbrapf32le") : QStringLiteral("gbrpf32le"));
+        } else {
+            args << QStringLiteral("-c:v") << QStringLiteral("dpx") << QStringLiteral("-pix_fmt")
+                 << (settings.dpxBitDepth >= 16 ? QStringLiteral("rgb48le") : QStringLiteral("gbrp10le"));
+        }
+        args << QStringLiteral("-start_number") << QString::number(settings.sequenceStartNumber) << outputPattern;
+
+        const auto [ok, error] = runFfmpegProcess(this, ffmpeg, args, tr("連番を変換中..."));
+        if (!ok) {
+            QMessageBox::warning(this, tr("書き出しエラー"),
+                                 tr("連番の変換に失敗しました:\n%1").arg(error.right(1200)));
+        }
+        return ok;
+    }
+
+    QByteArray imageFormat("PNG");
+    QString extension = QStringLiteral("png");
+    if (settings.format == perapera::ui::ExportFormat::TiffSequence) {
+        imageFormat = QByteArray("TIFF");
+        extension = QStringLiteral("tif");
+    } else if (settings.format == perapera::ui::ExportFormat::JpegSequence) {
+        imageFormat = QByteArray("JPEG");
+        extension = QStringLiteral("jpg");
+    }
 
     QProgressDialog progress(tr("書き出し中..."), tr("キャンセル"), 0, total, this);
     progress.setWindowModality(Qt::WindowModal);
@@ -5264,56 +5396,110 @@ bool MainWindow::exportFramesToDir(const QString& dir, const std::vector<ExportF
         if (progress.wasCanceled()) return false;
 
         const ExportFrameRef& ref = frames[static_cast<size_t>(i)];
-        const QImage image =
-            renderExportFrameImage(*ref.cut, ref.frame, outW, outH, opts, includeDrawing, includePreviz);
-        const QString path = outDir.filePath(QStringLiteral("frame_%1.png").arg(i + 1, 4, 10, QChar('0')));
-        if (!image.save(path)) return false;
+        QImage image = renderExportFrameImage(*ref.cut, ref.frame, settings.outputWidth, settings.outputHeight, opts,
+                                              includeDrawing, includePreviz, settings.preserveAspectRatio);
+        if (settings.format == perapera::ui::ExportFormat::JpegSequence && image.hasAlphaChannel()) {
+            QImage flattened(image.size(), QImage::Format_RGB32);
+            flattened.fill(Qt::white);
+            QPainter painter(&flattened);
+            painter.drawImage(0, 0, image);
+            image = flattened;
+        }
+
+        const int number = settings.sequenceStartNumber + i;
+        const QString fileName = QStringLiteral("%1%2.%3")
+                                     .arg(settings.sequencePrefix)
+                                     .arg(number, settings.sequencePadding, 10, QChar('0'))
+                                     .arg(extension);
+        QImageWriter writer(outDir.filePath(fileName), imageFormat);
+        if (settings.format == perapera::ui::ExportFormat::JpegSequence) {
+            writer.setQuality(settings.jpegQuality);
+        } else if (settings.format == perapera::ui::ExportFormat::PngSequence) {
+            // QImageWriter経由のPNG圧縮指定は0～100へ換算して渡す。
+            writer.setCompression(settings.pngCompression * 100 / 9);
+        } else if (settings.format == perapera::ui::ExportFormat::TiffSequence) {
+            writer.setCompression(1);  // LZW可逆圧縮
+        }
+        if (!writer.write(image)) {
+            QMessageBox::warning(this, tr("書き出しエラー"),
+                                 tr("%1を書き出せませんでした:\n%2").arg(fileName, writer.errorString()));
+            return false;
+        }
     }
     progress.setValue(total);
     return true;
 }
 
-bool MainWindow::exportMovieFrames(const QString& mp4Path, const std::vector<ExportFrameRef>& frames, int fps,
-                                   const core::RenderOptions& opts, int outW, int outH, bool includeDrawing,
-                                   bool includePreviz) {
-    // 連番PNGを一時フォルダに書き出してからffmpegでエンコードする
+bool MainWindow::exportMovieFrames(const QString& moviePath, const std::vector<ExportFrameRef>& frames,
+                                   const perapera::ui::ExportSettings& settings, const core::RenderOptions& opts,
+                                   bool includeDrawing, bool includePreviz) {
+    if (frames.empty()) return false;
+    const QFileInfo outputInfo(moviePath);
+    if (!QDir().mkpath(outputInfo.absolutePath())) {
+        QMessageBox::warning(this, tr("書き出しエラー"),
+                             tr("出力先フォルダを作成できません:\n%1").arg(outputInfo.absolutePath()));
+        return false;
+    }
+
     QTemporaryDir tempDir;
     if (!tempDir.isValid()) return false;
-    if (!exportFramesToDir(tempDir.path(), frames, opts, outW, outH, includeDrawing, includePreviz)) return false;
 
-    const QString framePattern = QDir(tempDir.path()).filePath(QStringLiteral("frame_%04d.png"));
+    perapera::ui::ExportSettings tempSettings = settings;
+    tempSettings.format = perapera::ui::ExportFormat::PngSequence;
+    tempSettings.sequencePrefix = QStringLiteral("source_");
+    tempSettings.sequenceStartNumber = 1;
+    tempSettings.sequencePadding = 8;
+    tempSettings.pngCompression = 1;
+    if (!exportFramesToDir(tempDir.path(), frames, tempSettings, opts, includeDrawing, includePreviz)) return false;
 
-    // ffmpegを実行し、成功したか/失敗時のstderrを返す
-    const auto runFfmpeg = [&](const QStringList& codecArgs) -> std::pair<bool, QString> {
-        QStringList args;
-        args << QStringLiteral("-y") << QStringLiteral("-framerate") << QString::number(fps) << QStringLiteral("-i")
-             << framePattern;
-        args += codecArgs;
-        args << mp4Path;
-
-        QProcess process;
-        process.start(QStringLiteral("ffmpeg"), args);
-        if (!process.waitForFinished(120000)) {  // 無制限(-1)ではなく120秒でタイムアウトさせる
-            process.kill();
-            return {false, tr("ffmpegの実行がタイムアウトしました")};
-        }
-        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-            return {false, QString::fromLocal8Bit(process.readAllStandardError())};
-        }
-        return {true, QString()};
-    };
-
-    auto [ok, err] = runFfmpeg({QStringLiteral("-c:v"), QStringLiteral("libx264"), QStringLiteral("-pix_fmt"),
-                                 QStringLiteral("yuv420p")});
-    if (!ok) {
-        // libx264が無いLGPLビルドの可能性があるため、mpeg4で再試行する
-        auto [ok2, err2] = runFfmpeg({QStringLiteral("-c:v"), QStringLiteral("mpeg4"), QStringLiteral("-q:v"), QStringLiteral("3")});
-        if (!ok2) {
-            QMessageBox::warning(this, tr("書き出しエラー"), tr("動画の書き出しに失敗しました:\n%1").arg(err2.left(500)));
-            return false;
-        }
+    const QString ffmpeg = perapera::ui::findFfmpegExecutable();
+    if (ffmpeg.isEmpty()) {
+        QMessageBox::warning(this, tr("書き出しエラー"), tr("ffmpeg.exeが見つかりません。"));
+        return false;
     }
-    return true;
+
+    const QString framePattern = QDir(tempDir.path()).filePath(QStringLiteral("source_%08d.png"));
+    QStringList args{QStringLiteral("-y"),
+                     QStringLiteral("-framerate"),
+                     QString::number(settings.fps, 'f', 3),
+                     QStringLiteral("-start_number"),
+                     QStringLiteral("1"),
+                     QStringLiteral("-i"),
+                     framePattern,
+                     QStringLiteral("-frames:v"),
+                     QString::number(frames.size()),
+                     QStringLiteral("-an")};
+
+    if (settings.format == perapera::ui::ExportFormat::Mp4H264) {
+        args << QStringLiteral("-c:v") << QStringLiteral("libx264") << QStringLiteral("-preset")
+             << settings.h264Preset << QStringLiteral("-crf") << QString::number(settings.h264Crf)
+             << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p") << QStringLiteral("-movflags")
+             << QStringLiteral("+faststart");
+    } else if (settings.format == perapera::ui::ExportFormat::MovProRes) {
+        const bool alpha = settings.transparentBackground && settings.proResProfile >= 4;
+        const QString pixelFormat = alpha ? QStringLiteral("yuva444p10le")
+                                    : settings.proResProfile >= 4 ? QStringLiteral("yuv444p10le")
+                                                                  : QStringLiteral("yuv422p10le");
+        args << QStringLiteral("-c:v") << QStringLiteral("prores_ks") << QStringLiteral("-profile:v")
+             << QString::number(settings.proResProfile) << QStringLiteral("-pix_fmt") << pixelFormat
+             << QStringLiteral("-vendor") << QStringLiteral("apl0");
+        if (alpha) args << QStringLiteral("-alpha_bits") << QStringLiteral("16");
+    } else {
+        QString pixelFormat = QStringLiteral("yuv422p");
+        if (settings.dnxhrProfile == QStringLiteral("dnxhr_hqx")) pixelFormat = QStringLiteral("yuv422p10le");
+        if (settings.dnxhrProfile == QStringLiteral("dnxhr_444")) pixelFormat = QStringLiteral("yuv444p10le");
+        args << QStringLiteral("-c:v") << QStringLiteral("dnxhd") << QStringLiteral("-profile:v")
+             << settings.dnxhrProfile << QStringLiteral("-pix_fmt") << pixelFormat;
+    }
+    args << QStringLiteral("-colorspace") << QStringLiteral("bt709") << QStringLiteral("-color_primaries")
+         << QStringLiteral("bt709") << QStringLiteral("-color_trc") << QStringLiteral("bt709") << moviePath;
+
+    const auto [ok, error] = runFfmpegProcess(this, ffmpeg, args, tr("動画を変換中..."));
+    if (!ok) {
+        QMessageBox::warning(this, tr("書き出しエラー"),
+                             tr("動画の書き出しに失敗しました:\n%1").arg(error.right(1200)));
+    }
+    return ok;
 }
 
 bool MainWindow::exportAllCutsMovie(const QString& mp4Path, int fps) {
@@ -5401,11 +5587,13 @@ int MainWindow::debugExportSequence(const QString& dir) {
     debugSetupXsheetDemo();  // 尺6・2コマ打ちのデモを組む
     core::Cut& cut = activeCut();
     const core::RenderOptions opts;
-    const int outW = canvasWidth() & ~1;
-    const int outH = canvasHeight() & ~1;
+    perapera::ui::ExportSettings settings;
+    settings.format = perapera::ui::ExportFormat::PngSequence;
+    settings.outputWidth = canvasWidth();
+    settings.outputHeight = canvasHeight();
     std::vector<ExportFrameRef> frames;
     for (size_t f = 0; f < cut.frameCount(); ++f) frames.push_back({&cut, f});
-    return exportFramesToDir(dir, frames, opts, outW, outH, true, false) ? 0 : 1;
+    return exportFramesToDir(dir, frames, settings, opts, true, false) ? 0 : 1;
 }
 
 bool MainWindow::debugExportFrame(const QString& pngPath, int mode, bool transparent) {
@@ -5415,8 +5603,8 @@ bool MainWindow::debugExportFrame(const QString& pngPath, int mode, bool transpa
     const bool includeDrawing = mode != 1;
     const bool includePreviz = mode != 0;
     opts.transparentBackground = (mode == 2) || (includeDrawing && transparent);
-    const int outW = canvasWidth() & ~1;
-    const int outH = canvasHeight() & ~1;
+    const int outW = canvasWidth();
+    const int outH = canvasHeight();
     const QImage img = renderExportFrameImage(cut, 0, outW, outH, opts, includeDrawing, includePreviz);
     return img.save(pngPath);
 }
@@ -5431,9 +5619,71 @@ int MainWindow::debugExportAllCuts(const QString& dir) {
         core::Cut& c = scene.cut(ci);
         for (size_t f = 0; f < c.frameCount(); ++f) frames.push_back({&c, f});
     }
-    const int outW = canvasWidth() & ~1;
-    const int outH = canvasHeight() & ~1;
-    return exportFramesToDir(dir, frames, opts, outW, outH, true, false) ? static_cast<int>(frames.size()) : 0;
+    perapera::ui::ExportSettings settings;
+    settings.format = perapera::ui::ExportFormat::PngSequence;
+    settings.outputWidth = canvasWidth();
+    settings.outputHeight = canvasHeight();
+    return exportFramesToDir(dir, frames, settings, opts, true, false) ? static_cast<int>(frames.size()) : 0;
+}
+
+int MainWindow::debugExportProfessionalFormats(const QString& dir) {
+    debugSetupXsheetDemo();
+    QDir().mkpath(dir);
+
+    core::Cut& cut = activeCut();
+    std::vector<ExportFrameRef> frames;
+    for (size_t frame = 0; frame < std::min<size_t>(2, cut.frameCount()); ++frame) {
+        frames.push_back({&cut, frame});
+    }
+
+    core::RenderOptions opts;
+    opts.useExportSamples = true;
+
+    perapera::ui::ExportSettings settings;
+    settings.outputWidth = 320;
+    settings.outputHeight = 180;
+    settings.fps = 24.0;
+    settings.sequencePrefix = QStringLiteral("shot_");
+    settings.sequenceStartNumber = 1001;
+    settings.sequencePadding = 4;
+
+    int failures = 0;
+    const auto sequence = [&](perapera::ui::ExportFormat format, const QString& folder) {
+        settings.format = format;
+        if (!exportFramesToDir(QDir(dir).filePath(folder), frames, settings, opts, true, false)) ++failures;
+    };
+    sequence(perapera::ui::ExportFormat::PngSequence, QStringLiteral("png"));
+    sequence(perapera::ui::ExportFormat::TiffSequence, QStringLiteral("tiff"));
+    sequence(perapera::ui::ExportFormat::JpegSequence, QStringLiteral("jpeg"));
+    sequence(perapera::ui::ExportFormat::OpenExrSequence, QStringLiteral("exr"));
+    sequence(perapera::ui::ExportFormat::DpxSequence, QStringLiteral("dpx"));
+
+    settings.format = perapera::ui::ExportFormat::Mp4H264;
+    if (!exportMovieFrames(QDir(dir).filePath(QStringLiteral("review_h264.mp4")), frames, settings, opts, true, false)) {
+        ++failures;
+    }
+    settings.format = perapera::ui::ExportFormat::MovProRes;
+    settings.proResProfile = 3;
+    if (!exportMovieFrames(QDir(dir).filePath(QStringLiteral("edit_prores422hq.mov")), frames, settings, opts, true,
+                           false)) {
+        ++failures;
+    }
+    settings.format = perapera::ui::ExportFormat::MovDnxhr;
+    settings.dnxhrProfile = QStringLiteral("dnxhr_hqx");
+    if (!exportMovieFrames(QDir(dir).filePath(QStringLiteral("edit_dnxhr_hqx.mov")), frames, settings, opts, true,
+                           false)) {
+        ++failures;
+    }
+
+    settings.format = perapera::ui::ExportFormat::MovProRes;
+    settings.proResProfile = 4;
+    settings.transparentBackground = true;
+    opts.transparentBackground = true;
+    if (!exportMovieFrames(QDir(dir).filePath(QStringLiteral("alpha_prores4444.mov")), frames, settings, opts, true,
+                           false)) {
+        ++failures;
+    }
+    return failures;
 }
 
 void MainWindow::checkAutosaveRecovery() {

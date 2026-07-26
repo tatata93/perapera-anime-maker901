@@ -75,25 +75,11 @@ foreach ($dll in $runtimeDlls) {
     }
 }
 
-@"
-perapera-anime-maker901 Windows x64 portable
+Copy-Item -LiteralPath (Join-Path $outputRoot "README.md") -Destination (Join-Path $packageRoot "PERAPERA_GUIDE.md") -Force
 
-使い方:
-1. このzipを好きな場所に展開する
-2. perapera-anime-maker901.exe をダブルクリックする
-
-起動用bat:
-- START_PERAPERA.bat    : 既定UI。現在はWindows 95風
-- START_NORMAL_UI.bat   : 通常UI
-- START_95_UI.bat       : Windows 95風UI
-- START_XP_UI.bat       : Windows XP風UI
-
-注意:
-- フォルダ内の dll や platforms などのサブフォルダは消さないでください。
-- Windows 10/11 x64 向けです。
-- mp4書き出しには別途 ffmpeg.exe が必要です。PNG書き出しはこのzipだけで使えます。
-- Qt は LGPL ライセンスの動的リンクとして同梱しています。
-"@ | Set-Content -Encoding UTF8 -Path (Join-Path $packageRoot "README_JA.txt")
+if (-not (Test-Path (Join-Path $packageRoot "PERAPERA_GUIDE.md"))) {
+    throw "Portable README could not be created."
+}
 
 @"
 @echo off
@@ -129,7 +115,16 @@ See: https://www.qt.io/licensing/
 This package also includes runtime libraries and plugins required by Qt on Windows.
 "@ | Set-Content -Encoding UTF8 -Path (Join-Path $packageRoot "THIRD_PARTY_NOTICES.txt")
 
-Compress-Archive -Path $packageRoot -DestinationPath $zipPath -CompressionLevel Optimal
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+if (-not (Test-Path (Join-Path $packageRoot "PERAPERA_GUIDE.md"))) {
+    throw "Portable README disappeared before archive creation."
+}
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $packageRoot,
+    $zipPath,
+    [System.IO.Compression.CompressionLevel]::Optimal,
+    $true
+)
 
 $hash = Get-FileHash -Algorithm SHA256 -Path $zipPath
 "$($hash.Hash)  $(Split-Path -Leaf $zipPath)" | Set-Content -Encoding ASCII -Path $hashPath

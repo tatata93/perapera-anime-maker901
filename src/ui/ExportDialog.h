@@ -1,62 +1,61 @@
 #pragma once
 
+#include "ExportSettings.h"
+
 #include <QDialog>
 #include <QStringList>
 
+class QCheckBox;
 class QComboBox;
+class QDialogButtonBox;
+class QDoubleSpinBox;
+class QLabel;
 class QLineEdit;
 class QSpinBox;
-class QCheckBox;
-class QDialogButtonBox;
 
-// 書き出し設定ダイアログ。形式(連番PNG/動画mp4)・出力先・範囲・対象セル・
-// 色トレス線/作監修正の含有・FPSを入力し、OKで確定した内容をgetterで取得する。
 class ExportDialog : public QDialog {
     Q_OBJECT
 
 public:
-    enum class Format {
-        Sequence,  // 連番PNG
-        Movie,     // 動画(mp4)
-    };
+    ExportDialog(const QStringList& celNames, int frameCount, int canvasWidth = 1920, int canvasHeight = 1080,
+                 int currentFrame = 0, QWidget* parent = nullptr);
 
-    // 書き出しに含める内容(エアラベル=選択式)。作画(セル合成)/プリビズ(3Dレイアウト)/両方
-    enum class Content {
-        Drawing,  // 作画のみ(従来)
-        Previz,   // プリビズのみ(3Dレイアウト)
-        Both,     // 作画+プリビズ(プリビズを背景に作画を重ねる)
-    };
-
-    // celNames: 対象セルの一覧(「全セル(仕上げ)」の下に「セル <name> のみ」として並べる)
-    // frameCount: カットの尺(開始/終了コマの範囲既定値・上限に使う)
-    ExportDialog(const QStringList& celNames, int frameCount, QWidget* parent = nullptr);
-
-    // 出力先を事前設定する(前回の書き出し先を復元して毎回入力し直す手間を省く)
     void setOutputPath(const QString& path);
+    perapera::ui::ExportSettings settings() const;
 
-    Format format() const;
-    Content content() const;
-    // trueなら全カットを通しで書き出す(範囲指定は無視)。falseなら現在のカットのfrom〜to
-    bool exportAllCuts() const;
-    QString outputPath() const;
-    int fromFrame() const;
-    int toFrame() const;
-    // -1=全セル、0以上=対象セルのインデックス
-    int onlyCel() const;
-    bool includeColorTrace() const;
-    bool includeCorrection() const;
-    // 透明背景で書き出す(連番PNG+作画のみで有効。動画やプリビズ含む書き出しでは無視)
-    bool transparentBackground() const;
-    // 出力解像度スケール(%)。100=キャンバス等倍
-    int outputScalePercent() const;
-    int fps() const;
+protected:
+    void accept() override;
 
 private:
+    enum class ResolutionPreset {
+        Canvas,
+        Half,
+        Double,
+        Hd,
+        FullHd,
+        Uhd,
+        Custom,
+    };
+
+    void applyPreset(int presetIndex);
+    void markPresetCustom();
     void updateFormatDependentUi();
+    void updateResolutionUi();
+    void rebuildProfileOptions();
     void browseOutputPath();
+    perapera::ui::ExportFormat format() const;
+    perapera::ui::ExportScope scope() const;
+    perapera::ui::ExportContent content() const;
+    int currentProResProfile() const;
 
     int m_frameCount = 1;
+    int m_canvasWidth = 1920;
+    int m_canvasHeight = 1080;
+    int m_currentFrame = 0;
+    bool m_applyingPreset = false;
+    int m_lastQualityFormat = -1;
 
+    QComboBox* m_presetCombo = nullptr;
     QComboBox* m_formatCombo = nullptr;
     QComboBox* m_contentCombo = nullptr;
     QComboBox* m_scopeCombo = nullptr;
@@ -67,7 +66,26 @@ private:
     QCheckBox* m_colorTraceCheck = nullptr;
     QCheckBox* m_correctionCheck = nullptr;
     QCheckBox* m_transparentCheck = nullptr;
-    QSpinBox* m_scaleSpin = nullptr;
-    QSpinBox* m_fpsSpin = nullptr;
+
+    QComboBox* m_resolutionCombo = nullptr;
+    QSpinBox* m_widthSpin = nullptr;
+    QSpinBox* m_heightSpin = nullptr;
+    QCheckBox* m_preserveAspectCheck = nullptr;
+    QLabel* m_qualityLabel = nullptr;
+    QSpinBox* m_qualitySpin = nullptr;
+    QLabel* m_profileLabel = nullptr;
+    QComboBox* m_profileCombo = nullptr;
+    QLabel* m_encodeSpeedLabel = nullptr;
+    QComboBox* m_encodeSpeedCombo = nullptr;
+    QLabel* m_fpsLabel = nullptr;
+    QDoubleSpinBox* m_fpsSpin = nullptr;
+    QComboBox* m_playbackSpeedCombo = nullptr;
+    QLabel* m_sequencePrefixLabel = nullptr;
+    QLineEdit* m_sequencePrefixEdit = nullptr;
+    QLabel* m_sequenceStartLabel = nullptr;
+    QSpinBox* m_sequenceStartSpin = nullptr;
+    QLabel* m_sequencePaddingLabel = nullptr;
+    QSpinBox* m_sequencePaddingSpin = nullptr;
+
     QDialogButtonBox* m_buttonBox = nullptr;
 };

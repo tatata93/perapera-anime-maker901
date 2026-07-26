@@ -1456,6 +1456,19 @@ int main(int argc, char* argv[]) {
             });
         });
     }
+    const int exportDetailDlgIdx = args.indexOf("--exportdialog-detail-test");
+    if (exportDetailDlgIdx >= 0 && exportDetailDlgIdx + 1 < args.size()) {
+        const QString outputPath = args.at(exportDetailDlgIdx + 1);
+        QTimer::singleShot(300, &window, [outputPath] {
+            auto* d = new ExportDialog(QStringList{QStringLiteral("A"), QStringLiteral("B")}, 24);
+            d->show();
+            if (auto* tabs = d->findChild<QTabWidget*>()) tabs->setCurrentIndex(1);
+            QTimer::singleShot(200, d, [d, outputPath] {
+                d->grab().save(outputPath);
+                QApplication::exit(0);
+            });
+        });
+    }
     // 動作確認用: --exportmode-test <出力フォルダ> で作画/プリビズ/両方/透明の各モードを1枚ずつ書き出す
     const int exportModeIdx = args.indexOf("--exportmode-test");
     if (exportModeIdx >= 0 && exportModeIdx + 1 < args.size()) {
@@ -1479,6 +1492,14 @@ int main(int argc, char* argv[]) {
             window.debugSetupEditDemo();
             const int n = window.debugExportAllCuts(dir);
             QApplication::exit(n == 48 ? 0 : 1);  // 3カット合計48コマになるはず
+        });
+    }
+
+    const int professionalExportIdx = args.indexOf("--professional-export-test");
+    if (professionalExportIdx >= 0 && professionalExportIdx + 1 < args.size()) {
+        const QString dir = args.at(professionalExportIdx + 1);
+        QTimer::singleShot(500, &window, [&window, dir] {
+            QApplication::exit(window.debugExportProfessionalFormats(dir));
         });
     }
 
