@@ -228,10 +228,63 @@ struct PrevizCamera {
     }
 };
 
+enum class PrevizLightType {
+    Directional,
+    Point,
+    Spot,
+};
+
+struct PrevizLightState {
+    bool enabled = true;
+    PrevizLightType type = PrevizLightType::Directional;
+    Vec3 color{1.0f, 0.96f, 0.90f};
+    float intensity = 1.2f;
+    Vec3 position{3.0f, 5.0f, 4.0f};
+    // Direction in which the light rays travel. A negative Y value points toward the floor.
+    Vec3 direction{-0.4f, -1.0f, -0.6f};
+    float rangeMeters = 12.0f;
+    float coneAngleDeg = 45.0f;
+    bool castsShadow = true;
+    float shadowOpacity = 0.42f;
+    float shadowSoftness = 0.25f;
+};
+
+inline PrevizLightState lerp(const PrevizLightState& a, const PrevizLightState& b, float t) {
+    const bool useB = t >= 0.5f;
+    return {useB ? b.enabled : a.enabled,
+            useB ? b.type : a.type,
+            previz_detail::lerp(a.color, b.color, t),
+            previz_detail::lerp(a.intensity, b.intensity, t),
+            previz_detail::lerp(a.position, b.position, t),
+            previz_detail::lerp(a.direction, b.direction, t),
+            previz_detail::lerp(a.rangeMeters, b.rangeMeters, t),
+            previz_detail::lerp(a.coneAngleDeg, b.coneAngleDeg, t),
+            useB ? b.castsShadow : a.castsShadow,
+            previz_detail::lerp(a.shadowOpacity, b.shadowOpacity, t),
+            previz_detail::lerp(a.shadowSoftness, b.shadowSoftness, t)};
+}
+
+struct PrevizLight {
+    std::string name = "キーライト";
+    PrevizLightState state;
+    std::map<size_t, PrevizLightState> keys;
+
+    PrevizLightState stateAt(size_t frame) const {
+        return previz_detail::interpolateKeys(
+            keys, frame, state,
+            [](const PrevizLightState& a, const PrevizLightState& b, float t) {
+                return lerp(a, b, t);
+            });
+    }
+};
+
 // カットに紐づくプリビズシーン(3Dモデル群+カメラ)
 struct PrevizScene {
     std::vector<PrevizModel> models;
     PrevizCamera camera;
+    Vec3 ambientColor{0.78f, 0.84f, 1.0f};
+    float ambientIntensity = 0.24f;
+    std::vector<PrevizLight> lights{PrevizLight{}};
 
     bool isEmpty() const { return models.empty() && camera.keys.empty(); }
 

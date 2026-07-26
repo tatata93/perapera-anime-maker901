@@ -7,6 +7,7 @@
 
 class PrevizViewport;
 class PrevizSheetPanel;
+class PrevizLightingWindow;
 class QComboBox;
 class QDialog;
 class QDoubleSpinBox;
@@ -32,6 +33,7 @@ public:
     // 現在コマと尺(コマ数)を反映する。プリビズシートの行数もここで揃える
     void setTimeline(size_t currentFrame, size_t frameCount);
     PrevizViewport* viewport() const { return m_viewport; }
+    void showLightingWindow();
 
     // 動作確認用: プリミティブを追加する(kind=":box"/":cylinder"/":sphere")。追加後に選択状態にする
     void debugAddPrimitive(const QString& kind) { addPrimitive(kind, true); }
@@ -51,6 +53,9 @@ public:
     void debugSetHumanoidPosePreset(int presetIndex);
     void debugSetHumanoidBodyPreset(int presetIndex);
     void debugAddHumanoidWalkCycleKeys();
+    void debugOpenLightingWindow();
+    void debugApplyLightingPreset(int presetIndex);
+    PrevizLightingWindow* lightingWindow() const { return m_lightingWindow; }
 
 signals:
     void sceneEdited();          // シーンが変更された(MainWindowが未保存フラグを立てる)
@@ -99,6 +104,8 @@ private:
     void setBodyControlsEnabled(bool enabled);
     void openPoseWindow();
     void openBodyWindow();
+    void openLightingWindow();
+    void refreshLightingAimTarget();
     // 対象(カメラ/選択モデル)に応じてcameraFn/modelFnのどちらかを適用し、UI・シートを更新する
     void applyNudge(const std::function<void(core::PrevizCameraState&)>& cameraFn,
                     const std::function<void(core::PrevizTransform&)>& modelFn);
@@ -106,6 +113,7 @@ private:
     core::PrevizScene* m_scene = nullptr;
     PrevizViewport* m_viewport = nullptr;
     PrevizSheetPanel* m_sheetPanel = nullptr;
+    PrevizLightingWindow* m_lightingWindow = nullptr;
     QListWidget* m_modelList = nullptr;
     QDoubleSpinBox* m_focalSpin = nullptr;
     QDoubleSpinBox* m_sensorWidthSpin = nullptr;

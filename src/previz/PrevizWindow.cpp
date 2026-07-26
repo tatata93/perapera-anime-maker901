@@ -28,6 +28,7 @@
 #include <limits>
 
 #include "previz/GltfLoader.h"
+#include "previz/PrevizLightingWindow.h"
 #include "previz/PrevizSheetPanel.h"
 #include "previz/StlLoader.h"
 #include "previz/PrevizTransformUtils.h"
@@ -311,6 +312,10 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         m_viewport->setWireframeEnabled(checked);
         statusBar()->showMessage(checked ? tr("ワイヤーフレーム表示") : tr("通常表示"));
     });
+    QAction* lightingAction = toolBar->addAction(tr("照明..."));
+    lightingAction->setToolTip(tr("光源、環境光、影を設定します"));
+    connect(lightingAction, &QAction::triggered, this,
+            &PrevizWindow::openLightingWindow);
     toolBar->addSeparator();
     toolBar->addWidget(new QLabel(tr(" 焦点距離: "), this));
     m_focalSpin = new QDoubleSpinBox(this);
@@ -372,6 +377,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         refreshTransformUi();
         refreshBodyUi();
         refreshPoseUi();
+        if (m_lightingWindow) m_lightingWindow->setFrame(next);
         // シートの再構築は重いので再生中は行わない(停止時にまとめて更新)
     });
 
@@ -434,6 +440,7 @@ PrevizWindow::PrevizWindow(QWidget* parent) : QMainWindow(parent) {
         refreshMeasurementUi();
         refreshPoseUi();
         refreshBodyUi();
+        refreshLightingAimTarget();
         rebuildSheet();  // アクティブ列(選択モデル)の表示を追従させる
     });
 
@@ -1242,6 +1249,54 @@ void PrevizWindow::openBodyWindow() {
     m_bodyDialog->activateWindow();
 }
 
+void PrevizWindow::openLightingWindow() {
+    if (!m_lightingWindow) {
+        m_lightingWindow = new PrevizLightingWindow(this);
+        connect(m_lightingWindow, &PrevizLightingWindow::lightingEdited, this,
+                [this] {
+                    m_viewport->update();
+                    rebuildSheet();
+                    emit sceneEdited();
+                });
+        connect(m_lightingWindow, &PrevizLightingWindow::selectedLightChanged,
+                this, [this](int index) {
+                    m_viewport->setSelectedLight(index);
+                    rebuildSheet();
+                });
+    }
+    m_lightingWindow->setScene(m_scene);
+    m_lightingWindow->setFrame(m_viewport->frame());
+    refreshLightingAimTarget();
+    m_lightingWindow->show();
+    perapera::ui::keepWindowOnScreen(m_lightingWindow);
+    m_lightingWindow->raise();
+    m_lightingWindow->activateWindow();
+}
+
+void PrevizWindow::showLightingWindow() {
+    openLightingWindow();
+}
+
+void PrevizWindow::refreshLightingAimTarget() {
+    if (!m_lightingWindow || !m_scene) return;
+    const int modelIndex = selectedModelIndex();
+    if (modelIndex < 0 ||
+        modelIndex >= static_cast<int>(m_scene->models.size())) {
+        m_lightingWindow->setAimTarget({}, false);
+        return;
+    }
+    const core::PrevizModel& model =
+        m_scene->models[static_cast<size_t>(modelIndex)];
+    const QMatrix4x4 world =
+        previz::worldMatrix(*m_scene, static_cast<size_t>(modelIndex),
+                            m_viewport->frame());
+    const QVector3D center = world.map(
+        QVector3D(model.sourceCenterMeters.x, model.sourceCenterMeters.y,
+                  model.sourceCenterMeters.z));
+    m_lightingWindow->setAimTarget(
+        {center.x(), center.y(), center.z()}, true);
+}
+
 void PrevizWindow::setPoseControlsEnabled(bool enabled) {
     if (m_openPoseWindowButton) {
         m_openPoseWindowButton->setVisible(enabled);
@@ -1709,6 +1764,15 @@ void PrevizWindow::debugAddHumanoidWalkCycleKeys() {
     addHumanoidWalkCycleKeys();
 }
 
+void PrevizWindow::debugOpenLightingWindow() {
+    openLightingWindow();
+}
+
+void PrevizWindow::debugApplyLightingPreset(int presetIndex) {
+    openLightingWindow();
+    if (m_lightingWindow) m_lightingWindow->applyPreset(presetIndex);
+}
+
 void PrevizWindow::addPrimitive(const QString& kind, bool select) {
     if (!m_scene) return;
     // kind(":box"/":cylinder"/":sphere")に応じた表示名を決める
@@ -1861,6 +1925,7 @@ void PrevizWindow::setScene(core::PrevizScene* scene) {
         }
     }
     m_viewport->setScene(scene);
+    if (m_lightingWindow) m_lightingWindow->setScene(scene);
     // 空のシーンには最初から操作できる箱を1つ置く(目安キューブの実体化)
     if (m_scene && m_scene->models.empty()) {
         addPrimitive(QStringLiteral(":box"), true);
@@ -1870,6 +1935,7 @@ void PrevizWindow::setScene(core::PrevizScene* scene) {
     refreshMeasurementUi();
     refreshPoseUi();
     refreshBodyUi();
+    refreshLightingAimTarget();
     rebuildSheet();
 }
 
@@ -1880,9 +1946,11 @@ void PrevizWindow::setFrame(size_t frame) {
 void PrevizWindow::setTimeline(size_t currentFrame, size_t frameCount) {
     m_frameCount = frameCount > 0 ? frameCount : 1;
     m_viewport->setFrame(currentFrame);
+    if (m_lightingWindow) m_lightingWindow->setFrame(currentFrame);
     refreshCameraUi();
     refreshTransformUi();  // モーションキーがあるとコマごとに配置が変わる
     refreshPoseUi();
+    refreshLightingAimTarget();
     rebuildSheet();
 }
 
@@ -2021,19 +2089,38 @@ void PrevizWindow::rebuildSheet() {
             }
             keyFlags << flags;
         }
+        for (const core::PrevizLight& light : m_scene->lights) {
+            columnNames << tr("光: %1").arg(QString::fromStdString(light.name));
+            QList<bool> flags;
+            flags.reserve(frameCount);
+            for (int f = 0; f < frameCount; ++f) {
+                flags << (light.keys.count(static_cast<size_t>(f)) > 0);
+            }
+            keyFlags << flags;
+        }
     }
 
     // モデル選択中ならその列(1+行)、そうでなければカメラ列(0)をアクティブにする
     const int row = m_modelList ? m_modelList->currentRow() : -1;
-    const int activeColumn = row >= 0 ? 1 + row : 0;
+    int activeColumn = row >= 0 ? 1 + row : 0;
+    if (m_scene && m_lightingWindow && m_lightingWindow->isVisible() &&
+        m_lightingWindow->selectedLightIndex() >= 0) {
+        activeColumn = 1 + static_cast<int>(m_scene->models.size()) +
+                       m_lightingWindow->selectedLightIndex();
+    }
 
     m_sheetPanel->setSheet(columnNames, keyFlags, frameCount, static_cast<int>(m_viewport->frame()), activeColumn);
 }
 
 void PrevizWindow::onSheetCellClicked(int column, int frame) {
     emit frameChangeRequested(frame);
-    if (column > 0 && m_modelList) {
+    const int modelCount =
+        m_scene ? static_cast<int>(m_scene->models.size()) : 0;
+    if (column > 0 && column <= modelCount && m_modelList) {
         m_modelList->setCurrentRow(column - 1);  // モデル選択と連動
+    } else if (m_scene && column > modelCount) {
+        openLightingWindow();
+        m_lightingWindow->selectLight(column - modelCount - 1);
     }
 }
 
@@ -2047,7 +2134,7 @@ void PrevizWindow::onSheetKeyToggleRequested(int column, int frame) {
         } else {
             camera.keys[f] = camera.stateAt(f);
         }
-    } else {
+    } else if (column <= static_cast<int>(m_scene->models.size())) {
         const int row = column - 1;
         if (row < 0 || row >= static_cast<int>(m_scene->models.size())) return;
         core::PrevizModel& model = m_scene->models[static_cast<size_t>(row)];
@@ -2058,6 +2145,24 @@ void PrevizWindow::onSheetKeyToggleRequested(int column, int frame) {
         } else {
             model.transformKeys[f] = model.transformAt(f);
             if (isHumanoidKind(model.filePath)) model.poseKeys[f] = model.poseAt(f);
+        }
+    } else {
+        const int lightIndex =
+            column - 1 - static_cast<int>(m_scene->models.size());
+        if (lightIndex < 0 ||
+            lightIndex >= static_cast<int>(m_scene->lights.size())) {
+            return;
+        }
+        core::PrevizLight& light =
+            m_scene->lights[static_cast<size_t>(lightIndex)];
+        if (light.keys.count(f) > 0) {
+            light.keys.erase(f);
+        } else {
+            light.keys[f] = light.stateAt(f);
+        }
+        if (m_lightingWindow) {
+            m_lightingWindow->setFrame(f);
+            m_lightingWindow->selectLight(lightIndex);
         }
     }
     rebuildSheet();

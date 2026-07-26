@@ -263,6 +263,54 @@ PrevizCameraState cameraStateFromJson(const json& j) {
     return {vec3FromJson(j.at("position")), vec3FromJson(j.at("rotation")), j.at("focal").get<float>()};
 }
 
+std::string lightTypeToString(PrevizLightType type) {
+    switch (type) {
+        case PrevizLightType::Point:
+            return "point";
+        case PrevizLightType::Spot:
+            return "spot";
+        case PrevizLightType::Directional:
+        default:
+            return "directional";
+    }
+}
+
+PrevizLightType lightTypeFromString(const std::string& value) {
+    if (value == "point") return PrevizLightType::Point;
+    if (value == "spot") return PrevizLightType::Spot;
+    return PrevizLightType::Directional;
+}
+
+json lightStateToJson(const PrevizLightState& state) {
+    return {{"enabled", state.enabled},
+            {"type", lightTypeToString(state.type)},
+            {"color", vec3ToJson(state.color)},
+            {"intensity", state.intensity},
+            {"position", vec3ToJson(state.position)},
+            {"direction", vec3ToJson(state.direction)},
+            {"rangeMeters", state.rangeMeters},
+            {"coneAngleDeg", state.coneAngleDeg},
+            {"castsShadow", state.castsShadow},
+            {"shadowOpacity", state.shadowOpacity},
+            {"shadowSoftness", state.shadowSoftness}};
+}
+
+PrevizLightState lightStateFromJson(const json& j) {
+    PrevizLightState state;
+    state.enabled = j.value("enabled", true);
+    state.type = lightTypeFromString(j.value("type", std::string("directional")));
+    if (j.contains("color")) state.color = vec3FromJson(j.at("color"));
+    state.intensity = j.value("intensity", state.intensity);
+    if (j.contains("position")) state.position = vec3FromJson(j.at("position"));
+    if (j.contains("direction")) state.direction = vec3FromJson(j.at("direction"));
+    state.rangeMeters = j.value("rangeMeters", state.rangeMeters);
+    state.coneAngleDeg = j.value("coneAngleDeg", state.coneAngleDeg);
+    state.castsShadow = j.value("castsShadow", state.castsShadow);
+    state.shadowOpacity = j.value("shadowOpacity", state.shadowOpacity);
+    state.shadowSoftness = j.value("shadowSoftness", state.shadowSoftness);
+    return state;
+}
+
 json previzToJson(const PrevizScene& scene) {
     json jModels = json::array();
     for (const PrevizModel& model : scene.models) {
@@ -296,12 +344,26 @@ json previzToJson(const PrevizScene& scene) {
     for (const auto& [frame, state] : scene.camera.keys) {
         jCameraKeys.push_back({{"frame", frame}, {"state", cameraStateToJson(state)}});
     }
+    json jLights = json::array();
+    for (const PrevizLight& light : scene.lights) {
+        json jLightKeys = json::array();
+        for (const auto& [frame, state] : light.keys) {
+            jLightKeys.push_back({{"frame", frame}, {"state", lightStateToJson(state)}});
+        }
+        jLights.push_back({{"name", light.name},
+                           {"state", lightStateToJson(light.state)},
+                           {"keys", std::move(jLightKeys)}});
+    }
     return {{"models", std::move(jModels)},
             {"camera",
              {{"state", cameraStateToJson(scene.camera.state)},
               {"sensorWidth", scene.camera.sensorWidthMm},
               {"lensDistortion", scene.camera.lensDistortion},
-              {"keys", std::move(jCameraKeys)}}}};
+              {"keys", std::move(jCameraKeys)}}},
+            {"lighting",
+             {{"ambientColor", vec3ToJson(scene.ambientColor)},
+              {"ambientIntensity", scene.ambientIntensity},
+              {"lights", std::move(jLights)}}}};
 }
 
 void previzFromJson(const json& j, PrevizScene& scene) {
@@ -339,6 +401,28 @@ void previzFromJson(const json& j, PrevizScene& scene) {
     scene.camera.lensDistortion = jCamera.value("lensDistortion", 0.0f);  // 旧データは歪みなし
     for (const json& jKey : jCamera.at("keys")) {
         scene.camera.keys[jKey.at("frame").get<size_t>()] = cameraStateFromJson(jKey.at("state"));
+    }
+    if (j.contains("lighting")) {
+        const json& jLighting = j.at("lighting");
+        if (jLighting.contains("ambientColor")) {
+            scene.ambientColor = vec3FromJson(jLighting.at("ambientColor"));
+        }
+        scene.ambientIntensity = jLighting.value("ambientIntensity", scene.ambientIntensity);
+        scene.lights.clear();
+        if (jLighting.contains("lights")) {
+            for (const json& jLight : jLighting.at("lights")) {
+                PrevizLight light;
+                light.name = jLight.value("name", std::string("ライト"));
+                if (jLight.contains("state")) light.state = lightStateFromJson(jLight.at("state"));
+                if (jLight.contains("keys")) {
+                    for (const json& jKey : jLight.at("keys")) {
+                        light.keys[jKey.at("frame").get<size_t>()] =
+                            lightStateFromJson(jKey.at("state"));
+                    }
+                }
+                scene.lights.push_back(std::move(light));
+            }
+        }
     }
 }
 

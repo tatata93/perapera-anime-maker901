@@ -632,6 +632,27 @@ TEST_CASE("Previz model and camera keys interpolate", "[core][previz]") {
     REQUIRE(miniatureSize.z == 0.25f);
 }
 
+TEST_CASE("Previz light keys interpolate continuous values and hold discrete settings",
+          "[core][previz][lighting]") {
+    core::PrevizLight light;
+    light.keys[0].type = core::PrevizLightType::Point;
+    light.keys[0].intensity = 1.0f;
+    light.keys[0].position = {0.0f, 2.0f, 0.0f};
+    light.keys[0].color = {1.0f, 0.0f, 0.0f};
+    light.keys[10].type = core::PrevizLightType::Spot;
+    light.keys[10].intensity = 3.0f;
+    light.keys[10].position = {10.0f, 4.0f, -2.0f};
+    light.keys[10].color = {0.0f, 0.0f, 1.0f};
+
+    const core::PrevizLightState mid = light.stateAt(5);
+    REQUIRE(mid.type == core::PrevizLightType::Spot);
+    REQUIRE(mid.intensity == 2.0f);
+    REQUIRE(mid.position.x == 5.0f);
+    REQUIRE(mid.position.y == 3.0f);
+    REQUIRE(mid.color.x == 0.5f);
+    REQUIRE(mid.color.z == 0.5f);
+}
+
 TEST_CASE("Previz model hierarchy rejects cycles and repairs invalid parents",
           "[core][previz][group]") {
     core::PrevizScene scene;
@@ -737,6 +758,18 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     cut.previz().camera.state.focalLengthMm = 85.0f;
     cut.previz().camera.sensorWidthMm = 36.0f;
     cut.previz().camera.keys[3] = {{0, 1, 4}, {10, 0, 0}, 85.0f};
+    cut.previz().ambientColor = {0.2f, 0.3f, 0.4f};
+    cut.previz().ambientIntensity = 0.15f;
+    cut.previz().lights[0].name = "Moon";
+    cut.previz().lights[0].state.type = core::PrevizLightType::Spot;
+    cut.previz().lights[0].state.color = {0.4f, 0.5f, 1.0f};
+    cut.previz().lights[0].state.intensity = 2.5f;
+    cut.previz().lights[0].state.position = {3.0f, 6.0f, 2.0f};
+    cut.previz().lights[0].state.direction = {-0.2f, -1.0f, -0.3f};
+    cut.previz().lights[0].state.coneAngleDeg = 32.0f;
+    cut.previz().lights[0].state.shadowSoftness = 0.6f;
+    cut.previz().lights[0].keys[8] = cut.previz().lights[0].state;
+    cut.previz().lights[0].keys[8].intensity = 4.0f;
 
     const auto path = std::filesystem::temp_directory_path() / "ppam_previz_test.ppproj";
     std::string error;
@@ -777,6 +810,16 @@ TEST_CASE("Previz scene round trips through ppam", "[core][previz][io]") {
     REQUIRE(previz.camera.state.focalLengthMm == 85.0f);
     REQUIRE(previz.camera.keys.size() == 1);
     REQUIRE(previz.camera.keys.at(3).rotationDeg.x == 10.0f);
+    REQUIRE(previz.ambientColor.y == 0.3f);
+    REQUIRE(previz.ambientIntensity == 0.15f);
+    REQUIRE(previz.lights.size() == 1);
+    REQUIRE(previz.lights[0].name == "Moon");
+    REQUIRE(previz.lights[0].state.type == core::PrevizLightType::Spot);
+    REQUIRE(previz.lights[0].state.color.z == 1.0f);
+    REQUIRE(previz.lights[0].state.coneAngleDeg == 32.0f);
+    REQUIRE(previz.lights[0].state.shadowSoftness == 0.6f);
+    REQUIRE(previz.lights[0].keys.size() == 1);
+    REQUIRE(previz.lights[0].stateAt(8).intensity == 4.0f);
 
     std::filesystem::remove_all(path);
 }

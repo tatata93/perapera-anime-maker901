@@ -5,6 +5,7 @@
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLContext>
+#include <QQuaternion>
 #include <QSurfaceFormat>
 #include <QDebug>
 #include <algorithm>
@@ -28,6 +29,16 @@ std::string lowerExtension(const std::string& path) {
 
 bool isHumanoidModelPath(const std::string& filePath) {
     return filePath == ":humanoid" || filePath == ":humanoid_box";
+}
+
+QVector3D toVector(const core::Vec3& value) {
+    return {value.x, value.y, value.z};
+}
+
+QVector3D normalizedOr(const core::Vec3& value,
+                       const QVector3D& fallback = QVector3D(0.0f, -1.0f, 0.0f)) {
+    QVector3D result = toVector(value);
+    return result.lengthSquared() > 1e-8f ? result.normalized() : fallback;
 }
 
 std::vector<uint32_t> triangleWireIndices(const uint32_t* indices, size_t count) {
@@ -54,19 +65,30 @@ uniform mat4 uMvp;
 uniform mat4 uModel;
 
 varying vec3 vNormal;
+varying vec3 vWorldPos;
 
 void main() {
+    vec4 world = uModel * vec4(aPos, 1.0);
     gl_Position = uMvp * vec4(aPos, 1.0);
     vNormal = mat3(uModel) * aNormal;
+    vWorldPos = world.xyz / max(world.w, 0.00001);
 }
 )";
 
 const char* kCompatFragmentShader = R"(#version 120
 uniform vec4 uColor;
-uniform vec3 uLightDir;
 uniform float uUnlit;
+uniform vec3 uAmbientColor;
+uniform float uAmbientIntensity;
+uniform vec3 uViewPos;
+uniform int uLightCount;
+uniform vec4 uLightPositionType[4];
+uniform vec4 uLightDirectionRange[4];
+uniform vec4 uLightColorIntensity[4];
+uniform vec4 uLightSpotParams[4];
 
 varying vec3 vNormal;
+varying vec3 vWorldPos;
 
 void main() {
     if (uUnlit > 0.5) {
@@ -74,15 +96,42 @@ void main() {
         return;
     }
 
-    float d = max(
-        dot(normalize(vNormal), normalize(uLightDir)),
-        0.0
-    );
-
-    gl_FragColor = vec4(
-        uColor.rgb * (0.35 + 0.65 * d),
-        uColor.a
-    );
+    vec3 n = normalize(vNormal);
+    vec3 viewDir = normalize(uViewPos - vWorldPos);
+    vec3 lighting = uAmbientColor * uAmbientIntensity;
+    vec3 specular = vec3(0.0);
+    for (int i = 0; i < 4; ++i) {
+        if (i >= uLightCount) continue;
+        float type = uLightPositionType[i].w;
+        vec3 lightDir;
+        float attenuation = 1.0;
+        if (type < 0.5) {
+            lightDir = normalize(-uLightDirectionRange[i].xyz);
+        } else {
+            vec3 toLight = uLightPositionType[i].xyz - vWorldPos;
+            float distanceToLight = length(toLight);
+            lightDir = toLight / max(distanceToLight, 0.0001);
+            float range = max(uLightDirectionRange[i].w, 0.001);
+            float normalizedDistance = distanceToLight / range;
+            attenuation = 1.0 / (1.0 + 4.0 * normalizedDistance * normalizedDistance);
+            attenuation *= 1.0 - smoothstep(0.85, 1.0, normalizedDistance);
+            if (type > 1.5) {
+                vec3 fromLight = normalize(vWorldPos - uLightPositionType[i].xyz);
+                float spotCos = dot(normalize(uLightDirectionRange[i].xyz), fromLight);
+                float outerCos = uLightSpotParams[i].x;
+                attenuation *= smoothstep(outerCos, min(1.0, outerCos + 0.12), spotCos);
+            }
+        }
+        float diffuse = max(dot(n, lightDir), 0.0);
+        vec3 radiance = uLightColorIntensity[i].rgb *
+                        uLightColorIntensity[i].a * attenuation * 0.35;
+        lighting += radiance * diffuse;
+        if (diffuse > 0.0) {
+            vec3 halfDir = normalize(lightDir + viewDir);
+            specular += radiance * pow(max(dot(n, halfDir), 0.0), 28.0) * 0.16;
+        }
+    }
+    gl_FragColor = vec4(uColor.rgb * lighting + specular, uColor.a);
 }
 )";
 
@@ -94,19 +143,30 @@ uniform mat4 uMvp;
 uniform mat4 uModel;
 
 out vec3 vNormal;
+out vec3 vWorldPos;
 
 void main() {
+    vec4 world = uModel * vec4(aPos, 1.0);
     gl_Position = uMvp * vec4(aPos, 1.0);
     vNormal = mat3(uModel) * aNormal;
+    vWorldPos = world.xyz / max(world.w, 0.00001);
 }
 )";
 
 const char* kCoreFragmentShader = R"(#version 150 core
 uniform vec4 uColor;
-uniform vec3 uLightDir;
 uniform float uUnlit;
+uniform vec3 uAmbientColor;
+uniform float uAmbientIntensity;
+uniform vec3 uViewPos;
+uniform int uLightCount;
+uniform vec4 uLightPositionType[4];
+uniform vec4 uLightDirectionRange[4];
+uniform vec4 uLightColorIntensity[4];
+uniform vec4 uLightSpotParams[4];
 
 in vec3 vNormal;
+in vec3 vWorldPos;
 out vec4 fragColor;
 
 void main() {
@@ -115,15 +175,42 @@ void main() {
         return;
     }
 
-    float d = max(
-        dot(normalize(vNormal), normalize(uLightDir)),
-        0.0
-    );
-
-    fragColor = vec4(
-        uColor.rgb * (0.35 + 0.65 * d),
-        uColor.a
-    );
+    vec3 n = normalize(vNormal);
+    vec3 viewDir = normalize(uViewPos - vWorldPos);
+    vec3 lighting = uAmbientColor * uAmbientIntensity;
+    vec3 specular = vec3(0.0);
+    for (int i = 0; i < 4; ++i) {
+        if (i >= uLightCount) continue;
+        float type = uLightPositionType[i].w;
+        vec3 lightDir;
+        float attenuation = 1.0;
+        if (type < 0.5) {
+            lightDir = normalize(-uLightDirectionRange[i].xyz);
+        } else {
+            vec3 toLight = uLightPositionType[i].xyz - vWorldPos;
+            float distanceToLight = length(toLight);
+            lightDir = toLight / max(distanceToLight, 0.0001);
+            float range = max(uLightDirectionRange[i].w, 0.001);
+            float normalizedDistance = distanceToLight / range;
+            attenuation = 1.0 / (1.0 + 4.0 * normalizedDistance * normalizedDistance);
+            attenuation *= 1.0 - smoothstep(0.85, 1.0, normalizedDistance);
+            if (type > 1.5) {
+                vec3 fromLight = normalize(vWorldPos - uLightPositionType[i].xyz);
+                float spotCos = dot(normalize(uLightDirectionRange[i].xyz), fromLight);
+                float outerCos = uLightSpotParams[i].x;
+                attenuation *= smoothstep(outerCos, min(1.0, outerCos + 0.12), spotCos);
+            }
+        }
+        float diffuse = max(dot(n, lightDir), 0.0);
+        vec3 radiance = uLightColorIntensity[i].rgb *
+                        uLightColorIntensity[i].a * attenuation * 0.35;
+        lighting += radiance * diffuse;
+        if (diffuse > 0.0) {
+            vec3 halfDir = normalize(lightDir + viewDir);
+            specular += radiance * pow(max(dot(n, halfDir), 0.0), 28.0) * 0.16;
+        }
+    }
+    fragColor = vec4(uColor.rgb * lighting + specular, uColor.a);
 }
 )";
 
@@ -135,10 +222,13 @@ uniform highp mat4 uMvp;
 uniform highp mat4 uModel;
 
 varying highp vec3 vNormal;
+varying highp vec3 vWorldPos;
 
 void main() {
+    highp vec4 world = uModel * vec4(aPos, 1.0);
     gl_Position = uMvp * vec4(aPos, 1.0);
     vNormal = mat3(uModel) * aNormal;
+    vWorldPos = world.xyz / max(world.w, 0.00001);
 }
 )";
 
@@ -146,10 +236,18 @@ const char* kEsFragmentShader = R"(#version 100
 precision highp float;
 
 uniform vec4 uColor;
-uniform vec3 uLightDir;
 uniform float uUnlit;
+uniform vec3 uAmbientColor;
+uniform float uAmbientIntensity;
+uniform vec3 uViewPos;
+uniform int uLightCount;
+uniform vec4 uLightPositionType[4];
+uniform vec4 uLightDirectionRange[4];
+uniform vec4 uLightColorIntensity[4];
+uniform vec4 uLightSpotParams[4];
 
 varying vec3 vNormal;
+varying vec3 vWorldPos;
 
 void main() {
     if (uUnlit > 0.5) {
@@ -157,15 +255,42 @@ void main() {
         return;
     }
 
-    float d = max(
-        dot(normalize(vNormal), normalize(uLightDir)),
-        0.0
-    );
-
-    gl_FragColor = vec4(
-        uColor.rgb * (0.35 + 0.65 * d),
-        uColor.a
-    );
+    vec3 n = normalize(vNormal);
+    vec3 viewDir = normalize(uViewPos - vWorldPos);
+    vec3 lighting = uAmbientColor * uAmbientIntensity;
+    vec3 specular = vec3(0.0);
+    for (int i = 0; i < 4; ++i) {
+        if (i >= uLightCount) continue;
+        float type = uLightPositionType[i].w;
+        vec3 lightDir;
+        float attenuation = 1.0;
+        if (type < 0.5) {
+            lightDir = normalize(-uLightDirectionRange[i].xyz);
+        } else {
+            vec3 toLight = uLightPositionType[i].xyz - vWorldPos;
+            float distanceToLight = length(toLight);
+            lightDir = toLight / max(distanceToLight, 0.0001);
+            float range = max(uLightDirectionRange[i].w, 0.001);
+            float normalizedDistance = distanceToLight / range;
+            attenuation = 1.0 / (1.0 + 4.0 * normalizedDistance * normalizedDistance);
+            attenuation *= 1.0 - smoothstep(0.85, 1.0, normalizedDistance);
+            if (type > 1.5) {
+                vec3 fromLight = normalize(vWorldPos - uLightPositionType[i].xyz);
+                float spotCos = dot(normalize(uLightDirectionRange[i].xyz), fromLight);
+                float outerCos = uLightSpotParams[i].x;
+                attenuation *= smoothstep(outerCos, min(1.0, outerCos + 0.12), spotCos);
+            }
+        }
+        float diffuse = max(dot(n, lightDir), 0.0);
+        vec3 radiance = uLightColorIntensity[i].rgb *
+                        uLightColorIntensity[i].a * attenuation * 0.35;
+        lighting += radiance * diffuse;
+        if (diffuse > 0.0) {
+            vec3 halfDir = normalize(lightDir + viewDir);
+            specular += radiance * pow(max(dot(n, halfDir), 0.0), 28.0) * 0.16;
+        }
+    }
+    gl_FragColor = vec4(uColor.rgb * lighting + specular, uColor.a);
 }
 )";
 
@@ -357,6 +482,7 @@ PrevizViewport::~PrevizViewport() {
     m_grid = {};
     m_placeholder = {};
     m_cameraGizmo = {};
+    m_lightGizmo = {};
     m_program.reset();
     m_postProgram.reset();
     m_postQuad.reset();
@@ -387,6 +513,11 @@ void PrevizViewport::setWireframeEnabled(bool enabled) {
 
 void PrevizViewport::setSelectedModel(int index) {
     m_selectedModel = index;
+    update();
+}
+
+void PrevizViewport::setSelectedLight(int index) {
+    m_selectedLight = index;
     update();
 }
 
@@ -511,6 +642,7 @@ void PrevizViewport::initializeGL() {
     buildGrid();
     buildPlaceholderCube();
     buildCameraGizmo();
+    buildLightGizmo();
 }
 
 void PrevizViewport::buildGrid() {
@@ -558,6 +690,34 @@ void PrevizViewport::buildCameraGizmo() {
     m_cameraGizmo.vbo->allocate(lines.data(), static_cast<int>(lines.size() * sizeof(float)));
     m_cameraGizmo.vbo->release();
     m_cameraGizmo.color = kGizmoColor;
+}
+
+void PrevizViewport::buildLightGizmo() {
+    std::vector<float> lines;
+    const auto addLine = [&lines](QVector3D a, QVector3D b) {
+        lines.insert(lines.end(),
+                     {a.x(), a.y(), a.z(), 0, 1, 0,
+                      b.x(), b.y(), b.z(), 0, 1, 0});
+    };
+    const float r = 0.22f;
+    addLine({-r, 0, 0}, {r, 0, 0});
+    addLine({0, -r, 0}, {0, r, 0});
+    addLine({0, 0, -r}, {0, 0, r});
+    addLine({0, 0, 0}, {0, 0, -1.3f});
+    addLine({0, 0, -1.3f}, {-0.18f, 0, -1.0f});
+    addLine({0, 0, -1.3f}, {0.18f, 0, -1.0f});
+    addLine({0, 0, -1.3f}, {0, -0.18f, -1.0f});
+    addLine({0, 0, -1.3f}, {0, 0.18f, -1.0f});
+
+    m_lightGizmo.lineVertexCount = static_cast<int>(lines.size() / 6);
+    m_lightGizmo.vbo =
+        std::make_unique<QOpenGLBuffer>(QOpenGLBuffer::VertexBuffer);
+    m_lightGizmo.vbo->create();
+    m_lightGizmo.vbo->bind();
+    m_lightGizmo.vbo->allocate(
+        lines.data(), static_cast<int>(lines.size() * sizeof(float)));
+    m_lightGizmo.vbo->release();
+    m_lightGizmo.color = QVector4D(1.0f, 0.88f, 0.2f, 1.0f);
 }
 
 void PrevizViewport::buildPlaceholderCube() {
@@ -819,18 +979,26 @@ void PrevizViewport::drawHumanoid(
     const core::PrevizModel& model,
     const QMatrix4x4& modelMatrix,
     const QMatrix4x4& viewProj,
-    bool highlight) {
+    bool highlight,
+    const QVector4D* colorOverride) {
     const core::PrevizHumanoidPose pose = model.poseAt(m_frame);
     const core::PrevizHumanoidBody body = model.humanoidBody;
     const bool boxy = model.filePath == ":humanoid_box";
 
-    const QVector4D skinColor(0.78f, 0.62f, 0.48f, 1.0f);
-    const QVector4D chestColor(0.38f, 0.50f, 0.74f, 1.0f);
-    const QVector4D bellyColor(0.32f, 0.44f, 0.66f, 1.0f);
-    const QVector4D waistColor(0.24f, 0.35f, 0.54f, 1.0f);
-    const QVector4D limbColor(0.46f, 0.56f, 0.74f, 1.0f);
-    const QVector4D jointColor(0.24f, 0.28f, 0.36f, 1.0f);
-    const QVector4D footColor(0.18f, 0.18f, 0.20f, 1.0f);
+    const QVector4D skinColor =
+        colorOverride ? *colorOverride : QVector4D(0.78f, 0.62f, 0.48f, 1.0f);
+    const QVector4D chestColor =
+        colorOverride ? *colorOverride : QVector4D(0.38f, 0.50f, 0.74f, 1.0f);
+    const QVector4D bellyColor =
+        colorOverride ? *colorOverride : QVector4D(0.32f, 0.44f, 0.66f, 1.0f);
+    const QVector4D waistColor =
+        colorOverride ? *colorOverride : QVector4D(0.24f, 0.35f, 0.54f, 1.0f);
+    const QVector4D limbColor =
+        colorOverride ? *colorOverride : QVector4D(0.46f, 0.56f, 0.74f, 1.0f);
+    const QVector4D jointColor =
+        colorOverride ? *colorOverride : QVector4D(0.24f, 0.28f, 0.36f, 1.0f);
+    const QVector4D footColor =
+        colorOverride ? *colorOverride : QVector4D(0.18f, 0.18f, 0.20f, 1.0f);
 
     const auto ratio = [](float value, float minValue = 0.2f, float maxValue = 3.0f) {
         return std::clamp(value, minValue, maxValue);
@@ -1264,16 +1432,169 @@ void PrevizViewport::paintGL() {
     renderSceneWithLens(currentProjection() * currentView(), vp[2], vp[3], currentLensDistortion());
 }
 
+void PrevizViewport::uploadLightingUniforms() {
+    if (!m_program) return;
+    const core::Vec3 ambient =
+        m_scene ? m_scene->ambientColor : core::Vec3{0.78f, 0.84f, 1.0f};
+    const float ambientIntensity =
+        m_scene ? std::clamp(m_scene->ambientIntensity, 0.0f, 2.0f) : 0.24f;
+    m_program->setUniformValue("uAmbientColor", toVector(ambient));
+    m_program->setUniformValue("uAmbientIntensity", ambientIntensity);
+
+    bool invertible = false;
+    const QMatrix4x4 inverseView = currentView().inverted(&invertible);
+    const QVector3D viewPosition =
+        invertible ? inverseView.map(QVector3D(0, 0, 0)) : QVector3D(0, 2, 5);
+    m_program->setUniformValue("uViewPos", viewPosition);
+
+    std::vector<core::PrevizLightState> lights;
+    if (m_scene) {
+        for (const core::PrevizLight& light : m_scene->lights) {
+            const core::PrevizLightState state = light.stateAt(m_frame);
+            if (!state.enabled) continue;
+            lights.push_back(state);
+            if (lights.size() == 4) break;
+        }
+    }
+    m_program->setUniformValue("uLightCount", static_cast<int>(lights.size()));
+    for (int index = 0; index < 4; ++index) {
+        const core::PrevizLightState state =
+            index < static_cast<int>(lights.size()) ? lights[static_cast<size_t>(index)]
+                                                    : core::PrevizLightState{};
+        const QByteArray positionName =
+            QStringLiteral("uLightPositionType[%1]").arg(index).toLatin1();
+        const QByteArray directionName =
+            QStringLiteral("uLightDirectionRange[%1]").arg(index).toLatin1();
+        const QByteArray colorName =
+            QStringLiteral("uLightColorIntensity[%1]").arg(index).toLatin1();
+        const QByteArray spotName =
+            QStringLiteral("uLightSpotParams[%1]").arg(index).toLatin1();
+        m_program->setUniformValue(
+            positionName.constData(),
+            QVector4D(state.position.x, state.position.y, state.position.z,
+                      static_cast<float>(state.type)));
+        const QVector3D direction = normalizedOr(state.direction);
+        m_program->setUniformValue(
+            directionName.constData(),
+            QVector4D(direction, std::max(0.1f, state.rangeMeters)));
+        m_program->setUniformValue(
+            colorName.constData(),
+            QVector4D(std::clamp(state.color.x, 0.0f, 1.0f),
+                      std::clamp(state.color.y, 0.0f, 1.0f),
+                      std::clamp(state.color.z, 0.0f, 1.0f),
+                      std::clamp(state.intensity, 0.0f, 20.0f)));
+        const float outerCos =
+            std::cos(std::clamp(state.coneAngleDeg, 2.0f, 175.0f) *
+                     0.5f * 3.14159265f / 180.0f);
+        m_program->setUniformValue(spotName.constData(),
+                                   QVector4D(outerCos, 0, 0, 0));
+    }
+}
+
+bool PrevizViewport::drawSceneModel(const core::PrevizModel& model,
+                                    const QMatrix4x4& matrix,
+                                    const QMatrix4x4& viewProj, bool highlight,
+                                    const QVector4D* colorOverride) {
+    if (isHumanoidModelPath(model.filePath)) {
+        drawHumanoid(model, matrix, viewProj, highlight, colorOverride);
+        return true;
+    } else {
+        return drawMesh(model.filePath, matrix, viewProj,
+                        colorOverride != nullptr, highlight, colorOverride);
+    }
+}
+
+void PrevizViewport::renderGroundShadows(const QMatrix4x4& viewProj) {
+    if (!m_scene || m_scene->models.empty()) return;
+
+    const core::PrevizLightState* shadowLight = nullptr;
+    core::PrevizLightState selectedState;
+    float strongest = -1.0f;
+    for (const core::PrevizLight& light : m_scene->lights) {
+        const core::PrevizLightState state = light.stateAt(m_frame);
+        if (!state.enabled || !state.castsShadow || state.shadowOpacity <= 0.0f) {
+            continue;
+        }
+        if (state.intensity > strongest) {
+            strongest = state.intensity;
+            selectedState = state;
+            shadowLight = &selectedState;
+        }
+    }
+    if (!shadowLight) return;
+
+    QVector3D baseDirection;
+    if (shadowLight->type == core::PrevizLightType::Point) {
+        baseDirection =
+            QVector3D(-shadowLight->position.x, -shadowLight->position.y,
+                      -shadowLight->position.z)
+                .normalized();
+    } else {
+        baseDirection = normalizedOr(shadowLight->direction);
+    }
+    if (baseDirection.y() >= -0.04f) return;
+
+    const float softness =
+        std::clamp(shadowLight->shadowSoftness, 0.0f, 1.0f);
+    const int passes = 1 + static_cast<int>(std::lround(softness * 4.0f));
+    const float requestedOpacity =
+        std::clamp(shadowLight->shadowOpacity, 0.0f, 0.9f);
+    const float passOpacity =
+        1.0f - std::pow(1.0f - requestedOpacity, 1.0f / passes);
+    const QVector4D shadowColor(0.015f, 0.02f, 0.035f, passOpacity);
+
+    const bool wireframe = m_wireframeEnabled;
+    m_wireframeEnabled = false;
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+
+    for (int pass = 0; pass < passes; ++pass) {
+        const float centered =
+            passes == 1 ? 0.0f
+                        : (static_cast<float>(pass) / (passes - 1) - 0.5f);
+        QVector3D direction =
+            baseDirection +
+            QVector3D(centered * softness * 0.16f, 0.0f,
+                      std::sin(static_cast<float>(pass) * 2.39996f) *
+                          softness * 0.08f);
+        direction.normalize();
+        if (direction.y() >= -0.04f) continue;
+
+        QMatrix4x4 projection;
+        projection.setRow(
+            0, QVector4D(1.0f, -direction.x() / direction.y(), 0.0f, 0.0f));
+        projection.setRow(1, QVector4D(0.0f, 0.0f, 0.0f, 0.003f));
+        projection.setRow(
+            2, QVector4D(0.0f, -direction.z() / direction.y(), 1.0f, 0.0f));
+        projection.setRow(3, QVector4D(0.0f, 0.0f, 0.0f, 1.0f));
+
+        for (size_t index = 0; index < m_scene->models.size(); ++index) {
+            const core::PrevizModel& model = m_scene->models[index];
+            if (model.isGroup()) continue;
+            drawSceneModel(model,
+                           projection *
+                               previz::worldMatrix(*m_scene, index, m_frame),
+                           viewProj, false, &shadowColor);
+        }
+    }
+
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    m_wireframeEnabled = wireframe;
+}
+
 void PrevizViewport::renderScene(const QMatrix4x4& viewProj) {
     if (!m_program ||
         !m_program->isLinked() ||
         !m_program->bind()) {
         return;
     }
-    m_program->setUniformValue("uLightDir", QVector3D(0.4f, 1.0f, 0.6f));
+    uploadLightingUniforms();
 
     // 床グリッド
     drawPrimitive(m_grid, QMatrix4x4(), viewProj, /*unlit=*/true);
+    renderGroundShadows(viewProj);
 
     // モデル群(未配置なら目安キューブ)
     bool drewAny = false;
@@ -1287,13 +1608,7 @@ void PrevizViewport::renderScene(const QMatrix4x4& viewProj) {
                 (static_cast<int>(mi) == m_selectedModel ||
                  m_scene->isDescendantOf(mi, static_cast<size_t>(m_selectedModel)));
 
-            if (isHumanoidModelPath(model.filePath)) {
-                drawHumanoid(model, m, viewProj, highlight);
-                drewAny = true;
-                continue;
-            }
-
-            if (drawMesh(model.filePath, m, viewProj, /*unlit=*/false, highlight)) drewAny = true;
+            if (drawSceneModel(model, m, viewProj, highlight)) drewAny = true;
         }
     }
     if (!drewAny) {
@@ -1305,6 +1620,25 @@ void PrevizViewport::renderScene(const QMatrix4x4& viewProj) {
     if (!usingCameraView() && m_scene) {
         const core::PrevizCameraState camState = m_scene->camera.stateAt(m_frame);
         drawPrimitive(m_cameraGizmo, cameraWorldMatrix(camState), viewProj, /*unlit=*/true);
+        for (size_t index = 0; index < m_scene->lights.size(); ++index) {
+            const core::PrevizLightState state =
+                m_scene->lights[index].stateAt(m_frame);
+            QMatrix4x4 lightMatrix;
+            lightMatrix.translate(state.position.x, state.position.y,
+                                  state.position.z);
+            const QVector3D direction = normalizedOr(state.direction);
+            lightMatrix.rotate(QQuaternion::rotationTo(QVector3D(0, 0, -1),
+                                                       direction));
+            const QVector4D color =
+                state.enabled
+                    ? QVector4D(std::clamp(state.color.x, 0.0f, 1.0f),
+                                std::clamp(state.color.y, 0.0f, 1.0f),
+                                std::clamp(state.color.z, 0.0f, 1.0f), 1.0f)
+                    : QVector4D(0.35f, 0.35f, 0.35f, 1.0f);
+            drawPrimitive(m_lightGizmo, lightMatrix, viewProj,
+                          /*unlit=*/true,
+                          static_cast<int>(index) == m_selectedLight, &color);
+        }
     }
 
     m_program->release();

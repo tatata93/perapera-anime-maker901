@@ -50,6 +50,7 @@ public:
 
     // ドラッグ移動の対象モデル(モデル一覧の選択。-1=なし)
     void setSelectedModel(int index);
+    void setSelectedLight(int index);
 
     // 下敷き用: 表示モードに関係なくカメラ視点で描画した画像を返す。
     // aspectWOverH: 出力画像(・投影)の幅/高さ比(既定16:9)。呼び出し側のキャンバスの
@@ -107,10 +108,16 @@ private:
     bool drawMesh(const std::string& filePath, const QMatrix4x4& model, const QMatrix4x4& viewProj, bool unlit,
                   bool highlight = false, const QVector4D* colorOverride = nullptr);
     void drawHumanoid(const core::PrevizModel& model, const QMatrix4x4& modelMatrix, const QMatrix4x4& viewProj,
-                      bool highlight);
+                      bool highlight, const QVector4D* colorOverride = nullptr);
     void buildGrid();
     void buildPlaceholderCube();
     void buildCameraGizmo();
+    void buildLightGizmo();
+    void uploadLightingUniforms();
+    void renderGroundShadows(const QMatrix4x4& viewProj);
+    bool drawSceneModel(const core::PrevizModel& model, const QMatrix4x4& matrix,
+                        const QMatrix4x4& viewProj, bool highlight,
+                        const QVector4D* colorOverride = nullptr);
 
     QMatrix4x4 cameraView(const core::PrevizCameraState& state) const;
     QMatrix4x4 cameraProjection(size_t frame, float aspect) const;
@@ -132,6 +139,7 @@ private:
     bool m_forceCameraView = false;
     bool m_wireframeEnabled = false;
     int m_selectedModel = -1;
+    int m_selectedLight = -1;
 
     std::unique_ptr<QOpenGLShaderProgram> m_program;
     // レンズ歪曲ポスト処理: シーンを一度描くオフスクリーンFBOと、放射状ワープする全画面シェーダ
@@ -142,6 +150,7 @@ private:
     GpuPrimitive m_grid;         // 床グリッド(ライン)
     GpuPrimitive m_placeholder;  // モデル未配置時の目安キューブ
     GpuPrimitive m_cameraGizmo;  // 本番カメラのギズモ(錐台ライン)
+    GpuPrimitive m_lightGizmo;   // 光源の位置・向きギズモ
 
     // 作業視点(オービットカメラ)
     float m_orbitYaw = 35.0f;

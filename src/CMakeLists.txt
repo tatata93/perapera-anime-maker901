@@ -63,6 +63,8 @@ set(PERAPERA_APP_SOURCES
     previz/StlLoader.h
     previz/PrevizSheetPanel.cpp
     previz/PrevizSheetPanel.h
+    previz/PrevizLightingWindow.cpp
+    previz/PrevizLightingWindow.h
     previz/PrevizViewport.cpp
     previz/PrevizViewport.h
     previz/PrevizTransformUtils.h

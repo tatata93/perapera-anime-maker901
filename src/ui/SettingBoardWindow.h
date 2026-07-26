@@ -42,6 +42,9 @@ public:
     FloatingCanvasWindow* debugFloatingCanvasWindow() const;
     bool debugExportSelectedBoardImage(const QString& path);
     bool debugDuplicateSelectedBoard();
+    void debugSetSelectedBoardFinal(bool final);
+    bool debugEditingLocked() const;
+    bool debugLockedBoardRejectsStroke();
 
 signals:
     void edited();  // ボードの追加/削除/名前変更/手描き/画像貼付が行われた
@@ -88,6 +91,8 @@ private:
     void renamePaintLayer(int layerIndex);
     void setPaintLayerRole(int layerIndex, core::LayerRole role);
     void syncSelectedBoardComposite();
+    bool selectedBoardIsFinal() const;
+    void updateEditingLockUi();
 
     // 色指定(色指定書)操作: 選択中ボードのcolorSpecsを編集する
     void addColorSpec();       // 色を選び、名前を付けて追加する
@@ -111,6 +116,7 @@ private:
     QPushButton* m_lassoButton = nullptr;
     QPushButton* m_eyedropperButton = nullptr;
     QPushButton* m_finalStampButton = nullptr;
+    QLabel* m_editLockLabel = nullptr;
     QSlider* m_radiusSlider = nullptr;
     QLabel* m_radiusValueLabel = nullptr;
     QPushButton* m_colorButton = nullptr;

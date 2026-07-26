@@ -56,6 +56,11 @@ constexpr int kRadiusMax = 40;
 
 // 色指定リストのスウォッチアイコンの一辺サイズ
 constexpr int kColorSpecSwatchSize = 16;
+constexpr const char* kFinalEditControlProperty = "settingBoardFinalEditControl";
+
+void markAsFinalEditControl(QObject* object) {
+    if (object) object->setProperty(kFinalEditControlProperty, true);
+}
 
 // 画像を、既存の絵の上にsrc-over合成する。画像はboardサイズ内へアスペクト維持で
 // 最大フィットするよう拡大縮小し、中央配置する。合成はboardの透明度も考慮した
@@ -332,6 +337,8 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
 
     m_undoAction = new QAction(tr("元に戻す"), this);
     m_redoAction = new QAction(tr("やり直す"), this);
+    markAsFinalEditControl(m_undoAction);
+    markAsFinalEditControl(m_redoAction);
     perapera::ui::bindShortcut(m_undoAction, perapera::ui::ShortcutScope::SettingBoard, QStringLiteral("undo"));
     perapera::ui::bindShortcut(m_redoAction, perapera::ui::ShortcutScope::SettingBoard, QStringLiteral("redo"));
     connect(m_undoAction, &QAction::triggered, this, &SettingBoardWindow::undo);
@@ -356,6 +363,8 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     auto* duplicateButton = new QPushButton(tr("複製"), leftContainer);
     auto* removeButton = new QPushButton(tr("削除"), leftContainer);
     auto* renameButton = new QPushButton(tr("名前変更"), leftContainer);
+    markAsFinalEditControl(removeButton);
+    markAsFinalEditControl(renameButton);
     buttonLayout->addWidget(addButton);
     buttonLayout->addWidget(duplicateButton);
     buttonLayout->addWidget(removeButton);
@@ -393,6 +402,10 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     m_lassoButton->setAutoExclusive(true);
     m_eyedropperButton->setAutoExclusive(true);
     m_penButton->setChecked(true);
+    for (QPushButton* button :
+         {m_penButton, m_eraserButton, m_fillButton, m_lassoButton, m_eyedropperButton}) {
+        markAsFinalEditControl(button);
+    }
     toolRow->addWidget(m_penButton);
     toolRow->addWidget(m_eraserButton);
     toolRow->addWidget(m_fillButton);
@@ -404,6 +417,7 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     m_radiusSlider->setRange(kRadiusMin, kRadiusMax);
     m_radiusSlider->setValue(static_cast<int>(m_penRadius));
     m_radiusSlider->setFixedWidth(120);
+    markAsFinalEditControl(m_radiusSlider);
     toolRow->addWidget(m_radiusSlider);
     m_radiusValueLabel = new QLabel(QString::number(static_cast<int>(m_penRadius)), rightContainer);
     m_radiusValueLabel->setFixedWidth(24);
@@ -412,19 +426,27 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     m_colorButton = new QPushButton(tr("色"), rightContainer);
     m_colorButton->setFixedWidth(48);
     m_colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+    markAsFinalEditControl(m_colorButton);
     toolRow->addWidget(m_colorButton);
     auto* textButton = new QPushButton(tr("文字"), rightContainer);
+    markAsFinalEditControl(textButton);
     toolRow->addWidget(textButton);
 
     auto* pasteButton = new QPushButton(tr("画像を貼る"), rightContainer);
+    markAsFinalEditControl(pasteButton);
     toolRow->addWidget(pasteButton);
     auto* resizeButton = new QPushButton(tr("サイズ"), rightContainer);
+    markAsFinalEditControl(resizeButton);
     toolRow->addWidget(resizeButton);
     auto* exportButton = new QPushButton(tr("PNG書き出し"), rightContainer);
     toolRow->addWidget(exportButton);
     m_finalStampButton = new QPushButton(tr("決定稿"), rightContainer);
     m_finalStampButton->setCheckable(true);
     toolRow->addWidget(m_finalStampButton);
+    m_editLockLabel = new QLabel(tr("決定稿・編集ロック中"), rightContainer);
+    m_editLockLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: #9b1c1c;"));
+    m_editLockLabel->hide();
+    toolRow->addWidget(m_editLockLabel);
     auto* detachButton = new QPushButton(tr("別窓"), rightContainer);
     toolRow->addWidget(detachButton);
 
@@ -450,6 +472,10 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     auto* renameColorSpecButton = new QPushButton(tr("名前変更"), rightContainer);
     auto* changeColorSpecButton = new QPushButton(tr("色変更"), rightContainer);
     auto* removeColorSpecButton = new QPushButton(tr("削除"), rightContainer);
+    for (QPushButton* button :
+         {addColorSpecButton, renameColorSpecButton, changeColorSpecButton, removeColorSpecButton}) {
+        markAsFinalEditControl(button);
+    }
     colorSpecButtonLayout->addWidget(addColorSpecButton);
     colorSpecButtonLayout->addWidget(renameColorSpecButton);
     colorSpecButtonLayout->addWidget(changeColorSpecButton);
@@ -514,6 +540,7 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
 
     const auto addToolShortcut = [this](const QString& id, GLCanvas::Tool tool) {
         auto* action = new QAction(this);
+        markAsFinalEditControl(action);
         perapera::ui::bindShortcut(action, perapera::ui::ShortcutScope::SettingBoard, id);
         connect(action, &QAction::triggered, this,
                 [this, tool] { setActiveTool(static_cast<int>(tool)); });
@@ -525,6 +552,7 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     addToolShortcut(QStringLiteral("lassoFill"), GLCanvas::Tool::LassoFill);
     addToolShortcut(QStringLiteral("eyedropper"), GLCanvas::Tool::Eyedropper);
     auto* textShortcut = new QAction(this);
+    markAsFinalEditControl(textShortcut);
     perapera::ui::bindShortcut(textShortcut, perapera::ui::ShortcutScope::SettingBoard,
                                QStringLiteral("text"));
     connect(textShortcut, &QAction::triggered, this, &SettingBoardWindow::editTextBoxes);
@@ -537,7 +565,7 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(removeColorSpecButton, &QPushButton::clicked, this, &SettingBoardWindow::removeColorSpec);
 
     connect(m_layerPanel, &LayerPanel::layerSelected, this, [this](int layerIndex) {
-        if (!m_project) return;
+        if (!m_project || selectedBoardIsFinal()) return;
         auto& boards = m_project->settingBoards();
         if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
         core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
@@ -547,7 +575,7 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
         emit edited();
     });
     connect(m_layerPanel, &LayerPanel::visibilityChanged, this, [this](int layerIndex, bool visible) {
-        if (!m_project) return;
+        if (!m_project || selectedBoardIsFinal()) return;
         auto& boards = m_project->settingBoards();
         if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
         core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
@@ -558,7 +586,7 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
         emit edited();
     });
     connect(m_layerPanel, &LayerPanel::opacityChanged, this, [this](int layerIndex, int opacityPercent) {
-        if (!m_project) return;
+        if (!m_project || selectedBoardIsFinal()) return;
         auto& boards = m_project->settingBoards();
         if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
         core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
@@ -597,8 +625,9 @@ void SettingBoardWindow::setProject(core::Project* project) {
 }
 
 void SettingBoardWindow::updateUndoActions() {
-    if (m_undoAction) m_undoAction->setEnabled(m_commands.canUndo());
-    if (m_redoAction) m_redoAction->setEnabled(m_commands.canRedo());
+    const bool editable = !selectedBoardIsFinal();
+    if (m_undoAction) m_undoAction->setEnabled(editable && m_commands.canUndo());
+    if (m_redoAction) m_redoAction->setEnabled(editable && m_commands.canRedo());
 }
 
 void SettingBoardWindow::clearUndoHistory() {
@@ -607,6 +636,7 @@ void SettingBoardWindow::clearUndoHistory() {
 }
 
 void SettingBoardWindow::undo() {
+    if (selectedBoardIsFinal()) return;
     core::Command* command = m_commands.undo();
     if (!command) return;
     if (auto* stroke = dynamic_cast<core::StrokeCommand*>(command)) {
@@ -620,6 +650,7 @@ void SettingBoardWindow::undo() {
 }
 
 void SettingBoardWindow::redo() {
+    if (selectedBoardIsFinal()) return;
     core::Command* command = m_commands.redo();
     if (!command) return;
     if (auto* stroke = dynamic_cast<core::StrokeCommand*>(command)) {
@@ -735,6 +766,7 @@ void SettingBoardWindow::removeBoard() {
     auto& boards = m_project->settingBoards();
     const int row = selectedBoardIndex();
     if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
+    if (boards[static_cast<size_t>(row)].finalStamp) return;
 
     boards.erase(boards.begin() + row);
     m_selectedRow = std::min(row, static_cast<int>(boards.size()) - 1);
@@ -748,6 +780,7 @@ void SettingBoardWindow::renameBoard() {
     const int row = selectedBoardIndex();
     if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
     core::SettingBoard& board = boards[static_cast<size_t>(row)];
+    if (board.finalStamp) return;
 
     bool ok = false;
     const QString newName = QInputDialog::getText(this, tr("ボード名を変更"), tr("名前:"), QLineEdit::Normal,
@@ -763,12 +796,13 @@ void SettingBoardWindow::renameBoard() {
 }
 
 void SettingBoardWindow::onStrokeFinished() {
+    if (selectedBoardIsFinal()) return;
     syncSelectedBoardComposite();
     emit edited();
 }
 
 void SettingBoardWindow::pasteImage() {
-    if (!m_project) return;
+    if (!m_project || selectedBoardIsFinal()) return;
     auto& boards = m_project->settingBoards();
     const int row = selectedBoardIndex();
     if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
@@ -800,7 +834,7 @@ void SettingBoardWindow::pasteImage() {
 }
 
 void SettingBoardWindow::resizeBoardCanvas() {
-    if (!m_project) return;
+    if (!m_project || selectedBoardIsFinal()) return;
     auto& boards = m_project->settingBoards();
     const int row = selectedBoardIndex();
     if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
@@ -827,7 +861,7 @@ void SettingBoardWindow::resizeBoardCanvas() {
 }
 
 void SettingBoardWindow::editTextBoxes() {
-    if (!m_project) return;
+    if (!m_project || selectedBoardIsFinal()) return;
     auto& boards = m_project->settingBoards();
     const int row = selectedBoardIndex();
     if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
@@ -924,8 +958,21 @@ void SettingBoardWindow::toggleFinalStamp(bool checked) {
     const int row = selectedBoardIndex();
     if (row < 0 || static_cast<size_t>(row) >= boards.size()) return;
 
-    boards[static_cast<size_t>(row)].finalStamp = checked;
+    core::SettingBoard& board = boards[static_cast<size_t>(row)];
+    if (!checked && board.finalStamp) {
+        const auto answer = QMessageBox::question(
+            this, tr("決定稿を解除"),
+            tr("決定稿を解除すると、この設定ボードを再び編集できるようになります。解除しますか？"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            const QSignalBlocker blocker(m_finalStampButton);
+            m_finalStampButton->setChecked(true);
+            return;
+        }
+    }
+    board.finalStamp = checked;
     updateFinalStampOverlay();
+    updateEditingLockUi();
     emit edited();
 }
 
@@ -1011,6 +1058,77 @@ bool SettingBoardWindow::debugExportSelectedBoardImage(const QString& path) {
     return !image.isNull() && image.save(pngPath);
 }
 
+void SettingBoardWindow::debugSetSelectedBoardFinal(bool final) {
+    if (!m_project || m_selectedRow < 0) return;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
+    boards[static_cast<size_t>(m_selectedRow)].finalStamp = final;
+    if (m_finalStampButton) {
+        const QSignalBlocker blocker(m_finalStampButton);
+        m_finalStampButton->setChecked(final);
+    }
+    updateFinalStampOverlay();
+    updateEditingLockUi();
+}
+
+bool SettingBoardWindow::debugEditingLocked() const {
+    return selectedBoardIsFinal();
+}
+
+bool SettingBoardWindow::debugLockedBoardRejectsStroke() {
+    if (!m_project || !m_canvas || m_selectedRow < 0 || !selectedBoardIsFinal()) {
+        return false;
+    }
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return false;
+    core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
+    if (board.layers.empty() || board.activeLayer >= board.layers.size()) return false;
+    const core::Bitmap before = board.layers[board.activeLayer].bitmap;
+    m_canvas->debugSimulateStroke();
+    const core::Bitmap& after = board.layers[board.activeLayer].bitmap;
+    if (before.width() != after.width() || before.height() != after.height()) return false;
+    for (int y = 0; y < before.height(); ++y) {
+        for (int x = 0; x < before.width(); ++x) {
+            const core::Bitmap::Pixel a = before.pixel(x, y);
+            const core::Bitmap::Pixel b = after.pixel(x, y);
+            if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool SettingBoardWindow::selectedBoardIsFinal() const {
+    if (!m_project || m_selectedRow < 0) return false;
+    const auto& boards = m_project->settingBoards();
+    return static_cast<size_t>(m_selectedRow) < boards.size() &&
+           boards[static_cast<size_t>(m_selectedRow)].finalStamp;
+}
+
+void SettingBoardWindow::updateEditingLockUi() {
+    const bool hasBoard =
+        m_project && m_selectedRow >= 0 &&
+        static_cast<size_t>(m_selectedRow) < m_project->settingBoards().size();
+    const bool locked = hasBoard && selectedBoardIsFinal();
+    const bool editable = hasBoard && !locked;
+
+    for (QWidget* widget : findChildren<QWidget*>()) {
+        if (widget->property(kFinalEditControlProperty).toBool()) {
+            widget->setEnabled(editable);
+        }
+    }
+    for (QAction* action : findChildren<QAction*>()) {
+        if (action->property(kFinalEditControlProperty).toBool()) {
+            action->setEnabled(editable);
+        }
+    }
+    if (m_canvas) m_canvas->setInputEnabled(editable);
+    if (m_layerPanel) m_layerPanel->setEnabled(editable);
+    if (m_editLockLabel) m_editLockLabel->setVisible(locked);
+    updateUndoActions();
+}
+
 void SettingBoardWindow::bindCanvasToSelectedBoard() {
     if (!m_project) {
         m_canvas->setBitmap(nullptr);
@@ -1022,6 +1140,7 @@ void SettingBoardWindow::bindCanvasToSelectedBoard() {
             m_finalStampButton->setEnabled(false);
         }
         refreshLayerPanel();
+        updateEditingLockUi();
         return;
     }
     auto& boards = m_project->settingBoards();
@@ -1035,6 +1154,7 @@ void SettingBoardWindow::bindCanvasToSelectedBoard() {
             m_finalStampButton->setEnabled(false);
         }
         refreshLayerPanel();
+        updateEditingLockUi();
         return;
     }
 
@@ -1063,6 +1183,7 @@ void SettingBoardWindow::bindCanvasToSelectedBoard() {
     }
     updateFinalStampOverlay();
     refreshLayerPanel();
+    updateEditingLockUi();
 }
 
 void SettingBoardWindow::onRadiusSliderChanged(int value) {
@@ -1151,6 +1272,7 @@ QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
     for (QPushButton* button : {penButton, eraserButton, fillButton, lassoButton, eyedropperButton}) {
         button->setCheckable(true);
         button->setAutoExclusive(true);
+        markAsFinalEditControl(button);
         row->addWidget(button);
     }
     if (m_eyedropperButton && m_eyedropperButton->isChecked()) {
@@ -1171,6 +1293,7 @@ QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
     radiusSlider->setValue(m_eraserButton && m_eraserButton->isChecked() ? static_cast<int>(m_eraserRadius)
                                                                          : static_cast<int>(m_penRadius));
     radiusSlider->setFixedWidth(140);
+    markAsFinalEditControl(radiusSlider);
     row->addWidget(radiusSlider);
     auto* radiusLabel = new QLabel(QString::number(radiusSlider->value()), panel);
     radiusLabel->setFixedWidth(28);
@@ -1179,8 +1302,10 @@ QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
     auto* colorButton = new QPushButton(tr("色"), panel);
     colorButton->setFixedWidth(48);
     colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
+    markAsFinalEditControl(colorButton);
     row->addWidget(colorButton);
     auto* textButton = new QPushButton(tr("文字"), panel);
+    markAsFinalEditControl(textButton);
     row->addWidget(textButton);
     row->addStretch();
     layout->addLayout(row);
@@ -1231,6 +1356,7 @@ QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
 }
 
 void SettingBoardWindow::setActiveTool(int tool) {
+    if (selectedBoardIsFinal()) return;
     const auto canvasTool = static_cast<GLCanvas::Tool>(tool);
     if (m_penButton && m_eraserButton && m_fillButton && m_lassoButton && m_eyedropperButton) {
         const QSignalBlocker b1(m_penButton);
@@ -1290,7 +1416,7 @@ void SettingBoardWindow::refreshLayerPanel() {
 }
 
 void SettingBoardWindow::addPaintLayer(core::LayerRole role) {
-    if (!m_project || m_selectedRow < 0) return;
+    if (!m_project || m_selectedRow < 0 || selectedBoardIsFinal()) return;
     clearUndoHistory();
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
@@ -1313,7 +1439,7 @@ void SettingBoardWindow::addPaintLayer(core::LayerRole role) {
 }
 
 void SettingBoardWindow::duplicatePaintLayer(int layerIndex) {
-    if (!m_project || m_selectedRow < 0) return;
+    if (!m_project || m_selectedRow < 0 || selectedBoardIsFinal()) return;
     clearUndoHistory();
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
@@ -1330,7 +1456,7 @@ void SettingBoardWindow::duplicatePaintLayer(int layerIndex) {
 }
 
 void SettingBoardWindow::removePaintLayer() {
-    if (!m_project || m_selectedRow < 0) return;
+    if (!m_project || m_selectedRow < 0 || selectedBoardIsFinal()) return;
     clearUndoHistory();
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
@@ -1345,7 +1471,7 @@ void SettingBoardWindow::removePaintLayer() {
 }
 
 void SettingBoardWindow::movePaintLayer(int delta) {
-    if (!m_project || m_selectedRow < 0) return;
+    if (!m_project || m_selectedRow < 0 || selectedBoardIsFinal()) return;
     clearUndoHistory();
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
@@ -1361,7 +1487,7 @@ void SettingBoardWindow::movePaintLayer(int delta) {
 }
 
 void SettingBoardWindow::renamePaintLayer(int layerIndex) {
-    if (!m_project || m_selectedRow < 0) return;
+    if (!m_project || m_selectedRow < 0 || selectedBoardIsFinal()) return;
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
     core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
@@ -1378,7 +1504,7 @@ void SettingBoardWindow::renamePaintLayer(int layerIndex) {
 }
 
 void SettingBoardWindow::setPaintLayerRole(int layerIndex, core::LayerRole role) {
-    if (!m_project || m_selectedRow < 0) return;
+    if (!m_project || m_selectedRow < 0 || selectedBoardIsFinal()) return;
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
     core::SettingBoard& board = boards[static_cast<size_t>(m_selectedRow)];
@@ -1431,7 +1557,7 @@ void SettingBoardWindow::refreshColorSpecList() {
 
 // 色を選び、名前を付けて選択中ボードのcolorSpecsへ追加する
 void SettingBoardWindow::addColorSpec() {
-    if (!m_project) return;
+    if (!m_project || selectedBoardIsFinal()) return;
     auto& boards = m_project->settingBoards();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
 
@@ -1455,7 +1581,7 @@ void SettingBoardWindow::addColorSpec() {
 
 // 選択中の色指定の名前を変更する
 void SettingBoardWindow::renameColorSpec() {
-    if (!m_project) return;
+    if (!m_project || selectedBoardIsFinal()) return;
     auto& boards = m_project->settingBoards();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
     auto& specs = boards[static_cast<size_t>(m_selectedRow)].colorSpecs;
@@ -1476,7 +1602,7 @@ void SettingBoardWindow::renameColorSpec() {
 
 // 選択中の色指定の色を変更する
 void SettingBoardWindow::changeColorSpecColor() {
-    if (!m_project) return;
+    if (!m_project || selectedBoardIsFinal()) return;
     auto& boards = m_project->settingBoards();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
     auto& specs = boards[static_cast<size_t>(m_selectedRow)].colorSpecs;
@@ -1498,7 +1624,7 @@ void SettingBoardWindow::changeColorSpecColor() {
 
 // 選択中の色指定を削除する
 void SettingBoardWindow::removeColorSpec() {
-    if (!m_project) return;
+    if (!m_project || selectedBoardIsFinal()) return;
     auto& boards = m_project->settingBoards();
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) return;
     auto& specs = boards[static_cast<size_t>(m_selectedRow)].colorSpecs;

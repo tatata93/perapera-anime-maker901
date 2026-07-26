@@ -2366,7 +2366,14 @@ void MainWindow::setupMenus() {
     QAction* previzAction = previzMenu->addAction(tr("プリビズウィンドウ(&W)"));
     previzAction->setShortcut(QKeySequence(Qt::Key_F5));
     connect(previzAction, &QAction::triggered, this, &MainWindow::openPrevizWindow);
-    QAction* previzUnderlayAction = previzMenu->addAction(tr("プリビズを下敷きにする(&U)"));
+    QAction* previzLightingAction =
+        previzMenu->addAction(tr("照明設定(&L)..."));
+    connect(previzLightingAction, &QAction::triggered, this, [this] {
+        openPrevizWindow();
+        m_previzWindow->showLightingWindow();
+    });
+    QAction* previzUnderlayAction =
+        previzMenu->addAction(tr("プリビズ（照明・影込み）を下敷きにする(&U)"));
     previzUnderlayAction->setCheckable(true);
     previzUnderlayAction->setShortcut(QKeySequence(Qt::Key_F6));
     connect(previzUnderlayAction, &QAction::toggled, this, [this](bool checked) { setPrevizUnderlay(checked); });

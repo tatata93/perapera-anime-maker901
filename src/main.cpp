@@ -22,6 +22,7 @@
 #include "core/EffectProcessor.h"
 #include "core/Multiplane.h"
 #include "previz/PrevizViewport.h"
+#include "previz/PrevizLightingWindow.h"
 #include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/EditWindow.h"
@@ -960,6 +961,57 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    const int previzLightingUiIndex = args.indexOf("--previz-lighting-ui-test");
+    if (previzLightingUiIndex >= 0 &&
+        previzLightingUiIndex + 1 < args.size()) {
+        const QString outputPath = args.at(previzLightingUiIndex + 1);
+        const int dotIndex = outputPath.lastIndexOf('.');
+        const QString previzOutputPath =
+            dotIndex >= 0 ? outputPath.left(dotIndex) + "_previz" +
+                                outputPath.mid(dotIndex)
+                          : outputPath + "_previz";
+        QTimer::singleShot(500, &window,
+                           [&window, outputPath, previzOutputPath] {
+            window.debugOpenPreviz();
+            window.previzWindow()->debugApplyLightingPreset(0);
+            QTimer::singleShot(
+                400, &window, [&window, outputPath, previzOutputPath] {
+                PrevizLightingWindow* lighting =
+                    window.previzWindow()->lightingWindow();
+                if (!lighting) {
+                    QApplication::exit(1);
+                    return;
+                }
+                lighting->grab().save(outputPath);
+                window.previzWindow()->grab().save(previzOutputPath);
+                QApplication::exit(0);
+            });
+        });
+    }
+
+    const int previzLightingRenderIndex =
+        args.indexOf("--previz-lighting-render-test");
+    if (previzLightingRenderIndex >= 0 &&
+        previzLightingRenderIndex + 1 < args.size()) {
+        const QString outputPath = args.at(previzLightingRenderIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugOpenPreviz();
+            window.previzWindow()->debugAddPrimitive(QStringLiteral(":sphere"));
+            window.previzWindow()->debugSetSelectedScale(0.75, 0.75, 0.75);
+            window.previzWindow()->debugSetSelectedPosition(0.9, 0.0, 0.0);
+            window.previzWindow()->debugAddPrimitive(QStringLiteral(":cylinder"));
+            window.previzWindow()->debugSetSelectedScale(0.7, 1.25, 0.7);
+            window.previzWindow()->debugSetSelectedPosition(-0.9, 0.0, 0.0);
+            window.previzWindow()->debugApplyLightingPreset(0);
+            QTimer::singleShot(400, &window, [&window, outputPath] {
+                const QImage image =
+                    window.previzWindow()->viewport()->renderCameraViewImage();
+                QApplication::exit(!image.isNull() && image.save(outputPath) ? 0
+                                                                            : 1);
+            });
+        });
+    }
+
     // 実寸高さ・カメラ距離の入力がシーンへ反映され、撮影寸法表示も更新されることを確認する。
     if (args.contains(QStringLiteral("--previz-physical-test"))) {
         QTimer::singleShot(500, &window, [&window] {
@@ -1265,6 +1317,25 @@ int main(int argc, char* argv[]) {
                 const bool ok = window.settingBoardWindow() &&
                                 window.settingBoardWindow()->debugExportSelectedBoardImage(outputPath);
                 QApplication::exit(ok ? 0 : 1);
+            });
+        });
+    }
+
+    const int settingBoardLockIndex =
+        args.indexOf("--settingboard-lock-test");
+    if (settingBoardLockIndex >= 0 &&
+        settingBoardLockIndex + 1 < args.size()) {
+        const QString outputPath = args.at(settingBoardLockIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetupSettingBoardDemo();
+            window.debugOpenSettingBoard();
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                SettingBoardWindow* boardWindow = window.settingBoardWindow();
+                boardWindow->debugSetSelectedBoardFinal(true);
+                const bool locked = boardWindow->debugEditingLocked() &&
+                                    boardWindow->debugLockedBoardRejectsStroke();
+                boardWindow->grab().save(outputPath);
+                QApplication::exit(locked ? 0 : 1);
             });
         });
     }
