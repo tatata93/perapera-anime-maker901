@@ -970,21 +970,36 @@ int main(int argc, char* argv[]) {
             dotIndex >= 0 ? outputPath.left(dotIndex) + "_previz" +
                                 outputPath.mid(dotIndex)
                           : outputPath + "_previz";
+        const QString detailsOutputPath =
+            dotIndex >= 0 ? outputPath.left(dotIndex) + "_details" +
+                                outputPath.mid(dotIndex)
+                          : outputPath + "_details";
         QTimer::singleShot(500, &window,
-                           [&window, outputPath, previzOutputPath] {
+                           [&window, outputPath, previzOutputPath,
+                            detailsOutputPath] {
             window.debugOpenPreviz();
             window.previzWindow()->debugApplyLightingPreset(0);
             QTimer::singleShot(
-                400, &window, [&window, outputPath, previzOutputPath] {
+                400, &window,
+                [&window, outputPath, previzOutputPath, detailsOutputPath] {
                 PrevizLightingWindow* lighting =
                     window.previzWindow()->lightingWindow();
                 if (!lighting) {
                     QApplication::exit(1);
                     return;
                 }
+                if (!lighting->debugExerciseSimpleControls()) {
+                    QApplication::exit(1);
+                    return;
+                }
                 lighting->grab().save(outputPath);
                 window.previzWindow()->grab().save(previzOutputPath);
-                QApplication::exit(0);
+                lighting->debugSetDetailsVisible(true);
+                QTimer::singleShot(150, &window,
+                                   [lighting, detailsOutputPath] {
+                    lighting->grab().save(detailsOutputPath);
+                    QApplication::exit(0);
+                });
             });
         });
     }
@@ -1009,6 +1024,18 @@ int main(int argc, char* argv[]) {
                 QApplication::exit(!image.isNull() && image.save(outputPath) ? 0
                                                                             : 1);
             });
+        });
+    }
+
+    const int mainLayerClearIndex =
+        args.indexOf("--main-layer-clear-test");
+    if (mainLayerClearIndex >= 0 &&
+        mainLayerClearIndex + 1 < args.size()) {
+        const QString outputPath = args.at(mainLayerClearIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            const bool ok = window.debugClearCurrentLayerUndoRedo();
+            window.grab().save(outputPath);
+            QApplication::exit(ok ? 0 : 1);
         });
     }
 

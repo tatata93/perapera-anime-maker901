@@ -1251,7 +1251,7 @@ void MainWindow::setupCutBar() {
     QToolBar* cutBar = addToolBar(tr("カット"));
     cutBar->setObjectName(QStringLiteral("CutControls"));
     cutBar->setMovable(true);
-    cutBar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    cutBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 
     auto* cutLabel = new QLabel(tr(" カット: "), this);
     cutBar->addWidget(cutLabel);
@@ -1263,18 +1263,13 @@ void MainWindow::setupCutBar() {
     });
     cutBar->addWidget(m_cutCombo);
 
-    QAction* addAction =
-        cutBar->addAction(style()->standardIcon(QStyle::SP_FileIcon), tr("カット追加"));
-    addAction->setToolTip(tr("カット追加"));
-    connect(addAction, &QAction::triggered, this, &MainWindow::addCut);
-    QAction* removeAction =
-        cutBar->addAction(style()->standardIcon(QStyle::SP_TrashIcon), tr("カット削除"));
-    removeAction->setToolTip(tr("カット削除"));
-    connect(removeAction, &QAction::triggered, this, &MainWindow::removeActiveCut);
-    QAction* renameAction = cutBar->addAction(
-        style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("カット名変更"));
-    renameAction->setToolTip(tr("カット名変更"));
-    connect(renameAction, &QAction::triggered, this, &MainWindow::renameActiveCut);
+    cutBar->addSeparator();
+    QAction* clearLayerAction = cutBar->addAction(
+        style()->standardIcon(QStyle::SP_TrashIcon), tr("現在レイヤーをクリア"));
+    clearLayerAction->setToolTip(
+        tr("現在のセル・作画・選択レイヤーだけを透明にします（元に戻せます）"));
+    connect(clearLayerAction, &QAction::triggered, this,
+            &MainWindow::clearCurrentLayerFrame);
 
     updateCutBar();
 }
@@ -1312,6 +1307,40 @@ void MainWindow::setActiveCut(int index) {
     updateXsheetPanel();
     updateUnderlay();
     updateCutBar();
+}
+
+void MainWindow::clearCurrentLayerFrame() {
+    if (m_playing) return;
+
+    core::Cel& cel = activeCel();
+    core::Layer& layer = activeLayer();
+    const int drawing = cel.exposure(m_currentFrame);
+    if (drawing < 0 || static_cast<size_t>(drawing) >= layer.frameCount()) {
+        statusBar()->showMessage(tr("このコマにはクリアできる作画がありません"), 3000);
+        return;
+    }
+
+    core::Bitmap& bitmap = layer.frame(static_cast<size_t>(drawing)).bitmap();
+    if (bitmap.isEmpty()) return;
+    const core::DirtyRect region{0, 0, bitmap.width(), bitmap.height()};
+    std::vector<uint8_t> before = core::StrokeCommand::copyRegion(bitmap, region);
+    if (std::all_of(before.begin(), before.end(),
+                    [](uint8_t value) { return value == 0; })) {
+        statusBar()->showMessage(tr("現在のレイヤーはすでに空です"), 3000);
+        return;
+    }
+
+    std::vector<uint8_t> after(before.size(), 0);
+    m_commands.push(std::make_unique<core::StrokeCommand>(
+        &bitmap, region, std::move(before), std::move(after)));
+    m_canvas->notifyBitmapRegionChanged(&bitmap, region);
+    updateOnionSkin();
+    updateLightTable();
+    updateUndoActions();
+    markCutDirty(activeCut());
+    updateWindowTitle();
+    statusBar()->showMessage(
+        tr("現在のレイヤーをクリアしました（元に戻せます）"), 3000);
 }
 
 void MainWindow::addCut() {
@@ -3111,6 +3140,28 @@ void MainWindow::debugSetupLayerDemo() {
     m_canvas->clearTextureCache();
     updateCanvasLayers();
     updateLayerPanel();
+}
+
+bool MainWindow::debugClearCurrentLayerUndoRedo() {
+    debugSetupLayerDemo();
+    core::Bitmap& bitmap = activeLayer().frame(0).bitmap();
+    const core::DirtyRect region{0, 0, bitmap.width(), bitmap.height()};
+    const std::vector<uint8_t> original =
+        core::StrokeCommand::copyRegion(bitmap, region);
+
+    clearCurrentLayerFrame();
+    const bool cleared =
+        std::all_of(bitmap.data(), bitmap.data() + bitmap.byteSize(),
+                    [](uint8_t value) { return value == 0; });
+    undo();
+    const std::vector<uint8_t> restored =
+        core::StrokeCommand::copyRegion(bitmap, region);
+    const bool undoRestored = restored == original;
+    redo();
+    const bool redoCleared =
+        std::all_of(bitmap.data(), bitmap.data() + bitmap.byteSize(),
+                    [](uint8_t value) { return value == 0; });
+    return cleared && undoRestored && redoCleared;
 }
 
 void MainWindow::debugSetupTapDemo() {

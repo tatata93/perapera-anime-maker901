@@ -11,6 +11,8 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QSlider;
+class QToolButton;
 class QWidget;
 
 class PrevizLightingWindow : public QDialog {
@@ -25,6 +27,8 @@ public:
     void selectLight(int index);
     int selectedLightIndex() const;
     void applyPreset(int presetIndex);
+    void debugSetDetailsVisible(bool visible) { setDetailsVisible(visible); }
+    bool debugExerciseSimpleControls();
 
 signals:
     void lightingEdited();
@@ -42,8 +46,18 @@ private:
     void duplicateLight();
     void removeLight();
     void aimAtTarget();
+    void aimPrimaryAtTarget();
+    void applySimpleDirection(int directionIndex);
+    void applySimpleIntensity(int percent);
+    void applySimpleAmbient(int percent);
+    void applySimpleShadowEnabled(bool enabled);
+    void applySimpleShadowOpacity(int percent);
+    void chooseSimpleLightColor();
+    void refreshSimpleControls();
+    void setDetailsVisible(bool visible);
     void updateControlAvailability();
     void emitLightingEdited();
+    core::PrevizLight* primaryLight();
 
     core::PrevizScene* m_scene = nullptr;
     size_t m_frame = 0;
@@ -55,6 +69,19 @@ private:
     QComboBox* m_presetCombo = nullptr;
     QDoubleSpinBox* m_ambientIntensity = nullptr;
     QPushButton* m_ambientColorButton = nullptr;
+    QComboBox* m_simpleDirectionCombo = nullptr;
+    QSlider* m_simpleIntensitySlider = nullptr;
+    QLabel* m_simpleIntensityLabel = nullptr;
+    QSlider* m_simpleAmbientSlider = nullptr;
+    QLabel* m_simpleAmbientLabel = nullptr;
+    QPushButton* m_simpleColorButton = nullptr;
+    QCheckBox* m_simpleShadowCheck = nullptr;
+    QSlider* m_simpleShadowSlider = nullptr;
+    QLabel* m_simpleShadowLabel = nullptr;
+    QPushButton* m_simpleAimButton = nullptr;
+    QWidget* m_simplePanel = nullptr;
+    QToolButton* m_detailsButton = nullptr;
+    QWidget* m_advancedPanel = nullptr;
 
     QWidget* m_editor = nullptr;
     QLineEdit* m_nameEdit = nullptr;

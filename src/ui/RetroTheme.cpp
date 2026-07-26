@@ -8,12 +8,15 @@
 #include <QFont>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QIcon>
+#include <QImage>
 #include <QLabel>
 #include <QMainWindow>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPainter>
 #include <QPointer>
+#include <QProxyStyle>
 #include <QScreen>
 #include <QSizePolicy>
 #include <QStyle>
@@ -22,6 +25,7 @@
 #include <QVariant>
 #include <QWidget>
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace perapera::ui {
@@ -92,14 +96,81 @@ void restoreStandardAppearance(QApplication& app) {
     app.setStyleSheet(appearance.styleSheet);
 }
 
+QPixmap pixelatedRetroPixmap(const QPixmap& source) {
+    if (source.isNull()) return source;
+
+    QImage image = source.toImage().convertToFormat(QImage::Format_ARGB32);
+    const QSize originalSize = image.size();
+    const QSize lowSize(std::max(1, (image.width() + 1) / 2),
+                        std::max(1, (image.height() + 1) / 2));
+    image = image.scaled(lowSize, Qt::IgnoreAspectRatio, Qt::FastTransformation)
+                .scaled(originalSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+
+    const bool xp = qApp && qApp->property(kVariantProperty).toInt() != 95;
+    const int quantum = xp ? 32 : 64;
+    for (int y = 0; y < image.height(); ++y) {
+        QRgb* row = reinterpret_cast<QRgb*>(image.scanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            const QRgb pixel = row[x];
+            const int alpha = qAlpha(pixel) < 96 ? 0 : 255;
+            const auto quantize = [quantum](int channel) {
+                return std::min(255, ((channel + quantum / 2) / quantum) * quantum);
+            };
+            row[x] = qRgba(quantize(qRed(pixel)), quantize(qGreen(pixel)),
+                           quantize(qBlue(pixel)), alpha);
+        }
+    }
+
+    QPixmap result = QPixmap::fromImage(image);
+    result.setDevicePixelRatio(source.devicePixelRatio());
+    return result;
+}
+
+class RetroIconStyle final : public QProxyStyle {
+public:
+    explicit RetroIconStyle(QStyle* baseStyle) : QProxyStyle(baseStyle) {
+        setObjectName(QStringLiteral("PeraperaRetroIconStyle"));
+    }
+
+    QPixmap standardPixmap(StandardPixmap standardPixmap,
+                           const QStyleOption* option,
+                           const QWidget* widget) const override {
+        return pixelatedRetroPixmap(
+            QProxyStyle::standardPixmap(standardPixmap, option, widget));
+    }
+
+    QIcon standardIcon(StandardPixmap standardIcon,
+                       const QStyleOption* option,
+                       const QWidget* widget) const override {
+        const QIcon source =
+            QProxyStyle::standardIcon(standardIcon, option, widget);
+        if (source.isNull()) return source;
+
+        QIcon result;
+        constexpr std::array<int, 6> sizes{12, 16, 20, 24, 32, 48};
+        constexpr std::array<QIcon::Mode, 4> modes{
+            QIcon::Normal, QIcon::Disabled, QIcon::Active, QIcon::Selected};
+        constexpr std::array<QIcon::State, 2> states{QIcon::Off, QIcon::On};
+        for (int size : sizes) {
+            for (QIcon::Mode mode : modes) {
+                for (QIcon::State state : states) {
+                    result.addPixmap(
+                        pixelatedRetroPixmap(
+                            source.pixmap(QSize(size, size), mode, state)),
+                        mode, state);
+                }
+            }
+        }
+        return result;
+    }
+};
+
 void applyWindowsBaseStyle(QApplication& app) {
-    if (auto* style = QStyleFactory::create(QStringLiteral("Windows"))) {
-        app.setStyle(style);
-        return;
+    QStyle* baseStyle = QStyleFactory::create(QStringLiteral("Windows"));
+    if (!baseStyle) {
+        baseStyle = QStyleFactory::create(QStringLiteral("Fusion"));
     }
-    if (auto* style = QStyleFactory::create(QStringLiteral("Fusion"))) {
-        app.setStyle(style);
-    }
+    app.setStyle(new RetroIconStyle(baseStyle));
 }
 
 QPalette windows95Palette() {
@@ -458,7 +529,7 @@ public:
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, isXp());
+        painter.setRenderHint(QPainter::Antialiasing, false);
         const QRect r = rect().adjusted(1, 1, -1, -1);
         const bool down = isDown();
         const bool hover = underMouse();

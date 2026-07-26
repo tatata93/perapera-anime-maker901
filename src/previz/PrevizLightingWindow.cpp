@@ -16,9 +16,12 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSizePolicy>
+#include <QSlider>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace {
@@ -95,42 +98,106 @@ QWidget* makeTripleRow(QWidget* parent, QDoubleSpinBox*& x, QDoubleSpinBox*& y,
     return row;
 }
 
+QWidget* makeSliderRow(QWidget* parent, QSlider*& slider, QLabel*& valueLabel,
+                       int minimum = 0, int maximum = 100) {
+    auto* row = new QWidget(parent);
+    auto* layout = new QHBoxLayout(row);
+    layout->setContentsMargins(0, 0, 0, 0);
+    slider = new QSlider(Qt::Horizontal, row);
+    slider->setRange(minimum, maximum);
+    slider->setPageStep(10);
+    valueLabel = new QLabel(row);
+    valueLabel->setMinimumWidth(42);
+    valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    layout->addWidget(slider, 1);
+    layout->addWidget(valueLabel);
+    return row;
+}
+
+float simpleIntensityReference(core::PrevizLightType type) {
+    return type == core::PrevizLightType::Directional ? 1.5f : 4.0f;
+}
+
 }  // namespace
 
 PrevizLightingWindow::PrevizLightingWindow(QWidget* parent)
     : QDialog(parent, Qt::Window) {
     setWindowTitle(tr("プリビズ照明"));
-    resize(760, 590);
-    setMinimumSize(660, 480);
+    resize(540, 320);
+    setMinimumSize(500, 300);
 
     auto* root = new QVBoxLayout(this);
 
-    auto* presetRow = new QHBoxLayout();
-    presetRow->addWidget(new QLabel(tr("照明セット:"), this));
-    m_presetCombo = new QComboBox(this);
-    m_presetCombo->addItems({tr("3点照明"), tr("昼・屋外"), tr("夜・室内")});
-    presetRow->addWidget(m_presetCombo, 1);
-    auto* applyPresetButton = new QPushButton(tr("適用"), this);
-    presetRow->addWidget(applyPresetButton);
-    root->addLayout(presetRow);
+    auto* simpleGroup = new QGroupBox(tr("かんたん照明"), this);
+    m_simplePanel = simpleGroup;
+    auto* simpleForm = new QFormLayout(simpleGroup);
+    m_presetCombo = new QComboBox(simpleGroup);
+    m_presetCombo->addItems(
+        {tr("標準（3点照明）"), tr("昼・屋外"), tr("夜・室内")});
+    simpleForm->addRow(tr("雰囲気"), m_presetCombo);
 
-    auto* ambientGroup = new QGroupBox(tr("全体の明るさ"), this);
+    m_simpleDirectionCombo = new QComboBox(simpleGroup);
+    m_simpleDirectionCombo->addItems(
+        {tr("左前から"), tr("正面から"), tr("右前から"), tr("後ろから"),
+         tr("真上から")});
+    simpleForm->addRow(tr("光の向き"), m_simpleDirectionCombo);
+
+    simpleForm->addRow(
+        tr("光の強さ"),
+        makeSliderRow(simpleGroup, m_simpleIntensitySlider,
+                      m_simpleIntensityLabel, 0, 200));
+    simpleForm->addRow(
+        tr("暗い部分"),
+        makeSliderRow(simpleGroup, m_simpleAmbientSlider, m_simpleAmbientLabel));
+
+    m_simpleColorButton = new QPushButton(tr("光の色を選ぶ"), simpleGroup);
+    simpleForm->addRow(tr("光の色"), m_simpleColorButton);
+
+    auto* simpleShadowRow = new QWidget(simpleGroup);
+    auto* simpleShadowLayout = new QHBoxLayout(simpleShadowRow);
+    simpleShadowLayout->setContentsMargins(0, 0, 0, 0);
+    m_simpleShadowCheck = new QCheckBox(tr("つける"), simpleShadowRow);
+    simpleShadowLayout->addWidget(m_simpleShadowCheck);
+    simpleShadowLayout->addWidget(
+        makeSliderRow(simpleShadowRow, m_simpleShadowSlider,
+                      m_simpleShadowLabel),
+        1);
+    simpleForm->addRow(tr("影"), simpleShadowRow);
+
+    m_simpleAimButton =
+        new QPushButton(tr("選択モデルを照らす"), simpleGroup);
+    simpleForm->addRow(QString(), m_simpleAimButton);
+    simpleGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    root->addWidget(simpleGroup);
+
+    m_detailsButton = new QToolButton(this);
+    m_detailsButton->setText(tr("詳細設定..."));
+    m_detailsButton->setCheckable(true);
+    m_detailsButton->setArrowType(Qt::RightArrow);
+    m_detailsButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    root->addWidget(m_detailsButton, 0, Qt::AlignLeft);
+
+    m_advancedPanel = new QWidget(this);
+    auto* advancedLayout = new QVBoxLayout(m_advancedPanel);
+    advancedLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto* ambientGroup = new QGroupBox(tr("環境光の詳細"), m_advancedPanel);
     auto* ambientLayout = new QHBoxLayout(ambientGroup);
     m_ambientIntensity = makeSpin(ambientGroup, 0.0, 2.0, 0.05);
     m_ambientColorButton = new QPushButton(tr("環境色"), ambientGroup);
     ambientLayout->addWidget(new QLabel(tr("明るさ"), ambientGroup));
     ambientLayout->addWidget(m_ambientIntensity, 1);
     ambientLayout->addWidget(m_ambientColorButton);
-    root->addWidget(ambientGroup);
+    advancedLayout->addWidget(ambientGroup);
 
     auto* body = new QHBoxLayout();
     auto* listColumn = new QVBoxLayout();
-    m_list = new QListWidget(this);
+    m_list = new QListWidget(m_advancedPanel);
     m_list->setMinimumWidth(190);
     listColumn->addWidget(m_list, 1);
 
     auto* listButtons = new QHBoxLayout();
-    auto* addButton = new QToolButton(this);
+    auto* addButton = new QToolButton(m_advancedPanel);
     addButton->setText(tr("追加"));
     addButton->setPopupMode(QToolButton::InstantPopup);
     auto* addMenu = new QMenu(addButton);
@@ -138,15 +205,15 @@ PrevizLightingWindow::PrevizLightingWindow(QWidget* parent)
     QAction* addPoint = addMenu->addAction(tr("点光源"));
     QAction* addSpot = addMenu->addAction(tr("スポット光"));
     addButton->setMenu(addMenu);
-    auto* duplicateButton = new QPushButton(tr("複製"), this);
-    auto* removeButton = new QPushButton(tr("削除"), this);
+    auto* duplicateButton = new QPushButton(tr("複製"), m_advancedPanel);
+    auto* removeButton = new QPushButton(tr("削除"), m_advancedPanel);
     listButtons->addWidget(addButton);
     listButtons->addWidget(duplicateButton);
     listButtons->addWidget(removeButton);
     listColumn->addLayout(listButtons);
     body->addLayout(listColumn);
 
-    m_editor = new QGroupBox(tr("選択した光"), this);
+    m_editor = new QGroupBox(tr("選択した光"), m_advancedPanel);
     auto* form = new QFormLayout(m_editor);
     m_nameEdit = new QLineEdit(m_editor);
     form->addRow(tr("名前"), m_nameEdit);
@@ -191,15 +258,34 @@ PrevizLightingWindow::PrevizLightingWindow(QWidget* parent)
     keyLayout->addWidget(m_keyStatusLabel, 1);
     form->addRow(tr("アニメーション"), keyRow);
     body->addWidget(m_editor, 1);
-    root->addLayout(body, 1);
+    advancedLayout->addLayout(body, 1);
+    root->addWidget(m_advancedPanel, 1);
+    m_advancedPanel->hide();
 
     auto* closeButtons = new QDialogButtonBox(QDialogButtonBox::Close, this);
     closeButtons->button(QDialogButtonBox::Close)->setText(tr("閉じる"));
     connect(closeButtons, &QDialogButtonBox::rejected, this, &QDialog::hide);
     root->addWidget(closeButtons);
 
-    connect(applyPresetButton, &QPushButton::clicked, this,
-            [this] { applyPreset(m_presetCombo->currentIndex()); });
+    connect(m_presetCombo, QOverload<int>::of(&QComboBox::activated), this,
+            &PrevizLightingWindow::applyPreset);
+    connect(m_simpleDirectionCombo,
+            QOverload<int>::of(&QComboBox::activated), this,
+            &PrevizLightingWindow::applySimpleDirection);
+    connect(m_simpleIntensitySlider, &QSlider::valueChanged, this,
+            &PrevizLightingWindow::applySimpleIntensity);
+    connect(m_simpleAmbientSlider, &QSlider::valueChanged, this,
+            &PrevizLightingWindow::applySimpleAmbient);
+    connect(m_simpleColorButton, &QPushButton::clicked, this,
+            &PrevizLightingWindow::chooseSimpleLightColor);
+    connect(m_simpleShadowCheck, &QCheckBox::toggled, this,
+            &PrevizLightingWindow::applySimpleShadowEnabled);
+    connect(m_simpleShadowSlider, &QSlider::valueChanged, this,
+            &PrevizLightingWindow::applySimpleShadowOpacity);
+    connect(m_simpleAimButton, &QPushButton::clicked, this,
+            &PrevizLightingWindow::aimPrimaryAtTarget);
+    connect(m_detailsButton, &QToolButton::toggled, this,
+            &PrevizLightingWindow::setDetailsVisible);
     connect(addDirectional, &QAction::triggered, this,
             [this] { addLight(core::PrevizLightType::Directional); });
     connect(addPoint, &QAction::triggered, this,
@@ -301,11 +387,15 @@ void PrevizLightingWindow::setAimTarget(core::Vec3 target, bool available) {
     m_aimTarget = target;
     m_hasAimTarget = available;
     if (m_aimButton) m_aimButton->setEnabled(available && selectedLight());
+    if (m_simpleAimButton) {
+        m_simpleAimButton->setEnabled(available && primaryLight());
+    }
 }
 
 void PrevizLightingWindow::selectLight(int index) {
     if (!m_list) return;
     m_list->setCurrentRow(index);
+    setDetailsVisible(true);
 }
 
 int PrevizLightingWindow::selectedLightIndex() const {
@@ -317,6 +407,11 @@ core::PrevizLight* PrevizLightingWindow::selectedLight() {
     const int row = selectedLightIndex();
     if (row < 0 || row >= static_cast<int>(m_scene->lights.size())) return nullptr;
     return &m_scene->lights[static_cast<size_t>(row)];
+}
+
+core::PrevizLight* PrevizLightingWindow::primaryLight() {
+    if (!m_scene || m_scene->lights.empty()) return nullptr;
+    return &m_scene->lights.front();
 }
 
 core::PrevizLightState& PrevizLightingWindow::editableState(
@@ -378,8 +473,192 @@ void PrevizLightingWindow::refreshControls() {
                                          : tr("基本値／補間値"));
         m_removeKeyButton->setEnabled(hasKey);
     }
+    refreshSimpleControls();
     m_updating = false;
     updateControlAvailability();
+}
+
+void PrevizLightingWindow::refreshSimpleControls() {
+    core::PrevizLight* light = primaryLight();
+    const bool hasLight = light != nullptr;
+    for (QWidget* widget :
+         {static_cast<QWidget*>(m_simpleDirectionCombo),
+          static_cast<QWidget*>(m_simpleIntensitySlider),
+          static_cast<QWidget*>(m_simpleColorButton),
+          static_cast<QWidget*>(m_simpleShadowCheck)}) {
+        if (widget) widget->setEnabled(hasLight);
+    }
+    if (m_simpleAimButton) {
+        m_simpleAimButton->setEnabled(hasLight && m_hasAimTarget);
+    }
+    if (m_simpleAmbientSlider) {
+        const int ambientPercent =
+            m_scene ? std::clamp(static_cast<int>(
+                                     std::lround(m_scene->ambientIntensity * 200.0f)),
+                                 0, 100)
+                    : 0;
+        m_simpleAmbientSlider->setValue(ambientPercent);
+        m_simpleAmbientLabel->setText(tr("%1%").arg(ambientPercent));
+        m_simpleAmbientSlider->setEnabled(m_scene != nullptr);
+    }
+    if (!hasLight) {
+        if (m_simpleIntensityLabel) m_simpleIntensityLabel->setText(tr("--"));
+        if (m_simpleShadowLabel) m_simpleShadowLabel->setText(tr("--"));
+        if (m_simpleShadowSlider) m_simpleShadowSlider->setEnabled(false);
+        return;
+    }
+
+    const core::PrevizLightState state = light->stateAt(m_frame);
+    const float reference = simpleIntensityReference(state.type);
+    const int intensityPercent = std::clamp(
+        static_cast<int>(std::lround(state.intensity / reference * 100.0f)),
+        0, 200);
+    m_simpleIntensitySlider->setValue(intensityPercent);
+    m_simpleIntensityLabel->setText(tr("%1%").arg(intensityPercent));
+    setColorButton(m_simpleColorButton, state.color);
+
+    m_simpleShadowCheck->setChecked(state.castsShadow);
+    const int shadowPercent = std::clamp(
+        static_cast<int>(std::lround(state.shadowOpacity * 100.0f)), 0, 100);
+    m_simpleShadowSlider->setValue(shadowPercent);
+    m_simpleShadowLabel->setText(tr("%1%").arg(shadowPercent));
+    m_simpleShadowSlider->setEnabled(state.castsShadow);
+
+    constexpr std::array<core::Vec3, 5> sourceOffsets{{
+        {-4.0f, 4.0f, 5.0f},
+        {0.0f, 4.0f, 5.0f},
+        {4.0f, 4.0f, 5.0f},
+        {0.0f, 4.0f, -5.0f},
+        {0.0f, 7.0f, 0.1f},
+    }};
+    const core::Vec3 sourceDirection =
+        normalized({-state.direction.x, -state.direction.y, -state.direction.z});
+    int bestDirection = 0;
+    float bestDot = -2.0f;
+    for (int i = 0; i < static_cast<int>(sourceOffsets.size()); ++i) {
+        const core::Vec3 candidate = normalized(sourceOffsets[static_cast<size_t>(i)]);
+        const float dot = sourceDirection.x * candidate.x +
+                          sourceDirection.y * candidate.y +
+                          sourceDirection.z * candidate.z;
+        if (dot > bestDot) {
+            bestDot = dot;
+            bestDirection = i;
+        }
+    }
+    m_simpleDirectionCombo->setCurrentIndex(bestDirection);
+}
+
+void PrevizLightingWindow::applySimpleDirection(int directionIndex) {
+    if (m_updating) return;
+    core::PrevizLight* light = primaryLight();
+    if (!light) return;
+    constexpr std::array<core::Vec3, 5> sourceOffsets{{
+        {-4.0f, 4.0f, 5.0f},
+        {0.0f, 4.0f, 5.0f},
+        {4.0f, 4.0f, 5.0f},
+        {0.0f, 4.0f, -5.0f},
+        {0.0f, 7.0f, 0.1f},
+    }};
+    if (directionIndex < 0 ||
+        directionIndex >= static_cast<int>(sourceOffsets.size())) {
+        return;
+    }
+    const core::Vec3 target = m_hasAimTarget ? m_aimTarget : core::Vec3{0.0f, 1.0f, 0.0f};
+    const core::Vec3 offset = sourceOffsets[static_cast<size_t>(directionIndex)];
+    core::PrevizLightState& state = editableState(*light);
+    state.position = {target.x + offset.x, target.y + offset.y,
+                      target.z + offset.z};
+    state.direction = normalized(
+        {target.x - state.position.x, target.y - state.position.y,
+         target.z - state.position.z});
+    refreshControls();
+    emitLightingEdited();
+}
+
+void PrevizLightingWindow::applySimpleIntensity(int percent) {
+    if (m_updating) return;
+    core::PrevizLight* light = primaryLight();
+    if (!light) return;
+    core::PrevizLightState& state = editableState(*light);
+    state.intensity = simpleIntensityReference(state.type) *
+                      static_cast<float>(percent) / 100.0f;
+    refreshControls();
+    emitLightingEdited();
+}
+
+void PrevizLightingWindow::applySimpleAmbient(int percent) {
+    if (m_updating || !m_scene) return;
+    m_scene->ambientIntensity =
+        std::clamp(static_cast<float>(percent) / 200.0f, 0.0f, 0.5f);
+    refreshControls();
+    emitLightingEdited();
+}
+
+void PrevizLightingWindow::applySimpleShadowEnabled(bool enabled) {
+    if (m_updating) return;
+    core::PrevizLight* light = primaryLight();
+    if (!light) return;
+    editableState(*light).castsShadow = enabled;
+    refreshControls();
+    emitLightingEdited();
+}
+
+void PrevizLightingWindow::applySimpleShadowOpacity(int percent) {
+    if (m_updating) return;
+    core::PrevizLight* light = primaryLight();
+    if (!light) return;
+    editableState(*light).shadowOpacity =
+        std::clamp(static_cast<float>(percent) / 100.0f, 0.0f, 1.0f);
+    refreshControls();
+    emitLightingEdited();
+}
+
+bool PrevizLightingWindow::debugExerciseSimpleControls() {
+    if (!m_scene || !primaryLight()) return false;
+    applySimpleDirection(0);
+    applySimpleIntensity(80);
+    applySimpleAmbient(40);
+    applySimpleShadowEnabled(true);
+    applySimpleShadowOpacity(60);
+
+    const core::PrevizLightState state = primaryLight()->stateAt(m_frame);
+    const float expectedIntensity =
+        simpleIntensityReference(state.type) * 0.8f;
+    return std::abs(state.intensity - expectedIntensity) < 0.001f &&
+           std::abs(m_scene->ambientIntensity - 0.2f) < 0.001f &&
+           state.castsShadow &&
+           std::abs(state.shadowOpacity - 0.6f) < 0.001f &&
+           state.direction.x > 0.2f;
+}
+
+void PrevizLightingWindow::chooseSimpleLightColor() {
+    core::PrevizLight* light = primaryLight();
+    if (!light) return;
+    core::PrevizLightState& state = editableState(*light);
+    const QColor color =
+        QColorDialog::getColor(colorFromVec(state.color), this, tr("光の色"));
+    if (!color.isValid()) return;
+    state.color = vecFromColor(color);
+    refreshControls();
+    emitLightingEdited();
+}
+
+void PrevizLightingWindow::setDetailsVisible(bool visible) {
+    if (!m_advancedPanel || !m_detailsButton) return;
+    {
+        const QSignalBlocker blocker(m_detailsButton);
+        m_detailsButton->setChecked(visible);
+    }
+    if (m_simplePanel) m_simplePanel->setVisible(!visible);
+    m_advancedPanel->setVisible(visible);
+    m_detailsButton->setArrowType(visible ? Qt::DownArrow : Qt::RightArrow);
+    m_detailsButton->setText(visible ? tr("詳細設定を閉じる")
+                                     : tr("詳細設定..."));
+    if (visible) {
+        resize(std::max(width(), 760), std::max(height(), 700));
+    } else {
+        resize(std::min(width(), 560), 320);
+    }
 }
 
 void PrevizLightingWindow::applyControls() {
@@ -493,6 +772,20 @@ void PrevizLightingWindow::aimAtTarget() {
     applyControls();
 }
 
+void PrevizLightingWindow::aimPrimaryAtTarget() {
+    if (!m_hasAimTarget) return;
+    core::PrevizLight* light = primaryLight();
+    if (!light) return;
+    core::PrevizLightState& state = editableState(*light);
+    state.direction =
+        normalized({m_aimTarget.x - state.position.x,
+                    m_aimTarget.y - state.position.y,
+                    m_aimTarget.z - state.position.z},
+                   state.direction);
+    refreshControls();
+    emitLightingEdited();
+}
+
 void PrevizLightingWindow::updateControlAvailability() {
     const bool hasLight = selectedLight() != nullptr;
     const auto type = static_cast<core::PrevizLightType>(m_typeCombo->currentIndex());
@@ -507,6 +800,10 @@ void PrevizLightingWindow::updateControlAvailability() {
     const bool shadow = hasLight && m_shadowCheck->isChecked();
     m_shadowOpacitySpin->setEnabled(shadow);
     m_shadowSoftnessSpin->setEnabled(shadow);
+    if (m_simpleShadowSlider) {
+        m_simpleShadowSlider->setEnabled(primaryLight() &&
+                                         m_simpleShadowCheck->isChecked());
+    }
 }
 
 void PrevizLightingWindow::emitLightingEdited() {
@@ -562,6 +859,10 @@ void PrevizLightingWindow::applyPreset(int presetIndex) {
         rim.state.rangeMeters = 15.0f;
         rim.state.coneAngleDeg = 48.0f;
         m_scene->lights = {std::move(key), std::move(fill), std::move(rim)};
+    }
+    {
+        const QSignalBlocker blocker(m_presetCombo);
+        m_presetCombo->setCurrentIndex(std::clamp(presetIndex, 0, 2));
     }
     rebuildList();
     refreshControls();

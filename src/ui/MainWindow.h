@@ -85,6 +85,7 @@ public:
     // レイヤー確認用: レイヤー2枚(下=赤縦線/上=青横線)のデモを作る
     void debugSetupLayerDemo();
     void debugSetLayerVisible(int layerIndex, bool visible);
+    bool debugClearCurrentLayerUndoRedo();
     // タイムシート確認用: オニオンデモの後、尺6コマ・2コマ打ち(動画1,1,2,2,3,3)を設定する
     void debugSetupXsheetDemo();
     // タイムシートUI確認用: 2秒分・A/Bセルの割付を作る
@@ -299,6 +300,7 @@ private:
     void removeActiveLayer();
     void moveActiveLayer(int delta);
     void setLayerOpacity(int layerIndex, int opacityPercent);
+    void clearCurrentLayerFrame();
 
     // カラーパレットパネル操作
     void updatePalettePanel();
