@@ -102,9 +102,14 @@ public:
     // セル内の全レイヤー・全フレームの非空ビットマップを新サイズへ中央基準で移し替える
     // (はみ出す部分は切り捨て、余白は透明)。paperWidth/HeightもnewW/newHへ更新する
     void resizePaper(int newW, int newH);
+    // キャンバスに追従する通常セル用。作画を中央基準で移し替えた後も
+    // paperWidth/Height=0を保ち、以後のプロジェクト解像度変更にも追従させる
+    void resizeCanvasPaper(int newW, int newH);
     std::unique_ptr<Cel> clone(std::string name) const;
 
 private:
+    void resizeBitmaps(int newW, int newH);
+
     std::string m_name;
     std::vector<std::unique_ptr<Layer>> m_layers;
     std::vector<int> m_exposure;

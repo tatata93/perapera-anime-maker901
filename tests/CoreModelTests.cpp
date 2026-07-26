@@ -420,6 +420,79 @@ TEST_CASE("Cel::resizePaper moves non-empty bitmaps to the new size (centered)",
     }
 }
 
+TEST_CASE("Project canvas resize updates linked cels but preserves oversized paper", "[core][canvassize]") {
+    core::Project project("Resize");
+    project.setCanvasSize(16, 16);
+    core::Cut& cut = project.addScene("S").addCut("C");
+
+    core::Cel& linked = cut.addCel("A");
+    core::Bitmap linkedBitmap(16, 16);
+    linkedBitmap.fill({0, 0, 0, 0});
+    linkedBitmap.setPixel(4, 4, {255, 0, 0, 255});
+    linked.addLayer("L").addFrame().bitmap() = std::move(linkedBitmap);
+
+    core::Cel& oversized = cut.addCel("BG");
+    oversized.setPaperSize(32, 16);
+    core::Bitmap oversizedBitmap(32, 16);
+    oversizedBitmap.fill({0, 0, 0, 0});
+    oversizedBitmap.setPixel(4, 4, {0, 255, 0, 255});
+    oversized.addLayer("L").addFrame().bitmap() = std::move(oversizedBitmap);
+
+    core::Effect effect;
+    effect.mask = core::Bitmap(16, 16);
+    effect.mask.fill({0, 0, 0, 0});
+    effect.mask.setPixel(4, 4, {255, 255, 255, 255});
+    cut.effects().push_back(std::move(effect));
+
+    core::MultiplaneCelPlane plane;
+    plane.distanceMap = core::Bitmap(16, 16);
+    plane.distanceMap.fill({0, 0, 0, 0});
+    plane.distanceMap.setPixel(4, 4, {255, 0, 0, 255});
+    cut.multiplane().planes.push_back(std::move(plane));
+
+    core::MultiplaneBacklight backlight;
+    backlight.mask = core::Bitmap(16, 16);
+    backlight.mask.fill({0, 0, 0, 0});
+    backlight.mask.setPixel(4, 4, {255, 255, 255, 255});
+    cut.multiplane().backlights.push_back(std::move(backlight));
+
+    project.resizeCanvas(24, 20, true);
+
+    REQUIRE(project.canvasWidth() == 24);
+    REQUIRE(project.canvasHeight() == 20);
+    REQUIRE(linked.paperWidth() == 0);
+    REQUIRE(linked.paperHeight() == 0);
+    REQUIRE(linked.layer(0).frame(0).bitmap().width() == 24);
+    REQUIRE(linked.layer(0).frame(0).bitmap().height() == 20);
+    REQUIRE(linked.layer(0).frame(0).bitmap().pixel(8, 6).r == 255);
+    REQUIRE(oversized.paperWidth() == 32);
+    REQUIRE(oversized.paperHeight() == 16);
+    REQUIRE(oversized.layer(0).frame(0).bitmap().width() == 32);
+    REQUIRE(oversized.layer(0).frame(0).bitmap().height() == 16);
+    REQUIRE(cut.effects().front().mask.width() == 24);
+    REQUIRE(cut.effects().front().mask.pixel(8, 6).a == 255);
+    REQUIRE(cut.multiplane().planes.front().distanceMap.width() == 24);
+    REQUIRE(cut.multiplane().planes.front().distanceMap.pixel(8, 6).r == 255);
+    REQUIRE(cut.multiplane().backlights.front().mask.height() == 20);
+    REQUIRE(cut.multiplane().backlights.front().mask.pixel(8, 6).a == 255);
+}
+
+TEST_CASE("Project canvas resize can keep existing artwork dimensions", "[core][canvassize]") {
+    core::Project project("Resize metadata only");
+    project.setCanvasSize(16, 16);
+    core::Cel& cel = project.addScene("S").addCut("C").addCel("A");
+    cel.addLayer("L").addFrame().bitmap() = core::Bitmap(16, 16);
+
+    project.resizeCanvas(32, 24, false);
+
+    REQUIRE(project.canvasWidth() == 32);
+    REQUIRE(project.canvasHeight() == 24);
+    REQUIRE(cel.layer(0).frame(0).bitmap().width() == 16);
+    REQUIRE(cel.layer(0).frame(0).bitmap().height() == 16);
+    REQUIRE(cel.paperWidth() == 0);
+    REQUIRE(cel.paperHeight() == 0);
+}
+
 TEST_CASE("Cel paper size round trips through ppam", "[core][paper][io]") {
     core::Project project("P");
     core::Cut& cut = project.addScene("S").addCut("C");
@@ -481,6 +554,34 @@ TEST_CASE("Scene::moveCut reorders cuts", "[core]") {
         REQUIRE(scene.cut(1).name() == "Cut B");
         REQUIRE(scene.cut(2).name() == "Cut C");
     }
+}
+
+TEST_CASE("Scene cut duplication creates an independent editable copy", "[core][duplicate]") {
+    core::Scene scene("Scene 1");
+    core::Cut& original = scene.addCut("Cut A");
+    original.setId(42);
+    original.setFrameCount(12);
+    original.setAction("Walk");
+    original.setDialogue("Hello");
+    original.setStatus(core::CutStatus::KeyAnimation);
+    core::Cel& cel = original.addCel("A");
+    core::Bitmap bitmap(16, 16);
+    bitmap.fill({0, 0, 0, 0});
+    bitmap.setPixel(3, 4, {255, 0, 0, 255});
+    cel.addLayer("L").addFrame().bitmap() = std::move(bitmap);
+
+    core::Cut& copy = scene.duplicateCut(0, "Cut A Copy");
+
+    REQUIRE(scene.cutCount() == 2);
+    REQUIRE(copy.name() == "Cut A Copy");
+    REQUIRE(copy.id() == 0);
+    REQUIRE(copy.frameCount() == 12);
+    REQUIRE(copy.action() == "Walk");
+    REQUIRE(copy.dialogue() == "Hello");
+    REQUIRE(copy.status() == core::CutStatus::KeyAnimation);
+    copy.cel(0).layer(0).frame(0).bitmap().setPixel(3, 4, {0, 255, 0, 255});
+    REQUIRE(original.cel(0).layer(0).frame(0).bitmap().pixel(3, 4).r == 255);
+    REQUIRE(copy.cel(0).layer(0).frame(0).bitmap().pixel(3, 4).g == 255);
 }
 
 TEST_CASE("Cut status defaults to NotStarted and is settable", "[core]") {

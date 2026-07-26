@@ -67,6 +67,7 @@ public:
     // 解像度設定確認用: 「プロジェクト設定...」ダイアログを非モーダルで開き、そのポインタを返す
     // (ダイアログが乗った状態のウィンドウ全体をスクリーンショットするテスト用)
     QDialog* debugOpenCanvasSizeDialog();
+    QDialog* debugOpenShortcutSettingsDialog();
 
     // オニオンスキン確認用: 3フレームに縦線を描き、中央フレームを表示する
     void debugSetupOnionDemo();
@@ -344,8 +345,9 @@ private:
     void setActiveCel(int celIndex);
     // 引きセル: アクティブセルの用紙サイズ変更ダイアログを開く(CelPanelの「セルサイズ...」ボタンから)
     void openCelSizeDialog();
-    // プロジェクトのキャンバス解像度・アスペクト比を変更するダイアログを開く(ファイルメニューから)
-    void openCanvasSizeDialog();
+    // プロジェクトのキャンバス解像度・FPSを変更する。どの入口もこの処理へ集約する
+    void openCanvasSizeDialog(QWidget* dialogParent = nullptr);
+    void openShortcutSettingsDialog();
 
     // 下敷き(参照画像/連番シーケンス)。セッション限定でプロジェクトには保存しない
     void openUnderlay();

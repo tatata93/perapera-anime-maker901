@@ -44,6 +44,8 @@ set(PERAPERA_APP_SOURCES
     ui/CanvasSizeDialog.h
     ui/ShortcutSettings.cpp
     ui/ShortcutSettings.h
+    ui/ShortcutSettingsDialog.cpp
+    ui/ShortcutSettingsDialog.h
     ui/PaintLayerUtils.cpp
     ui/PaintLayerUtils.h
     ui/FloatingCanvasWindow.cpp

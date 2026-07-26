@@ -103,6 +103,7 @@ public:
     size_t celCount() const { return m_cels.size(); }
     Cel& cel(size_t index) { return *m_cels.at(index); }
     const Cel& cel(size_t index) const { return *m_cels.at(index); }
+    std::unique_ptr<Cut> clone(std::string name) const;
 
     // プリビズシーン(3Dモデル配置+カメラ)。カット単位で持つ
     PrevizScene& previz() { return m_previz; }

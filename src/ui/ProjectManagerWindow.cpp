@@ -6,8 +6,11 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
+#include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QStyle>
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -43,18 +46,22 @@ ProjectManagerWindow::ProjectManagerWindow(QWidget* parent) : QMainWindow(parent
     // --- プロジェクト操作(新規/開く/保存) ---
     auto* projectRow = new QHBoxLayout();
     auto* newProjectButton = new QPushButton(tr("新規プロジェクト…"), central);
+    newProjectButton->setIcon(style()->standardIcon(QStyle::SP_FileIcon));
     connect(newProjectButton, &QPushButton::clicked, this, [this] { emit newProjectRequested(); });
     projectRow->addWidget(newProjectButton);
     auto* openProjectButton = new QPushButton(tr("プロジェクトを開く…"), central);
+    openProjectButton->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
     connect(openProjectButton, &QPushButton::clicked, this, [this] { emit openProjectRequested(); });
     projectRow->addWidget(openProjectButton);
     auto* saveProjectButton = new QPushButton(tr("保存"), central);
+    saveProjectButton->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
     connect(saveProjectButton, &QPushButton::clicked, this, [this] { emit saveProjectRequested(); });
     projectRow->addWidget(saveProjectButton);
+    projectRow->addStretch(1);
     auto* settingsButton = new QPushButton(tr("プロジェクト設定…"), central);
+    settingsButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     connect(settingsButton, &QPushButton::clicked, this, [this] { emit projectSettingsRequested(); });
     projectRow->addWidget(settingsButton);
-    projectRow->addStretch(1);
     root->addLayout(projectRow);
 
     // --- ヘッダー: プロジェクト名 ---
@@ -70,6 +77,9 @@ ProjectManagerWindow::ProjectManagerWindow(QWidget* parent) : QMainWindow(parent
         }
     });
     headerRow->addWidget(m_projectNameEdit, 1);
+    m_projectInfoLabel = new QLabel(central);
+    m_projectInfoLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    headerRow->addWidget(m_projectInfoLabel);
     root->addLayout(headerRow);
 
     // --- 進捗集計 ---
@@ -106,26 +116,46 @@ ProjectManagerWindow::ProjectManagerWindow(QWidget* parent) : QMainWindow(parent
     // --- カット構成の操作 ---
     auto* toolRow = new QHBoxLayout();
     m_openButton = new QPushButton(tr("選択カットを開く"), central);
+    m_openButton->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
     connect(m_openButton, &QPushButton::clicked, this, &ProjectManagerWindow::activateSelectedCut);
     toolRow->addWidget(m_openButton);
     toolRow->addSpacing(16);
     auto* addButton = new QPushButton(tr("カット追加"), central);
+    addButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
     connect(addButton, &QPushButton::clicked, this, [this] { emit addCutRequested(); });
     toolRow->addWidget(addButton);
+    m_duplicateButton = new QPushButton(tr("複製"), central);
+    m_duplicateButton->setToolTip(tr("選択カットを内容ごと複製する"));
+    connect(m_duplicateButton, &QPushButton::clicked,
+            this, &ProjectManagerWindow::duplicateSelectedCut);
+    toolRow->addWidget(m_duplicateButton);
     m_removeButton = new QPushButton(tr("カット削除"), central);
-    connect(m_removeButton, &QPushButton::clicked, this, [this] {
-        const int row = selectedRow();
-        if (row >= 0) emit removeCutRequested(row);
-    });
+    m_removeButton->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+    connect(m_removeButton, &QPushButton::clicked,
+            this, &ProjectManagerWindow::removeSelectedCut);
     toolRow->addWidget(m_removeButton);
     m_upButton = new QPushButton(tr("↑"), central);
+    m_upButton->setToolTip(tr("選択カットを上へ移動"));
     connect(m_upButton, &QPushButton::clicked, this, [this] { moveSelectedCut(-1); });
     toolRow->addWidget(m_upButton);
     m_downButton = new QPushButton(tr("↓"), central);
+    m_downButton->setToolTip(tr("選択カットを下へ移動"));
     connect(m_downButton, &QPushButton::clicked, this, [this] { moveSelectedCut(1); });
     toolRow->addWidget(m_downButton);
     toolRow->addStretch(1);
     root->addLayout(toolRow);
+
+    auto* filterRow = new QHBoxLayout();
+    filterRow->addStretch(1);
+    filterRow->addWidget(new QLabel(tr("検索:"), central));
+    m_searchEdit = new QLineEdit(central);
+    m_searchEdit->setPlaceholderText(tr("カット名・内容・セリフ"));
+    m_searchEdit->setClearButtonEnabled(true);
+    m_searchEdit->setFixedWidth(280);
+    connect(m_searchEdit, &QLineEdit::textChanged,
+            this, &ProjectManagerWindow::applyFilter);
+    filterRow->addWidget(m_searchEdit);
+    root->addLayout(filterRow);
 
     // --- 進行管理表 ---
     m_table = new QTableWidget(central);
@@ -135,6 +165,8 @@ ProjectManagerWindow::ProjectManagerWindow(QWidget* parent) : QMainWindow(parent
     m_table->verticalHeader()->setVisible(false);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_table->setAlternatingRowColors(true);
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     m_table->horizontalHeader()->setSectionResizeMode(kColName, QHeaderView::Interactive);
     m_table->horizontalHeader()->setSectionResizeMode(kColAction, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(kColDialogue, QHeaderView::Stretch);
@@ -144,6 +176,24 @@ ProjectManagerWindow::ProjectManagerWindow(QWidget* parent) : QMainWindow(parent
     m_table->setColumnWidth(kColSeconds, 60);
     m_table->setColumnWidth(kColStatus, 100);
     connect(m_table, &QTableWidget::itemChanged, this, &ProjectManagerWindow::onItemChanged);
+    connect(m_table, &QTableWidget::itemSelectionChanged,
+            this, &ProjectManagerWindow::updateActionState);
+    connect(m_table, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        const QModelIndex index = m_table->indexAt(pos);
+        if (index.isValid()) m_table->selectRow(index.row());
+        QMenu menu(this);
+        QAction* openAction = menu.addAction(tr("開く"));
+        QAction* duplicateAction = menu.addAction(tr("複製"));
+        menu.addSeparator();
+        QAction* removeAction = menu.addAction(tr("削除"));
+        openAction->setEnabled(m_openButton->isEnabled());
+        duplicateAction->setEnabled(m_duplicateButton->isEnabled());
+        removeAction->setEnabled(m_removeButton->isEnabled());
+        QAction* chosen = menu.exec(m_table->viewport()->mapToGlobal(pos));
+        if (chosen == openAction) activateSelectedCut();
+        if (chosen == duplicateAction) duplicateSelectedCut();
+        if (chosen == removeAction) removeSelectedCut();
+    });
     // No列のダブルクリックでそのカットを開く(名前/内容などの編集列はダブルクリックで編集に入る)
     connect(m_table, &QTableWidget::cellDoubleClicked, this, [this](int row, int col) {
         if (col == kColNo) activateSelectedCut();
@@ -151,6 +201,7 @@ ProjectManagerWindow::ProjectManagerWindow(QWidget* parent) : QMainWindow(parent
     root->addWidget(m_table, 1);
 
     setCentralWidget(central);
+    updateActionState();
 }
 
 ProjectManagerWindow::~ProjectManagerWindow() {
@@ -162,19 +213,45 @@ ProjectManagerWindow::~ProjectManagerWindow() {
 void ProjectManagerWindow::setProject(core::Project* project) {
     m_project = project;
     if (m_projectNameEdit) m_projectNameEdit->setText(project ? QString::fromStdString(project->name()) : QString());
+    if (project) m_fps = project->fps();
 }
 
 void ProjectManagerWindow::setFps(int fps) { m_fps = fps > 0 ? fps : 24; }
 
 int ProjectManagerWindow::selectedRow() const { return m_table ? m_table->currentRow() : -1; }
 
+void ProjectManagerWindow::selectCut(int index) {
+    if (!m_table || index < 0 || index >= m_table->rowCount() ||
+        m_table->isRowHidden(index)) {
+        return;
+    }
+    m_table->selectRow(index);
+    m_table->scrollToItem(m_table->item(index, kColNo));
+}
+
 void ProjectManagerWindow::refresh() {
+    const int previousRow = selectedRow();
     if (m_projectNameEdit && m_project) {
         const QSignalBlocker b(m_projectNameEdit);
         m_projectNameEdit->setText(QString::fromStdString(m_project->name()));
     }
     rebuildTable();
     updateSummary();
+    applyFilter();
+    if (m_table && m_table->rowCount() > 0) {
+        const int row = std::clamp(previousRow, 0, m_table->rowCount() - 1);
+        if (!m_table->isRowHidden(row)) {
+            m_table->selectRow(row);
+        } else {
+            for (int candidate = 0; candidate < m_table->rowCount(); ++candidate) {
+                if (!m_table->isRowHidden(candidate)) {
+                    m_table->selectRow(candidate);
+                    break;
+                }
+            }
+        }
+    }
+    updateActionState();
 }
 
 void ProjectManagerWindow::rebuildTable() {
@@ -228,6 +305,7 @@ void ProjectManagerWindow::rebuildTable() {
                     QStringLiteral("QComboBox{background-color:%1;color:white;}").arg(kStatusColors[index]));
             }
             updateSummary();
+            applyFilter();
             emit edited();
         });
         m_table->setCellWidget(row, kColStatus, statusCombo);
@@ -277,6 +355,7 @@ void ProjectManagerWindow::onItemChanged(QTableWidgetItem* item) {
         default:
             return;  // No/秒/進捗はこの経路では編集しない
     }
+    applyFilter();
     emit edited();
 }
 
@@ -296,6 +375,58 @@ void ProjectManagerWindow::moveSelectedCut(int delta) {
 void ProjectManagerWindow::activateSelectedCut() {
     const int row = selectedRow();
     if (row >= 0) emit cutActivated(row);
+}
+
+void ProjectManagerWindow::duplicateSelectedCut() {
+    const int row = selectedRow();
+    if (row >= 0) emit duplicateCutRequested(row);
+}
+
+void ProjectManagerWindow::removeSelectedCut() {
+    const int row = selectedRow();
+    if (row < 0 || !m_project || m_project->sceneCount() == 0) return;
+    const core::Scene& scene = m_project->scene(0);
+    if (scene.cutCount() <= 1 || static_cast<size_t>(row) >= scene.cutCount()) return;
+    const QString name = QString::fromStdString(scene.cut(static_cast<size_t>(row)).name());
+    const auto answer =
+        QMessageBox::question(this, tr("カットを削除"),
+                              tr("「%1」を削除しますか？\nこの操作は元に戻せません。").arg(name),
+                              QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer == QMessageBox::Yes) emit removeCutRequested(row);
+}
+
+void ProjectManagerWindow::applyFilter() {
+    if (!m_table) return;
+    const QString needle = m_searchEdit ? m_searchEdit->text().trimmed() : QString();
+    for (int row = 0; row < m_table->rowCount(); ++row) {
+        QString haystack;
+        for (const int column : {kColName, kColAction, kColDialogue}) {
+            if (const auto* item = m_table->item(row, column)) {
+                haystack += item->text() + QLatin1Char('\n');
+            }
+        }
+        if (const auto* combo = qobject_cast<QComboBox*>(m_table->cellWidget(row, kColStatus))) {
+            haystack += combo->currentText();
+        }
+        m_table->setRowHidden(
+            row, !needle.isEmpty() && !haystack.contains(needle, Qt::CaseInsensitive));
+    }
+    updateActionState();
+}
+
+void ProjectManagerWindow::updateActionState() {
+    const int row = selectedRow();
+    const int count =
+        m_project && m_project->sceneCount() > 0
+            ? static_cast<int>(m_project->scene(0).cutCount())
+            : 0;
+    const bool selected =
+        row >= 0 && row < count && (!m_table || !m_table->isRowHidden(row));
+    if (m_openButton) m_openButton->setEnabled(selected);
+    if (m_duplicateButton) m_duplicateButton->setEnabled(selected);
+    if (m_removeButton) m_removeButton->setEnabled(selected && count > 1);
+    if (m_upButton) m_upButton->setEnabled(selected && row > 0);
+    if (m_downButton) m_downButton->setEnabled(selected && row + 1 < count);
 }
 
 void ProjectManagerWindow::updateSummary() {
@@ -321,6 +452,15 @@ void ProjectManagerWindow::updateSummary() {
                                 .arg(totalSeconds, 0, 'f', 2)
                                 .arg(done));
     m_doneBar->setValue(total > 0 ? static_cast<int>(std::lround(100.0 * done / total)) : 0);
+    if (m_projectInfoLabel) {
+        m_projectInfoLabel->setText(
+            m_project
+                ? tr("%1×%2   %3 fps")
+                      .arg(m_project->canvasWidth())
+                      .arg(m_project->canvasHeight())
+                      .arg(m_fps)
+                : QString());
+    }
 
     // 積み上げ帯: 各工程のstretch=本数、0本のセグメントは隠す
     for (int i = 0; i < 7; ++i) {

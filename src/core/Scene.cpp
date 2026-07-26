@@ -7,6 +7,12 @@ Cut& Scene::addCut(std::string name) {
     return *m_cuts.back();
 }
 
+Cut& Scene::duplicateCut(size_t index, std::string name) {
+    auto copy = m_cuts.at(index)->clone(std::move(name));
+    auto it = m_cuts.insert(m_cuts.begin() + static_cast<ptrdiff_t>(index + 1), std::move(copy));
+    return **it;
+}
+
 void Scene::removeCut(size_t index) {
     m_cuts.erase(m_cuts.begin() + static_cast<ptrdiff_t>(index));
 }

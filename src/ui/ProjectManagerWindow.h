@@ -33,11 +33,13 @@ public:
     void setFps(int fps);
     // カット一覧と集計を再構築する(m_updatingガードで編集シグナルの暴発を防ぐ)
     void refresh();
+    void selectCut(int index);
 
 signals:
     void edited();                  // カット名/尺/進捗/内容/セリフ、またはカット順序が編集された
     void cutActivated(int index);   // 「選択カットを開く」= そのカットをメインウィンドウでアクティブにする
     void addCutRequested();         // カット追加(セル/レイヤー初期化が要るのでメインウィンドウに委譲)
+    void duplicateCutRequested(int index);  // 選択カットの独立コピーを直後へ追加
     void removeCutRequested(int index);  // カット削除(アクティブカットのクランプ等をメインウィンドウが行う)
     void newProjectRequested();     // 新規プロジェクト(作成ダイアログはメインウィンドウが出す)
     void openProjectRequested();    // プロジェクトを開く
@@ -49,6 +51,10 @@ private:
     void onItemChanged(QTableWidgetItem* item);
     void moveSelectedCut(int delta);
     void activateSelectedCut();
+    void duplicateSelectedCut();
+    void removeSelectedCut();
+    void applyFilter();
+    void updateActionState();
     void updateSummary();
     int selectedRow() const;
 
@@ -57,6 +63,8 @@ private:
     bool m_updating = false;  // refresh中の編集シグナル暴発防止
 
     QLineEdit* m_projectNameEdit = nullptr;
+    QLineEdit* m_searchEdit = nullptr;
+    QLabel* m_projectInfoLabel = nullptr;
     QLabel* m_summaryLabel = nullptr;       // 総カット数・総尺・完成率
     QProgressBar* m_doneBar = nullptr;      // 完成率(完成カット数 / 総カット数)
     QHBoxLayout* m_stageBarLayout = nullptr;  // 工程別の割合を積み上げ表示する帯
@@ -65,6 +73,7 @@ private:
 
     QTableWidget* m_table = nullptr;
     QPushButton* m_openButton = nullptr;
+    QPushButton* m_duplicateButton = nullptr;
     QPushButton* m_removeButton = nullptr;
     QPushButton* m_upButton = nullptr;
     QPushButton* m_downButton = nullptr;

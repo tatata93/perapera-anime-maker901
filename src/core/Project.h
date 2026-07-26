@@ -69,11 +69,16 @@ public:
     void setNextCutId(uint64_t id) { m_nextCutId = id; }
 
     // キャンバス解像度(既定1920x1080=フルHD)。新規セル・合成・書き出しのサイズに使う。
-    // 変更しても既存の作画セル(引きセルのpaperサイズ)は変わらない
     int canvasWidth() const { return m_canvasWidth; }
     int canvasHeight() const { return m_canvasHeight; }
     // 幅/高さをそれぞれ[kMinCanvasSize, kMaxCanvasSize]にクランプして設定する
     void setCanvasSize(int width, int height);
+    // UIからの解像度変更。resizeLinkedCels=trueなら、キャンバス追従セルだけを中央基準で
+    // 新サイズへ合わせる。独自paperサイズを持つ引きセルは変更しない
+    void resizeCanvas(int width, int height, bool resizeLinkedCels);
+
+    int fps() const { return m_fps; }
+    void setFps(int fps) { m_fps = std::clamp(fps, 1, 120); }
 
 private:
     std::string m_name;
@@ -83,6 +88,7 @@ private:
     uint64_t m_nextCutId = 1;
     int m_canvasWidth = 1920;
     int m_canvasHeight = 1080;
+    int m_fps = 24;
 };
 
 }  // namespace core

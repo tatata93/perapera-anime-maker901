@@ -34,6 +34,7 @@ public:
     void setName(std::string name) { m_name = std::move(name); }
 
     Cut& addCut(std::string name);
+    Cut& duplicateCut(size_t index, std::string name);
     void removeCut(size_t index);
     // カットをfrom位置からto位置へ移動する(範囲外の場合は何もしない)
     void moveCut(size_t from, size_t to);

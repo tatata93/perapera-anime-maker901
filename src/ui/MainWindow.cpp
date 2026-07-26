@@ -27,6 +27,7 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QStyle>
 #include <QTemporaryDir>
 #include <QTextOption>
 #include <QTimer>
@@ -64,6 +65,7 @@
 #include "ui/RetroTheme.h"
 #include "ui/SettingBoardWindow.h"
 #include "ui/ShortcutSettings.h"
+#include "ui/ShortcutSettingsDialog.h"
 #include "ui/ShootingWindow.h"
 #include "ui/StoryboardWindow.h"
 #include "ui/TapPanel.h"
@@ -1247,22 +1249,31 @@ void MainWindow::restoreMainCanvas() {
 
 void MainWindow::setupCutBar() {
     QToolBar* cutBar = addToolBar(tr("カット"));
-    cutBar->setMovable(false);
+    cutBar->setObjectName(QStringLiteral("CutControls"));
+    cutBar->setMovable(true);
+    cutBar->setToolButtonStyle(Qt::ToolButtonIconOnly);
 
-    cutBar->addWidget(new QLabel(tr(" カット: "), this));
+    auto* cutLabel = new QLabel(tr(" カット: "), this);
+    cutBar->addWidget(cutLabel);
     m_cutCombo = new QComboBox(this);
-    m_cutCombo->setMinimumWidth(140);
+    m_cutCombo->setMinimumWidth(120);
     m_cutCombo->setFocusPolicy(Qt::ClickFocus);
     connect(m_cutCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         if (index >= 0) setActiveCut(index);
     });
     cutBar->addWidget(m_cutCombo);
 
-    QAction* addAction = cutBar->addAction(tr("カット追加"));
+    QAction* addAction =
+        cutBar->addAction(style()->standardIcon(QStyle::SP_FileIcon), tr("カット追加"));
+    addAction->setToolTip(tr("カット追加"));
     connect(addAction, &QAction::triggered, this, &MainWindow::addCut);
-    QAction* removeAction = cutBar->addAction(tr("カット削除"));
+    QAction* removeAction =
+        cutBar->addAction(style()->standardIcon(QStyle::SP_TrashIcon), tr("カット削除"));
+    removeAction->setToolTip(tr("カット削除"));
     connect(removeAction, &QAction::triggered, this, &MainWindow::removeActiveCut);
-    QAction* renameAction = cutBar->addAction(tr("カット名変更"));
+    QAction* renameAction = cutBar->addAction(
+        style()->standardIcon(QStyle::SP_FileDialogDetailedView), tr("カット名変更"));
+    renameAction->setToolTip(tr("カット名変更"));
     connect(renameAction, &QAction::triggered, this, &MainWindow::renameActiveCut);
 
     updateCutBar();
@@ -1339,6 +1350,14 @@ void MainWindow::removeActiveCut() {
     if (m_playing) return;
     core::Scene& scene = m_project->scene(0);
     if (scene.cutCount() <= 1) return;  // 最後の1カットは消さない
+    const QString cutName = QString::fromStdString(activeCut().name());
+    if (QMessageBox::question(this, tr("カットを削除"),
+                              tr("「%1」を削除しますか？\nこの操作は元に戻せません。")
+                                  .arg(cutName),
+                              QMessageBox::Yes | QMessageBox::Cancel,
+                              QMessageBox::Cancel) != QMessageBox::Yes) {
+        return;
+    }
     scene.removeCut(m_activeCut);
     markProjectDirty();  // シーンのカット構成(cutIds)が変わる。カット自体は削除済みなのでmarkCutDirtyは不要
     updateWindowTitle();
@@ -1970,10 +1989,69 @@ void MainWindow::openCelSizeDialog() {
 // プロジェクトのキャンバス解像度・アスペクト比を変更するダイアログを開く(ファイルメニューから)。
 // OKで確定した場合、これから描く紙のサイズ(新規セル・合成・書き出し)だけが変わる。
 // 既存の作画セルのビットマップはリサイズしない(paperサイズを持つ場合はそのまま引きセル扱いになる)
-void MainWindow::openCanvasSizeDialog() {
+void MainWindow::openCanvasSizeDialog(QWidget* dialogParent) {
     if (!m_project) return;
 
-    CanvasSizeDialog dialog(canvasWidth(), canvasHeight(), this, true);
+    QWidget* parent = dialogParent ? dialogParent : this;
+    CanvasSizeDialog dialog(canvasWidth(), canvasHeight(), m_project->fps(), parent);
+    QTimer::singleShot(0, &dialog, [&dialog] { perapera::ui::keepWindowOnScreen(&dialog); });
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const int newW = dialog.canvasWidth();
+    const int newH = dialog.canvasHeight();
+    const int newFps = dialog.fps();
+    const bool sizeChanged = newW != canvasWidth() || newH != canvasHeight();
+    const bool fpsChanged = newFps != m_project->fps();
+    if (!sizeChanged && !fpsChanged) return;
+
+    if (sizeChanged) {
+        if (dialog.resizeExistingArtwork()) {
+            clearUndoHistory();
+        }
+        m_project->resizeCanvas(newW, newH, dialog.resizeExistingArtwork());
+        m_canvas->setCanvasSize(canvasWidth(), canvasHeight());
+        m_canvas->clearTextureCache();
+        updateCanvasLayers();
+        updateOnionSkin();
+        updateCameraPanel();
+        if (m_editWindow) {
+            m_editWindow->setCanvasSize(canvasWidth(), canvasHeight());
+            m_editWindow->refresh();
+        }
+        if (m_shootingWindow) {
+            m_shootingWindow->setCanvasSize(canvasWidth(), canvasHeight());
+            m_shootingWindow->refresh();
+        }
+        if (m_previzUnderlay) updateUnderlay();
+        if (dialog.resizeExistingArtwork()) m_dirtyScope.allCuts = true;
+    }
+
+    if (fpsChanged) {
+        m_project->setFps(newFps);
+        if (m_fpsSpin) {
+            const QSignalBlocker blocker(m_fpsSpin);
+            m_fpsSpin->setValue(m_project->fps());
+        }
+        if (m_playing) m_playTimer->start(1000 / std::max(1, m_project->fps()));
+        updateXsheetPanel();
+    }
+
+    if (m_projectManagerWindow) {
+        m_projectManagerWindow->setFps(m_project->fps());
+        m_projectManagerWindow->refresh();
+    }
+    markProjectDirty();
+    updateWindowTitle();
+    statusBar()->showMessage(
+        tr("プロジェクト設定を %1×%2 / %3 fps に更新しました")
+            .arg(canvasWidth())
+            .arg(canvasHeight())
+            .arg(m_project->fps()),
+        4000);
+}
+
+void MainWindow::openShortcutSettingsDialog() {
+    ShortcutSettingsDialog dialog(this);
     QTimer::singleShot(0, &dialog, [&dialog] { perapera::ui::keepWindowOnScreen(&dialog); });
     if (dialog.exec() != QDialog::Accepted) return;
 
@@ -1981,40 +2059,47 @@ void MainWindow::openCanvasSizeDialog() {
     perapera::ui::reloadShortcutActions(m_xsheetPanel, perapera::ui::ShortcutScope::Xsheet);
     perapera::ui::reloadShortcutActions(m_storyboardWindow, perapera::ui::ShortcutScope::Storyboard);
     perapera::ui::reloadShortcutActions(m_settingBoardWindow, perapera::ui::ShortcutScope::SettingBoard);
-
-    const int newW = dialog.canvasWidth();
-    const int newH = dialog.canvasHeight();
-    if (newW == canvasWidth() && newH == canvasHeight()) return;
-
-    debugSetCanvasSize(newW, newH);
-    updateWindowTitle();
+    statusBar()->showMessage(tr("ショートカット設定を更新しました"), 3000);
 }
 
 // 解像度設定確認用/内部共通処理: プロジェクトのキャンバスサイズを変更し、
 // 作画キャンバス・撮影/編集ウィンドウ・プリビズ下敷きへ反映する(ダイアログは出さない)
 void MainWindow::debugSetCanvasSize(int width, int height) {
     if (!m_project) return;
-    m_project->setCanvasSize(width, height);
+    m_project->resizeCanvas(width, height, true);
 
     m_canvas->setCanvasSize(canvasWidth(), canvasHeight());
+    m_canvas->clearTextureCache();
     updateCanvasLayers();
-    if (m_editWindow) m_editWindow->setCanvasSize(canvasWidth(), canvasHeight());
-    if (m_shootingWindow) m_shootingWindow->setCanvasSize(canvasWidth(), canvasHeight());
+    updateOnionSkin();
+    if (m_editWindow) {
+        m_editWindow->setCanvasSize(canvasWidth(), canvasHeight());
+        m_editWindow->refresh();
+    }
+    if (m_shootingWindow) {
+        m_shootingWindow->setCanvasSize(canvasWidth(), canvasHeight());
+        m_shootingWindow->refresh();
+    }
     if (m_previzUnderlay) updateUnderlay();  // 下敷きのアスペクトを新キャンバスサイズへ合わせて再計算する
     markProjectDirty();
+    m_dirtyScope.allCuts = true;
+    if (m_projectManagerWindow) m_projectManagerWindow->refresh();
 }
 
 // 解像度設定確認用: 「プロジェクト設定...」ダイアログを非モーダルで開き、そのポインタを返す
 // (呼び出し側でウィンドウ全体+ダイアログを合成してスクリーンショットするために使う)
 QDialog* MainWindow::debugOpenCanvasSizeDialog() {
-    auto* dialog = new CanvasSizeDialog(canvasWidth(), canvasHeight(), this, true);
+    auto* dialog = new CanvasSizeDialog(canvasWidth(), canvasHeight(),
+                                        m_project ? m_project->fps() : kDefaultFps, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dialog, &QDialog::accepted, this, [this] {
-        perapera::ui::reloadShortcutActions(this, perapera::ui::ShortcutScope::MainCanvas);
-        perapera::ui::reloadShortcutActions(m_xsheetPanel, perapera::ui::ShortcutScope::Xsheet);
-        perapera::ui::reloadShortcutActions(m_storyboardWindow, perapera::ui::ShortcutScope::Storyboard);
-        perapera::ui::reloadShortcutActions(m_settingBoardWindow, perapera::ui::ShortcutScope::SettingBoard);
-    });
+    dialog->show();
+    perapera::ui::keepWindowOnScreen(dialog);
+    return dialog;
+}
+
+QDialog* MainWindow::debugOpenShortcutSettingsDialog() {
+    auto* dialog = new ShortcutSettingsDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     perapera::ui::keepWindowOnScreen(dialog);
     return dialog;
@@ -2259,12 +2344,15 @@ void MainWindow::setupMenus() {
     fileMenu->addSeparator();
 
     QAction* canvasSizeAction = fileMenu->addAction(tr("プロジェクト設定(&R)..."));
-    connect(canvasSizeAction, &QAction::triggered, this, &MainWindow::openCanvasSizeDialog);
+    connect(canvasSizeAction, &QAction::triggered, this,
+            [this] { openCanvasSizeDialog(this); });
 
     // 編集メニュー
     QMenu* editMenu = menuBar()->addMenu(tr("編集(&E)"));
     m_undoAction = editMenu->addAction(tr("元に戻す(&U)"));
     m_redoAction = editMenu->addAction(tr("やり直す(&R)"));
+    m_undoAction->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    m_redoAction->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
     perapera::ui::bindShortcut(m_undoAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("undo"));
     perapera::ui::bindShortcut(m_redoAction, perapera::ui::ShortcutScope::MainCanvas,
@@ -2476,6 +2564,7 @@ void MainWindow::onNewProject() {
 
     m_project = std::make_unique<core::Project>(dlg.projectName().toStdString());
     m_project->setCanvasSize(dlg.canvasWidth(), dlg.canvasHeight());
+    m_project->setFps(dlg.fps());
     core::Scene& scene = m_project->addScene("Scene 1");
     core::Cut& cut = scene.addCut("カット 1");
     initializeCut(cut, canvasWidth(), canvasHeight());
@@ -2483,7 +2572,10 @@ void MainWindow::onNewProject() {
     m_activeCut = 0;
     m_activeCel = 0;
     m_activeLayer = 0;
-    if (m_fpsSpin) m_fpsSpin->setValue(dlg.fps());
+    if (m_fpsSpin) {
+        const QSignalBlocker blocker(m_fpsSpin);
+        m_fpsSpin->setValue(m_project->fps());
+    }
     m_canvas->setCanvasSize(canvasWidth(), canvasHeight());
     updateCanvasLayers();
     updateOnionSkin();
@@ -2495,6 +2587,10 @@ void MainWindow::onNewProject() {
 // テクスチャキャッシュ破棄、未保存フラグのリセット)。newDocument/onNewProjectから呼ぶ
 void MainWindow::finishProjectReplacement() {
     m_canvas->clearTextureCache();  // 旧プロジェクトのBitmapポインタ再利用に備えて破棄
+    if (m_fpsSpin) {
+        const QSignalBlocker blocker(m_fpsSpin);
+        m_fpsSpin->setValue(m_project->fps());
+    }
     if (m_previzWindow) m_previzWindow->setScene(&activeCut().previz());  // 旧シーンへのポインタを差し替え
     if (m_storyboardWindow) {
         m_storyboardWindow->setProject(m_project.get());  // プロジェクト差し替え
@@ -2510,7 +2606,7 @@ void MainWindow::finishProjectReplacement() {
     }
     if (m_projectManagerWindow) {
         m_projectManagerWindow->setProject(m_project.get());  // プロジェクト差し替え
-        m_projectManagerWindow->setFps(m_fpsSpin ? m_fpsSpin->value() : 24);
+        m_projectManagerWindow->setFps(m_project->fps());
         m_projectManagerWindow->refresh();
     }
     if (m_shootingWindow) {
@@ -2563,6 +2659,10 @@ bool MainWindow::loadFromFile(const QString& path) {
     m_activeCut = 0;
     m_activeCel = 0;
     m_activeLayer = 0;
+    if (m_fpsSpin) {
+        const QSignalBlocker blocker(m_fpsSpin);
+        m_fpsSpin->setValue(m_project->fps());
+    }
     // 読み込んだプロジェクトのキャンバスサイズへ作画キャンバス・撮影/編集ウィンドウを合わせる
     m_canvas->setCanvasSize(canvasWidth(), canvasHeight());
     if (m_editWindow) m_editWindow->setCanvasSize(canvasWidth(), canvasHeight());
@@ -2583,7 +2683,7 @@ bool MainWindow::loadFromFile(const QString& path) {
     }
     if (m_projectManagerWindow) {
         m_projectManagerWindow->setProject(m_project.get());  // プロジェクト差し替え
-        m_projectManagerWindow->setFps(m_fpsSpin ? m_fpsSpin->value() : 24);
+        m_projectManagerWindow->setFps(m_project->fps());
         m_projectManagerWindow->refresh();
     }
     if (m_shootingWindow) {
@@ -2643,11 +2743,19 @@ void MainWindow::open() {
 }
 
 void MainWindow::setupToolBar() {
-    QToolBar* toolBar = addToolBar(tr("Tools"));
-    toolBar->setMovable(false);
+    QToolBar* toolBar = addToolBar(tr("描画ツール"));
+    toolBar->setObjectName(QStringLiteral("DrawingTools"));
+    toolBar->setMovable(true);
+    toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 
     toolBar->addAction(m_undoAction);
     toolBar->addAction(m_redoAction);
+    for (QAction* action : {m_undoAction, m_redoAction}) {
+        if (auto* button = qobject_cast<QToolButton*>(toolBar->widgetForAction(action))) {
+            button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+            button->setToolTip(action->text());
+        }
+    }
     toolBar->addSeparator();
 
     // --- 描画ツール ---
@@ -2697,12 +2805,15 @@ void MainWindow::setupToolBar() {
     connect(detachCanvasAction, &QAction::triggered, this, &MainWindow::detachMainCanvas);
 
     // --- ブラシ設定(太さ・色) ---
-    toolBar->addWidget(new QLabel(tr(" 太さ: "), this));
+    QToolBar* brushBar = addToolBar(tr("ブラシ設定"));
+    brushBar->setObjectName(QStringLiteral("BrushSettings"));
+    brushBar->setMovable(true);
+    brushBar->addWidget(new QLabel(tr("太さ: "), this));
 
     m_penRadiusSlider = new QSlider(Qt::Horizontal, this);
     m_penRadiusSlider->setRange(1, 64);
     m_penRadiusSlider->setValue(6);
-    m_penRadiusSlider->setFixedWidth(120);
+    m_penRadiusSlider->setFixedWidth(100);
     // Spaceキーでの再生操作にフォーカスを奪わないよう、クリック時のみフォーカスを持たせる
     m_penRadiusSlider->setFocusPolicy(Qt::ClickFocus);
     connect(m_penRadiusSlider, &QSlider::valueChanged, this, [this](int value) {
@@ -2716,27 +2827,28 @@ void MainWindow::setupToolBar() {
         }
         m_penRadiusValueLabel->setText(QString::number(value));
     });
-    toolBar->addWidget(m_penRadiusSlider);
+    brushBar->addWidget(m_penRadiusSlider);
 
     m_penRadiusValueLabel = new QLabel(QString::number(m_penRadiusSlider->value()), this);
-    toolBar->addWidget(m_penRadiusValueLabel);
+    brushBar->addWidget(m_penRadiusValueLabel);
 
     m_penColorButton = new QToolButton(this);
     m_penColorButton->setFixedSize(24, 24);
     m_penColorButton->setToolTip(tr("ペンの色"));
     connect(m_penColorButton, &QToolButton::clicked, this, &MainWindow::choosePenColor);
-    toolBar->addWidget(m_penColorButton);
+    brushBar->addWidget(m_penColorButton);
     updatePenColorButton();
 
     // 手ブレ補正(0=なし〜100=最大)
-    toolBar->addWidget(new QLabel(tr(" 補正: "), this));
+    brushBar->addSeparator();
+    brushBar->addWidget(new QLabel(tr("補正: "), this));
     auto* stabilizerSpin = new QSpinBox(this);
     stabilizerSpin->setRange(0, 100);
     stabilizerSpin->setValue(20);
     stabilizerSpin->setFocusPolicy(Qt::ClickFocus);
     stabilizerSpin->setToolTip(tr("手ブレ補正の強さ"));
     connect(stabilizerSpin, &QSpinBox::valueChanged, this, [this](int v) { m_canvas->setStabilizer(v); });
-    toolBar->addWidget(stabilizerSpin);
+    brushBar->addWidget(stabilizerSpin);
 
     // 筆圧検知のon/off。offにするとペン圧を無視して常に最大筆圧(線幅一定)で描く。
     // 筆圧非対応ペンや、意図せず筆圧で細くなるのを避けたいときに使う。
@@ -2753,36 +2865,51 @@ void MainWindow::setupToolBar() {
             m_pressureAction->setChecked(checked);
         }
     });
-    toolBar->addWidget(m_pressureCheck);
+    brushBar->addWidget(m_pressureCheck);
 
-    toolBar->addSeparator();
+    addToolBarBreak(Qt::TopToolBarArea);
+    QToolBar* frameBar = addToolBar(tr("コマ操作"));
+    frameBar->setObjectName(QStringLiteral("FrameControls"));
+    frameBar->setMovable(true);
+    frameBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 
     // --- フレーム操作 ---
-    QAction* prevAction = toolBar->addAction(tr("前のコマ"));
+    QAction* prevAction = frameBar->addAction(
+        style()->standardIcon(QStyle::SP_MediaSkipBackward), tr("前のコマ"));
+    if (auto* button = qobject_cast<QToolButton*>(frameBar->widgetForAction(prevAction))) {
+        button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        button->setToolTip(tr("前のコマ"));
+    }
     connect(prevAction, &QAction::triggered, this, [this] {
         if (!m_playing && m_currentFrame > 0) setCurrentFrame(m_currentFrame - 1);
     });
 
-    QAction* nextAction = toolBar->addAction(tr("次のコマ"));
+    QAction* nextAction = frameBar->addAction(
+        style()->standardIcon(QStyle::SP_MediaSkipForward), tr("次のコマ"));
+    if (auto* button = qobject_cast<QToolButton*>(frameBar->widgetForAction(nextAction))) {
+        button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        button->setToolTip(tr("次のコマ"));
+    }
     connect(nextAction, &QAction::triggered, this, [this] {
         if (!m_playing) setCurrentFrame(m_currentFrame + 1);
     });
 
-    QAction* addAction = toolBar->addAction(tr("原画追加"));
+    QAction* addAction = frameBar->addAction(tr("原画追加"));
     // Key_Aは「操作」メニューのゲーム風ショートカット(前のコマ)に割り当てるため、ここでは単キーを持たせない
     connect(addAction, &QAction::triggered, this, &MainWindow::addKeyDrawingAtCurrent);
 
-    QAction* deleteAction = toolBar->addAction(tr("割付クリア"));
+    QAction* deleteAction = frameBar->addAction(
+        style()->standardIcon(QStyle::SP_TrashIcon), tr("割付クリア"));
     deleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
     connect(deleteAction, &QAction::triggered, this, &MainWindow::deleteCurrentFrame);
 
     m_frameLabel = new QLabel(this);
-    toolBar->addWidget(m_frameLabel);
+    frameBar->addWidget(m_frameLabel);
 
-    toolBar->addSeparator();
+    frameBar->addSeparator();
 
     // --- オニオンスキン ---
-    m_onionAction = toolBar->addAction(tr("オニオンスキン"));
+    m_onionAction = frameBar->addAction(tr("オニオンスキン"));
     m_onionAction->setCheckable(true);
     m_onionAction->setChecked(m_onionEnabled);
     perapera::ui::bindShortcut(m_onionAction, perapera::ui::ShortcutScope::MainCanvas,
@@ -2792,28 +2919,38 @@ void MainWindow::setupToolBar() {
         updateOnionSkin();
     });
 
-    toolBar->addSeparator();
+    frameBar->addSeparator();
 
     // --- 再生 ---
-    m_playAction = toolBar->addAction(tr("再生"));
+    m_playAction = frameBar->addAction(
+        style()->standardIcon(QStyle::SP_MediaPlay), tr("再生"));
+    if (auto* button = qobject_cast<QToolButton*>(frameBar->widgetForAction(m_playAction))) {
+        button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        button->setToolTip(tr("再生/停止"));
+    }
     perapera::ui::bindShortcut(m_playAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("play"));
     connect(m_playAction, &QAction::triggered, this, &MainWindow::togglePlayback);
 
-    toolBar->addWidget(new QLabel(tr(" FPS: "), this));
+    frameBar->addWidget(new QLabel(tr(" FPS: "), this));
     m_fpsSpin = new QSpinBox(this);
-    m_fpsSpin->setRange(1, 60);
-    m_fpsSpin->setValue(kDefaultFps);
+    m_fpsSpin->setRange(1, 120);
+    m_fpsSpin->setValue(m_project ? m_project->fps() : kDefaultFps);
     m_fpsSpin->setFocusPolicy(Qt::ClickFocus);
     connect(m_fpsSpin, &QSpinBox::valueChanged, this, [this](int fps) {
         if (m_playing) m_playTimer->start(1000 / std::max(1, fps));
+        if (m_project && m_project->fps() != fps) {
+            m_project->setFps(fps);
+            markProjectDirty();
+            updateWindowTitle();
+        }
         updateXsheetPanel();
         if (m_projectManagerWindow) {  // 秒換算・総尺の集計をfps変更に追従させる
             m_projectManagerWindow->setFps(fps);
             m_projectManagerWindow->refresh();
         }
     });
-    toolBar->addWidget(m_fpsSpin);
+    frameBar->addWidget(m_fpsSpin);
 
     // --- 操作メニュー(ゲーム風ショートカット) ---
     // ユーザー要望: 「コマ送りにいちいちタイムシートをクリックするのが面倒。よく使う機能をWASDなどゲーム感覚で」
@@ -2907,6 +3044,12 @@ void MainWindow::setupToolBar() {
     perapera::ui::bindShortcut(eyedropperKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("eyedropper"));
     connect(eyedropperKeyAction, &QAction::triggered, eyedropperAction, &QAction::trigger);
+
+    operationMenu->addSeparator();
+    QAction* shortcutSettingsAction =
+        operationMenu->addAction(tr("ショートカット設定..."));
+    connect(shortcutSettingsAction, &QAction::triggered,
+            this, &MainWindow::openShortcutSettingsDialog);
 }
 
 void MainWindow::debugSetupOnionDemo() {
@@ -4796,12 +4939,45 @@ void MainWindow::openProjectManagerWindow() {
             addCut();
             if (m_projectManagerWindow) m_projectManagerWindow->refresh();
         });
+        connect(m_projectManagerWindow, &ProjectManagerWindow::duplicateCutRequested, this,
+                [this](int index) {
+                    core::Scene& scene = m_project->scene(0);
+                    if (index < 0 || static_cast<size_t>(index) >= scene.cutCount()) return;
+
+                    const QString base =
+                        QString::fromStdString(scene.cut(static_cast<size_t>(index)).name()) +
+                        tr(" コピー");
+                    QString copyName = base;
+                    int suffix = 2;
+                    auto nameExists = [&scene](const QString& candidate) {
+                        for (size_t i = 0; i < scene.cutCount(); ++i) {
+                            if (QString::fromStdString(scene.cut(i).name()) == candidate) return true;
+                        }
+                        return false;
+                    };
+                    while (nameExists(copyName)) {
+                        copyName = tr("%1 %2").arg(base).arg(suffix++);
+                    }
+
+                    core::Cut& copy =
+                        scene.duplicateCut(static_cast<size_t>(index), copyName.toStdString());
+                    markProjectDirty();
+                    markCutDirty(copy);
+                    updateWindowTitle();
+                    setActiveCut(index + 1);
+                    refreshEditWindowIfOpen();
+                    if (m_projectManagerWindow) {
+                        m_projectManagerWindow->selectCut(index + 1);
+                    }
+                    statusBar()->showMessage(
+                        tr("「%1」を複製しました").arg(copyName), 3000);
+                });
         // プロジェクト操作: 新規(作成ダイアログ)/開く/保存はメインウィンドウの既存フローに委譲する
         connect(m_projectManagerWindow, &ProjectManagerWindow::newProjectRequested, this, &MainWindow::onNewProject);
         connect(m_projectManagerWindow, &ProjectManagerWindow::openProjectRequested, this, &MainWindow::open);
         connect(m_projectManagerWindow, &ProjectManagerWindow::saveProjectRequested, this, &MainWindow::save);
         connect(m_projectManagerWindow, &ProjectManagerWindow::projectSettingsRequested, this,
-                &MainWindow::openCanvasSizeDialog);
+                [this] { openCanvasSizeDialog(m_projectManagerWindow); });
         // カット削除: アクティブカットのクランプ等はメインウィンドウ側で行う
         connect(m_projectManagerWindow, &ProjectManagerWindow::removeCutRequested, this, [this](int index) {
             core::Scene& scene = m_project->scene(0);
@@ -4816,7 +4992,7 @@ void MainWindow::openProjectManagerWindow() {
         });
     }
     m_projectManagerWindow->setProject(m_project.get());
-    m_projectManagerWindow->setFps(m_fpsSpin ? m_fpsSpin->value() : 24);
+    m_projectManagerWindow->setFps(m_project->fps());
     m_projectManagerWindow->refresh();
     showTopLevelOnScreen(m_projectManagerWindow);
 }

@@ -37,6 +37,22 @@ void Cut::moveCel(size_t from, size_t to) {
     m_cels.insert(m_cels.begin() + static_cast<ptrdiff_t>(to), std::move(moved));
 }
 
+std::unique_ptr<Cut> Cut::clone(std::string name) const {
+    auto copy = std::make_unique<Cut>(std::move(name));
+    copy->m_action = m_action;
+    copy->m_dialogue = m_dialogue;
+    copy->m_status = m_status;
+    copy->m_frameCount = m_frameCount;
+    copy->m_previz = m_previz;
+    copy->m_cameraKeys = m_cameraKeys;
+    copy->m_effects = m_effects;
+    copy->m_multiplane = m_multiplane;
+    for (const auto& cel : m_cels) {
+        copy->m_cels.push_back(cel->clone(cel->name()));
+    }
+    return copy;
+}
+
 std::optional<CameraFrameState> Cut::cameraFrameAt(size_t frame) const {
     if (m_cameraKeys.empty()) return std::nullopt;
 

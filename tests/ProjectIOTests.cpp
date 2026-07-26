@@ -562,6 +562,7 @@ TEST_CASE("Canvas size round trips through ppproj", "[core][io][canvassize]") {
 
     core::Project project("CanvasSize");
     project.setCanvasSize(2048, 858);  // シネスコ(2.39:1)
+    project.setFps(30);
     project.addScene("S").addCut("C").addCel("A").addLayer("L").addFrame();
 
     std::string error;
@@ -570,6 +571,7 @@ TEST_CASE("Canvas size round trips through ppproj", "[core][io][canvassize]") {
     REQUIRE(loaded != nullptr);
     REQUIRE(loaded->canvasWidth() == 2048);
     REQUIRE(loaded->canvasHeight() == 858);
+    REQUIRE(loaded->fps() == 30);
 
     std::filesystem::remove_all(folder);
 }
@@ -587,6 +589,7 @@ TEST_CASE("Canvas size defaults to Full HD when absent from an old project file"
     REQUIRE(loaded != nullptr);
     REQUIRE(loaded->canvasWidth() == 1920);
     REQUIRE(loaded->canvasHeight() == 1080);
+    REQUIRE(loaded->fps() == 24);
 
     std::filesystem::remove_all(folder);
 }
@@ -596,6 +599,14 @@ TEST_CASE("Canvas size setter clamps out-of-range values", "[core][canvassize]")
     project.setCanvasSize(4, 999999);
     REQUIRE(project.canvasWidth() == 16);
     REQUIRE(project.canvasHeight() == 8192);
+}
+
+TEST_CASE("Project FPS setter clamps to a practical range", "[core][fps]") {
+    core::Project project("FPS");
+    project.setFps(0);
+    REQUIRE(project.fps() == 1);
+    project.setFps(999);
+    REQUIRE(project.fps() == 120);
 }
 
 TEST_CASE("Cut status round trips through ppproj", "[core][io][edit]") {

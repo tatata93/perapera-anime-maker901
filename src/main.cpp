@@ -8,6 +8,7 @@
 #include <QPixmap>
 #include <QSize>
 #include <QTabWidget>
+#include <QTextStream>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
@@ -217,16 +218,62 @@ int main(int argc, char* argv[]) {
     }
 
     MainWindow window;
-    window.resize(args.contains(QStringLiteral("--compact-window-test")) ? QSize(1024, 700) : QSize(1280, 800));
+    const QSize initialWindowSize =
+        args.contains(QStringLiteral("--compact-window-test")) ? QSize(1024, 700)
+                                                                : QSize(1280, 800);
+    window.resize(initialWindowSize);
     window.show();
     perapera::ui::keepWindowOnScreen(&window);
-    QTimer::singleShot(0, &window, [&window] { perapera::ui::keepWindowOnScreen(&window); });
+    // 表示前はQMainWindow内のドック/ツールバーのサイズヒントが過大になることがある。
+    // レイアウト確定後に希望サイズを再適用し、起動時からモニター内へ収める。
+    QTimer::singleShot(0, &window, [&window, initialWindowSize] {
+        window.resize(initialWindowSize);
+        perapera::ui::keepWindowOnScreen(&window);
+    });
 
     // "--"で始まる動作確認用フックが1つもない場合のみクラッシュリカバリ確認を行う。
     // ヘッドレステスト実行時に復元ダイアログが出て止まってしまうのを防ぐ
     const bool hasTestFlag = std::any_of(args.begin(), args.end(), [](const QString& arg) { return arg.startsWith("--"); });
     if (!hasTestFlag) {
         window.checkAutosaveRecovery();
+    }
+
+    const int layoutMetricsIndex = args.indexOf("--layout-metrics-test");
+    if (layoutMetricsIndex >= 0 && layoutMetricsIndex + 1 < args.size()) {
+        const QString outputPath = args.at(layoutMetricsIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            struct Metric {
+                QWidget* widget = nullptr;
+                QSize minimumHint;
+                QSize hint;
+            };
+            std::vector<Metric> metrics;
+            const auto widgets = window.findChildren<QWidget*>();
+            metrics.reserve(static_cast<size_t>(widgets.size()));
+            for (QWidget* widget : widgets) {
+                metrics.push_back({widget, widget->minimumSizeHint(), widget->sizeHint()});
+            }
+            std::sort(metrics.begin(), metrics.end(), [](const Metric& a, const Metric& b) {
+                return a.minimumHint.width() > b.minimumHint.width();
+            });
+
+            QFile file(outputPath);
+            if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                QTextStream stream(&file);
+                stream << "window size=" << window.size().width() << "x" << window.size().height()
+                       << " minimumHint=" << window.minimumSizeHint().width() << "x"
+                       << window.minimumSizeHint().height() << " sizeHint="
+                       << window.sizeHint().width() << "x" << window.sizeHint().height() << '\n';
+                for (size_t i = 0; i < std::min<size_t>(metrics.size(), 30); ++i) {
+                    const Metric& metric = metrics[i];
+                    stream << metric.minimumHint.width() << "x" << metric.minimumHint.height()
+                           << " hint=" << metric.hint.width() << "x" << metric.hint.height()
+                           << " class=" << metric.widget->metaObject()->className()
+                           << " name=" << metric.widget->objectName() << '\n';
+                }
+            }
+            QApplication::exit(0);
+        });
     }
 
     // 動作確認用: --stroke-test <出力PNG> でストロークを自動描画し、
@@ -929,8 +976,7 @@ int main(int argc, char* argv[]) {
     if (shortcutSettingsIndex >= 0 && shortcutSettingsIndex + 1 < args.size()) {
         const QString outputPath = args.at(shortcutSettingsIndex + 1);
         QTimer::singleShot(500, &window, [&window, outputPath] {
-            QDialog* dialog = window.debugOpenCanvasSizeDialog();
-            if (auto* tabs = dialog->findChild<QTabWidget*>()) tabs->setCurrentIndex(1);
+            QDialog* dialog = window.debugOpenShortcutSettingsDialog();
             QTimer::singleShot(300, &window, [dialog, outputPath] {
                 dialog->grab().save(outputPath);
                 QApplication::exit(0);

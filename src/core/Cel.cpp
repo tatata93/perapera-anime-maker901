@@ -111,7 +111,7 @@ void Cel::moveLayer(size_t from, size_t to) {
     m_layers.insert(m_layers.begin() + static_cast<ptrdiff_t>(to), std::move(moved));
 }
 
-void Cel::resizePaper(int newW, int newH) {
+void Cel::resizeBitmaps(int newW, int newH) {
     if (newW <= 0 || newH <= 0) return;  // 不正値は無視する
 
     for (auto& layer : m_layers) {
@@ -124,8 +124,20 @@ void Cel::resizePaper(int newW, int newH) {
             bitmap = std::move(resized);
         }
     }
+}
+
+void Cel::resizePaper(int newW, int newH) {
+    if (newW <= 0 || newH <= 0) return;
+    resizeBitmaps(newW, newH);
     m_paperWidth = newW;
     m_paperHeight = newH;
+}
+
+void Cel::resizeCanvasPaper(int newW, int newH) {
+    if (newW <= 0 || newH <= 0) return;
+    resizeBitmaps(newW, newH);
+    m_paperWidth = 0;
+    m_paperHeight = 0;
 }
 
 std::unique_ptr<Cel> Cel::clone(std::string name) const {
