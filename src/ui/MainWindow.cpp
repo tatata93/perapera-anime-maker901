@@ -4823,11 +4823,12 @@ void MainWindow::openStoryboardWindow() {
         // 「パネルからカット作成」: 選択パネルと同じカット番号を持つ全パネルのduration合計を尺として
         // 新規カットを作る(1カット複数コマの尺を合算する仕様)
         connect(m_storyboardWindow, &StoryboardWindow::createCutRequested, this,
-                [this](const QString& cutLabel, int totalFrames) {
+                [this](const QString& cutLabel, int totalFrames, const core::PrevizScene& previz) {
                     core::Scene& scene = m_project->scene(0);
                     core::Cut& cut = scene.addCut((QStringLiteral("カット ") + cutLabel).toStdString());
                     initializeCut(cut, canvasWidth(), canvasHeight());
                     cut.setFrameCount(static_cast<size_t>(std::max(1, totalFrames)));
+                    cut.previz() = previz;
                     markProjectDirty();  // シーンのカット構成(cutIds)が変わる
                     markCutDirty(cut);
                     updateWindowTitle();

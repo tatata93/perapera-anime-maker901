@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QMainWindow>
 #include <QPointF>
+#include <cstddef>
 #include <memory>
 
 #include "core/CommandStack.h"
@@ -22,11 +23,15 @@ class QWidget;
 class FloatingCanvasWindow;
 class GLCanvas;
 class LayerPanel;
+class PrevizWindow;
+class QImage;
 
 namespace core {
 class Project;
 class Command;
 enum class LayerRole;
+struct StoryboardPanel;
+struct PrevizScene;
 }
 
 // 絵コンテウィンドウ(別ウィンドウ)。絵コンテは全工程の前に単体で描くもの:
@@ -63,7 +68,7 @@ signals:
     void edited();  // カット番号/内容/セリフ/尺またはコンテ絵が編集された
     // 「パネルからカット作成」。cutLabelは選択パネルのカット番号、totalFramesは
     // 同じカット番号を持つ全パネルのduration合計
-    void createCutRequested(QString cutLabel, int totalFrames);
+    void createCutRequested(QString cutLabel, int totalFrames, const core::PrevizScene& previz);
 
 private:
     void onItemChanged(QTableWidgetItem* item);
@@ -96,6 +101,13 @@ private:
     void resizeStoryboardCanvas();
     void exportStoryboardPdf();
     bool writeStoryboardPdf(const QString& pdfPath);
+    void openPrevizWindow();
+    void togglePrevizUnderlay(bool checked);
+    void updateStoryboardUnderlay();
+    void bakePrevizToLayer();
+    PrevizWindow* ensurePrevizWindow();
+    core::StoryboardPanel* selectedPanel();
+    QImage renderSelectedPrevizImage(const QSize& targetSize);
     void refreshLayerPanel();
     void addPaintLayer(core::LayerRole role);
     void duplicatePaintLayer(int layerIndex);
@@ -146,6 +158,11 @@ private:
 
     // 直近のストロークコマンドと受領時刻。ダブルクリックの1回目で打たれてしまった点を、
     // ダブルクリック検出時に取り消す(undo)ために保持する
+    QPushButton* m_previzUnderlayButton = nullptr;
+    PrevizWindow* m_previzWindow = nullptr;
+    bool m_previzUnderlay = false;
+    size_t m_previzFrame = 0;
+
     core::CommandStack m_commands;
     QAction* m_undoAction = nullptr;
     QAction* m_redoAction = nullptr;

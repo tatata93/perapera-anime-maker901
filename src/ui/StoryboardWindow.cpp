@@ -40,6 +40,8 @@
 
 #include "core/Project.h"
 #include "core/StrokeCommand.h"
+#include "previz/PrevizViewport.h"
+#include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/CanvasSizeDialog.h"
 #include "ui/FloatingCanvasWindow.h"
@@ -117,6 +119,20 @@ QImage panelDrawingImage(const core::StoryboardPanel& panel) {
             perapera::ui::compositePaintLayers(panel.layers, size.width(), size.height()));
     }
     return perapera::ui::bitmapToImageCopy(panel.drawing);
+}
+
+core::Bitmap imageToBitmap(const QImage& image) {
+    const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+    core::Bitmap bitmap(rgba.width(), rgba.height());
+    if (rgba.isNull()) return bitmap;
+    for (int y = 0; y < rgba.height(); ++y) {
+        const uchar* row = rgba.constScanLine(y);
+        for (int x = 0; x < rgba.width(); ++x) {
+            const uchar* px = row + static_cast<size_t>(x) * 4;
+            bitmap.setPixel(x, y, {px[0], px[1], px[2], px[3]});
+        }
+    }
+    return bitmap;
 }
 
 void syncStoryboardPanelComposite(core::StoryboardPanel& panel) {
@@ -531,6 +547,13 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_zoomButton = new QPushButton(tr("絵を拡大"), rightContainer);
     m_zoomButton->setCheckable(true);
     toolRow->addWidget(m_zoomButton);
+    auto* previzButton = new QPushButton(tr("プリビズ"), rightContainer);
+    toolRow->addWidget(previzButton);
+    m_previzUnderlayButton = new QPushButton(tr("下敷き"), rightContainer);
+    m_previzUnderlayButton->setCheckable(true);
+    toolRow->addWidget(m_previzUnderlayButton);
+    auto* previzBakeButton = new QPushButton(tr("絵に保存"), rightContainer);
+    toolRow->addWidget(previzBakeButton);
     auto* resizeButton = new QPushButton(tr("サイズ"), rightContainer);
     toolRow->addWidget(resizeButton);
     auto* exportButton = new QPushButton(tr("A4書き出し"), rightContainer);
@@ -624,6 +647,9 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(m_radiusSlider, &QSlider::valueChanged, this, &StoryboardWindow::onRadiusSliderChanged);
     connect(m_colorButton, &QPushButton::clicked, this, &StoryboardWindow::chooseColor);
+    connect(previzButton, &QPushButton::clicked, this, &StoryboardWindow::openPrevizWindow);
+    connect(m_previzUnderlayButton, &QPushButton::toggled, this, &StoryboardWindow::togglePrevizUnderlay);
+    connect(previzBakeButton, &QPushButton::clicked, this, &StoryboardWindow::bakePrevizToLayer);
     connect(resizeButton, &QPushButton::clicked, this, &StoryboardWindow::resizeStoryboardCanvas);
     connect(exportButton, &QPushButton::clicked, this, &StoryboardWindow::exportStoryboardPdf);
     connect(detachButton, &QPushButton::clicked, this, &StoryboardWindow::detachCanvas);
@@ -728,6 +754,13 @@ void StoryboardWindow::setProject(core::Project* project) {
     clearUndoHistory();
     m_project = project;
     m_selectedRow = -1;
+    m_previzUnderlay = false;
+    m_previzFrame = 0;
+    if (m_previzUnderlayButton) {
+        const QSignalBlocker blocker(m_previzUnderlayButton);
+        m_previzUnderlayButton->setChecked(false);
+    }
+    if (m_previzWindow) m_previzWindow->setScene(nullptr);
 }
 
 void StoryboardWindow::updateUndoActions() {
@@ -855,8 +888,7 @@ void StoryboardWindow::onItemChanged(QTableWidgetItem* item) {
             panel.cutLabel = item->text().toStdString();
             // カット番号はコンテ用紙のカットNo欄に印字されるため、選択中パネルなら下敷きを敷き直す
             if (row == m_selectedRow) {
-                m_canvas->setUnderlayImage(renderSheetUnderlay(panel, row + 1));
-                m_canvas->setUnderlayOpacity(1.0f);
+                updateStoryboardUnderlay();
             }
             emit edited();
             break;
@@ -873,8 +905,7 @@ void StoryboardWindow::onItemChanged(QTableWidgetItem* item) {
             panel.durationFrames = static_cast<size_t>(value);
             // 尺コマ数はコンテ用紙の秒欄に印字されるため、選択中パネルなら下敷きを敷き直す
             if (row == m_selectedRow) {
-                m_canvas->setUnderlayImage(renderSheetUnderlay(panel, row + 1));
-                m_canvas->setUnderlayOpacity(1.0f);
+                updateStoryboardUnderlay();
             }
             updateTotalDurationLabel();
             emit edited();
@@ -969,7 +1000,7 @@ void StoryboardWindow::createCutFromPanel() {
     for (const auto& panel : panels) {
         if (panel.cutLabel == label) totalFrames += static_cast<int>(panel.durationFrames);
     }
-    emit createCutRequested(QString::fromStdString(label), totalFrames);
+    emit createCutRequested(QString::fromStdString(label), totalFrames, panels[static_cast<size_t>(row)].previz);
 }
 
 void StoryboardWindow::onStrokeFinished() {
@@ -997,6 +1028,8 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
     if (!m_project || m_project->sceneCount() == 0) {
         m_canvas->setBitmap(nullptr);
         m_canvas->setFillBoundaryLayers({});
+        m_canvas->clearUnderlay();
+        if (m_previzWindow) m_previzWindow->setScene(nullptr);
         m_updating = true;
         m_actionEdit->clear();
         m_dialogueEdit->clear();
@@ -1010,6 +1043,8 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= panels.size()) {
         m_canvas->setBitmap(nullptr);
         m_canvas->setFillBoundaryLayers({});
+        m_canvas->clearUnderlay();
+        if (m_previzWindow) m_previzWindow->setScene(nullptr);
         m_updating = true;
         m_actionEdit->clear();
         m_dialogueEdit->clear();
@@ -1026,6 +1061,12 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
     syncStoryboardPanelComposite(panel);
     const QSize size = panelCanvasSize(panel);
     m_canvas->setCanvasSize(size.width(), size.height());
+    if (m_previzWindow && m_previzWindow->isVisible()) {
+        const size_t frameCount = std::max<size_t>(1, panel.durationFrames);
+        m_previzFrame = std::min(m_previzFrame, frameCount - 1);
+        m_previzWindow->setScene(&panel.previz);
+        m_previzWindow->setTimeline(m_previzFrame, frameCount);
+    }
 
     std::vector<GLCanvas::StackEntry> stack;
     std::vector<const core::Bitmap*> boundary;
@@ -1049,8 +1090,7 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
 
     // コンテ用紙の下敷き(罫線・見出し・カット番号・内容/セリフ・秒)を敷く。
     // 手書きインク(drawing)はこの上に重なる
-    m_canvas->setUnderlayImage(renderSheetUnderlay(panel, m_selectedRow + 1));
-    m_canvas->setUnderlayOpacity(1.0f);
+    updateStoryboardUnderlay();
 
     // 絵の枠を拡大表示中だった場合は、パネル切替後も拡大状態を維持する
     if (m_frameZoomed) m_canvas->zoomToCanvasRect(scaledFrameRect(size.width(), size.height()));
@@ -1252,6 +1292,130 @@ void StoryboardWindow::syncSelectedPanelComposite() {
     auto& panels = m_project->scene(0).storyboard();
     if (static_cast<size_t>(m_selectedRow) >= panels.size()) return;
     syncStoryboardPanelComposite(panels[static_cast<size_t>(m_selectedRow)]);
+}
+
+core::StoryboardPanel* StoryboardWindow::selectedPanel() {
+    if (!m_project || m_project->sceneCount() == 0 || m_selectedRow < 0) return nullptr;
+    auto& panels = m_project->scene(0).storyboard();
+    if (static_cast<size_t>(m_selectedRow) >= panels.size()) return nullptr;
+    return &panels[static_cast<size_t>(m_selectedRow)];
+}
+
+PrevizWindow* StoryboardWindow::ensurePrevizWindow() {
+    if (!m_previzWindow) {
+        m_previzWindow = new PrevizWindow(this);
+        m_previzWindow->setWindowFlag(Qt::Window, true);
+        m_previzWindow->setAttribute(Qt::WA_QuitOnClose, false);
+        perapera::ui::installRetroWindowFrame(m_previzWindow);
+        connect(m_previzWindow, &PrevizWindow::sceneEdited, this, [this] {
+            updateStoryboardUnderlay();
+            if (m_selectedRow >= 0) updateThumbnail(m_selectedRow);
+            emit edited();
+        });
+        connect(m_previzWindow, &PrevizWindow::frameChangeRequested, this, [this](int frame) {
+            m_previzFrame = static_cast<size_t>(std::max(0, frame));
+            if (core::StoryboardPanel* panel = selectedPanel()) {
+                const size_t frameCount = std::max<size_t>(1, panel->durationFrames);
+                m_previzFrame = std::min(m_previzFrame, frameCount - 1);
+                m_previzWindow->setTimeline(m_previzFrame, frameCount);
+            }
+            updateStoryboardUnderlay();
+        });
+    }
+    return m_previzWindow;
+}
+
+void StoryboardWindow::openPrevizWindow() {
+    core::StoryboardPanel* panel = selectedPanel();
+    if (!panel) return;
+    PrevizWindow* window = ensurePrevizWindow();
+    const size_t frameCount = std::max<size_t>(1, panel->durationFrames);
+    m_previzFrame = std::min(m_previzFrame, frameCount - 1);
+    window->setScene(&panel->previz);
+    window->setTimeline(m_previzFrame, frameCount);
+    perapera::ui::showAndActivateWindow(window);
+}
+
+QImage StoryboardWindow::renderSelectedPrevizImage(const QSize& targetSize) {
+    core::StoryboardPanel* panel = selectedPanel();
+    if (!panel || targetSize.width() <= 0 || targetSize.height() <= 0) return QImage();
+    PrevizWindow* window = ensurePrevizWindow();
+    const size_t frameCount = std::max<size_t>(1, panel->durationFrames);
+    m_previzFrame = std::min(m_previzFrame, frameCount - 1);
+    window->setScene(&panel->previz);
+    window->setTimeline(m_previzFrame, frameCount);
+    if (!window->isVisible()) window->show();
+    perapera::ui::keepWindowOnScreen(window);
+    QApplication::processEvents();
+    QImage image = window->viewport()->renderCameraViewImage(
+        static_cast<float>(targetSize.width()) / std::max(1, targetSize.height()));
+    return image.scaled(targetSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+        .convertToFormat(QImage::Format_RGBA8888);
+}
+
+void StoryboardWindow::updateStoryboardUnderlay() {
+    if (!m_canvas) return;
+    core::StoryboardPanel* panel = selectedPanel();
+    if (!panel) {
+        m_canvas->clearUnderlay();
+        return;
+    }
+    QImage underlay = renderSheetUnderlay(*panel, m_selectedRow + 1).convertToFormat(QImage::Format_RGBA8888);
+    if (m_previzUnderlay) {
+        const QRect frameRect = scaledFrameRect(underlay.width(), underlay.height());
+        const QImage previz = renderSelectedPrevizImage(frameRect.size());
+        if (!previz.isNull()) {
+            QPainter painter(&underlay);
+            painter.setOpacity(0.55);
+            painter.drawImage(frameRect, previz);
+            painter.end();
+        }
+    }
+    m_canvas->setUnderlayImage(underlay);
+    m_canvas->setUnderlayOpacity(1.0f);
+}
+
+void StoryboardWindow::togglePrevizUnderlay(bool checked) {
+    if (checked && !selectedPanel()) {
+        const QSignalBlocker blocker(m_previzUnderlayButton);
+        m_previzUnderlayButton->setChecked(false);
+        return;
+    }
+    m_previzUnderlay = checked;
+    if (checked) openPrevizWindow();
+    updateStoryboardUnderlay();
+}
+
+void StoryboardWindow::bakePrevizToLayer() {
+    core::StoryboardPanel* panel = selectedPanel();
+    if (!panel) return;
+    clearUndoHistory();
+    syncStoryboardPanelComposite(*panel);
+    const QSize size = panelCanvasSize(*panel);
+    const QRect frameRect = scaledFrameRect(size.width(), size.height());
+    const QImage previz = renderSelectedPrevizImage(frameRect.size());
+    if (previz.isNull()) return;
+
+    QImage layerImage(size, QImage::Format_RGBA8888);
+    layerImage.fill(Qt::transparent);
+    {
+        QPainter painter(&layerImage);
+        painter.drawImage(frameRect, previz);
+        painter.end();
+    }
+
+    core::PaintLayer layer;
+    layer.name = "プリビズ";
+    layer.role = core::LayerRole::Normal;
+    layer.bitmap = imageToBitmap(layerImage);
+    const size_t insertAt = std::min(panel->activeLayer + 1, panel->layers.size());
+    panel->layers.insert(panel->layers.begin() + static_cast<ptrdiff_t>(insertAt), std::move(layer));
+    panel->activeLayer = insertAt;
+    syncStoryboardPanelComposite(*panel);
+    m_canvas->clearTextureCache();
+    bindCanvasToSelectedPanel();
+    updateThumbnail(m_selectedRow);
+    emit edited();
 }
 
 void StoryboardWindow::refreshLayerPanel() {
@@ -1467,8 +1631,7 @@ void StoryboardWindow::onActionTextChanged() {
     }
     m_updating = false;
     // コンテ用紙の下敷きを最新の内容テキストで敷き直す(手書きインクはそのまま重なる)
-    m_canvas->setUnderlayImage(renderSheetUnderlay(panel, m_selectedRow + 1));
-    m_canvas->setUnderlayOpacity(1.0f);
+    updateStoryboardUnderlay();
     emit edited();
 }
 
@@ -1485,8 +1648,7 @@ void StoryboardWindow::onDialogueTextChanged() {
     }
     m_updating = false;
     // コンテ用紙の下敷きを最新のセリフテキストで敷き直す(手書きインクはそのまま重なる)
-    m_canvas->setUnderlayImage(renderSheetUnderlay(panel, m_selectedRow + 1));
-    m_canvas->setUnderlayOpacity(1.0f);
+    updateStoryboardUnderlay();
     emit edited();
 }
 

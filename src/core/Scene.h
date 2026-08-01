@@ -7,6 +7,7 @@
 #include "Bitmap.h"
 #include "Cut.h"
 #include "PaintLayer.h"
+#include "Previz.h"
 
 namespace core {
 
@@ -19,6 +20,7 @@ struct StoryboardPanel {
     Bitmap drawing;
     std::vector<PaintLayer> layers;
     size_t activeLayer = 0;
+    PrevizScene previz;
     std::string cutLabel;        // カット番号/名(自由記入)
     std::string action;          // 内容(アクション)
     std::string dialogue;        // セリフ

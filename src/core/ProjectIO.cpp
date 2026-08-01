@@ -1090,6 +1090,7 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& folder
                 jPanel["dialogue"] = panel.dialogue;
                 jPanel["duration"] = panel.durationFrames;
                 jPanel["activeLayer"] = panel.activeLayer;
+                if (!panel.previz.isEmpty()) jPanel["previz"] = previzToJson(panel.previz);
                 if (!writeBitmapBlob(panel.drawing, jPanel, blobs, errorOut)) return false;
                 if (!writePaintLayers(panel.layers, jPanel, blobs, errorOut)) return false;
                 jPanels.push_back(std::move(jPanel));
@@ -1112,6 +1113,7 @@ bool ProjectIO::save(const Project& project, const std::filesystem::path& folder
             jBoard["name"] = board.name;
             jBoard["finalStamp"] = board.finalStamp;
             jBoard["activeLayer"] = board.activeLayer;
+            if (!board.previz.isEmpty()) jBoard["previz"] = previzToJson(board.previz);
             if (!writeBitmapBlob(board.image, jBoard, blobs, errorOut)) return false;
             if (!writePaintLayers(board.layers, jBoard, blobs, errorOut)) return false;
             // 色指定(名前付き色見本)。空なら省略する
@@ -1238,6 +1240,7 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                             return nullptr;
                         }
                         panel.activeLayer = jPanel.value("activeLayer", static_cast<size_t>(0));
+                        if (jPanel.contains("previz")) previzFromJson(jPanel.at("previz"), panel.previz);
                         if (!readPaintLayers(jPanel, sbContainer.blobBase(), sbContainer.blobTotal(), &panel.layers,
                                              errorOut)) {
                             return nullptr;
@@ -1264,6 +1267,7 @@ std::unique_ptr<Project> ProjectIO::load(const std::filesystem::path& path, std:
                         return nullptr;
                     }
                     board.activeLayer = jBoard.value("activeLayer", static_cast<size_t>(0));
+                    if (jBoard.contains("previz")) previzFromJson(jBoard.at("previz"), board.previz);
                     if (!readPaintLayers(jBoard, boardsContainer.blobBase(), boardsContainer.blobTotal(), &board.layers,
                                          errorOut)) {
                         return nullptr;

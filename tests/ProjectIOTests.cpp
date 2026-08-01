@@ -402,6 +402,16 @@ TEST_CASE("Storyboard panels round trip through ppproj", "[core][io][storyboard]
     panel1.layers.push_back(storyboardLine);
     panel1.layers.push_back(storyboardTrace);
     panel1.activeLayer = 1;
+    core::PrevizModel storyboardModel;
+    storyboardModel.name = "Storyboard Box";
+    storyboardModel.filePath = ":box";
+    storyboardModel.transform.position = {1.0f, 2.0f, 3.0f};
+    storyboardModel.transform.scale = {1.5f, 1.0f, 0.5f};
+    panel1.previz.models.push_back(storyboardModel);
+    core::PrevizCameraState storyboardCameraKey;
+    storyboardCameraKey.position = {0.0f, 1.5f, 8.0f};
+    storyboardCameraKey.focalLengthMm = 85.0f;
+    panel1.previz.camera.keys[12] = storyboardCameraKey;
     scene.storyboard().push_back(std::move(panel1));
 
     core::StoryboardPanel panel2;  // 同じカット番号の2コマ目(絵は未描画)
@@ -438,9 +448,17 @@ TEST_CASE("Storyboard panels round trip through ppproj", "[core][io][storyboard]
     REQUIRE(sb[0].layers[1].opacity < 0.36);
     REQUIRE(sb[0].layers[1].role == core::LayerRole::ColorTrace);
     REQUIRE(sb[0].layers[1].bitmap.pixel(2, 2).a == 128);
+    REQUIRE(sb[0].previz.models.size() == 1);
+    REQUIRE(sb[0].previz.models[0].name == "Storyboard Box");
+    REQUIRE(sb[0].previz.models[0].filePath == ":box");
+    REQUIRE(sb[0].previz.models[0].transform.position.x == 1.0f);
+    REQUIRE(sb[0].previz.models[0].transform.scale.x == 1.5f);
+    REQUIRE(sb[0].previz.camera.keys.size() == 1);
+    REQUIRE(sb[0].previz.camera.keys.at(12).focalLengthMm == 85.0f);
     REQUIRE(sb[1].cutLabel == "1");
     REQUIRE(sb[1].durationFrames == 12);
     REQUIRE(sb[1].drawing.isEmpty());
+    REQUIRE(sb[1].previz.models.empty());
 
     std::filesystem::remove_all(folder);
 }
@@ -481,6 +499,14 @@ TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]"
     label.fontPixelSize = 12;
     label.color = {15, 25, 35, 245};
     board1.textBoxes.push_back(label);
+    core::PrevizModel boardModel;
+    boardModel.name = "Board Humanoid";
+    boardModel.filePath = ":humanoid";
+    boardModel.transform.position = {-2.0f, 0.0f, 4.0f};
+    boardModel.humanoidBody.headScale = 1.25f;
+    board1.previz.models.push_back(boardModel);
+    board1.previz.camera.state.focalLengthMm = 35.0f;
+    board1.previz.lights[0].state.intensity = 3.5f;
     project.settingBoards().push_back(std::move(board1));
 
     // 色指定(色指定書)2色
@@ -536,10 +562,18 @@ TEST_CASE("Setting boards round trip through ppproj", "[core][io][settingboard]"
     REQUIRE(boards[0].textBoxes[0].fontPixelSize == 12);
     REQUIRE(boards[0].textBoxes[0].color.b == 35);
     REQUIRE(boards[0].textBoxes[0].color.a == 245);
+    REQUIRE(boards[0].previz.models.size() == 1);
+    REQUIRE(boards[0].previz.models[0].name == "Board Humanoid");
+    REQUIRE(boards[0].previz.models[0].filePath == ":humanoid");
+    REQUIRE(boards[0].previz.models[0].transform.position.x == -2.0f);
+    REQUIRE(boards[0].previz.models[0].humanoidBody.headScale == 1.25f);
+    REQUIRE(boards[0].previz.camera.state.focalLengthMm == 35.0f);
+    REQUIRE(boards[0].previz.lights[0].state.intensity == 3.5f);
     REQUIRE(boards[1].name == "美術: 教室");
     REQUIRE_FALSE(boards[1].finalStamp);
     REQUIRE(boards[1].image.isEmpty());
     REQUIRE(boards[1].textBoxes.empty());
+    REQUIRE(boards[1].previz.models.empty());
 
     // 色指定の往復確認
     REQUIRE(boards[0].colorSpecs.size() == 2);

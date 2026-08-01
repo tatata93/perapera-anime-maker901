@@ -1,6 +1,7 @@
 #include "SettingBoardWindow.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QColorDialog>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -37,6 +38,8 @@
 
 #include "core/Project.h"
 #include "core/StrokeCommand.h"
+#include "previz/PrevizViewport.h"
+#include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/CanvasSizeDialog.h"
 #include "ui/FloatingCanvasWindow.h"
@@ -102,6 +105,20 @@ void pasteImageOntoBoard(core::Bitmap& board, const QImage& source) {
             board.setPixel(bx, by, dst);
         }
     }
+}
+
+core::Bitmap imageToBitmap(const QImage& image) {
+    const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+    core::Bitmap bitmap(rgba.width(), rgba.height());
+    if (rgba.isNull()) return bitmap;
+    for (int y = 0; y < rgba.height(); ++y) {
+        const uchar* row = rgba.constScanLine(y);
+        for (int x = 0; x < rgba.width(); ++x) {
+            const uchar* px = row + static_cast<size_t>(x) * 4;
+            bitmap.setPixel(x, y, {px[0], px[1], px[2], px[3]});
+        }
+    }
+    return bitmap;
 }
 
 void resizeBitmapCentered(core::Bitmap& bitmap, int width, int height) {
@@ -435,6 +452,16 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     auto* pasteButton = new QPushButton(tr("画像を貼る"), rightContainer);
     markAsFinalEditControl(pasteButton);
     toolRow->addWidget(pasteButton);
+    auto* previzButton = new QPushButton(tr("プリビズ"), rightContainer);
+    markAsFinalEditControl(previzButton);
+    toolRow->addWidget(previzButton);
+    m_previzUnderlayButton = new QPushButton(tr("下敷き"), rightContainer);
+    m_previzUnderlayButton->setCheckable(true);
+    markAsFinalEditControl(m_previzUnderlayButton);
+    toolRow->addWidget(m_previzUnderlayButton);
+    auto* previzBakeButton = new QPushButton(tr("絵に保存"), rightContainer);
+    markAsFinalEditControl(previzBakeButton);
+    toolRow->addWidget(previzBakeButton);
     auto* resizeButton = new QPushButton(tr("サイズ"), rightContainer);
     markAsFinalEditControl(resizeButton);
     toolRow->addWidget(resizeButton);
@@ -517,6 +544,9 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_colorButton, &QPushButton::clicked, this, &SettingBoardWindow::chooseColor);
     connect(textButton, &QPushButton::clicked, this, &SettingBoardWindow::editTextBoxes);
     connect(pasteButton, &QPushButton::clicked, this, &SettingBoardWindow::pasteImage);
+    connect(previzButton, &QPushButton::clicked, this, &SettingBoardWindow::openPrevizWindow);
+    connect(m_previzUnderlayButton, &QPushButton::toggled, this, &SettingBoardWindow::togglePrevizUnderlay);
+    connect(previzBakeButton, &QPushButton::clicked, this, &SettingBoardWindow::bakePrevizToLayer);
     connect(resizeButton, &QPushButton::clicked, this, &SettingBoardWindow::resizeBoardCanvas);
     connect(exportButton, &QPushButton::clicked, this, &SettingBoardWindow::exportBoardImage);
     connect(m_finalStampButton, &QPushButton::toggled, this, &SettingBoardWindow::toggleFinalStamp);
@@ -622,6 +652,13 @@ void SettingBoardWindow::setProject(core::Project* project) {
     clearUndoHistory();
     m_project = project;
     m_selectedRow = -1;
+    m_previzUnderlay = false;
+    m_previzFrame = 0;
+    if (m_previzUnderlayButton) {
+        const QSignalBlocker blocker(m_previzUnderlayButton);
+        m_previzUnderlayButton->setChecked(false);
+    }
+    if (m_previzWindow) m_previzWindow->setScene(nullptr);
 }
 
 void SettingBoardWindow::updateUndoActions() {
@@ -1126,6 +1163,13 @@ void SettingBoardWindow::updateEditingLockUi() {
     if (m_canvas) m_canvas->setInputEnabled(editable);
     if (m_layerPanel) m_layerPanel->setEnabled(editable);
     if (m_editLockLabel) m_editLockLabel->setVisible(locked);
+    if (m_previzWindow) m_previzWindow->setEnabled(editable);
+    if (locked && m_previzUnderlayButton && m_previzUnderlayButton->isChecked()) {
+        const QSignalBlocker blocker(m_previzUnderlayButton);
+        m_previzUnderlayButton->setChecked(false);
+        m_previzUnderlay = false;
+        updatePrevizUnderlay();
+    }
     updateUndoActions();
 }
 
@@ -1133,7 +1177,9 @@ void SettingBoardWindow::bindCanvasToSelectedBoard() {
     if (!m_project) {
         m_canvas->setBitmap(nullptr);
         m_canvas->setFillBoundaryLayers({});
+        m_canvas->clearUnderlay();
         m_canvas->clearOverlay();
+        if (m_previzWindow) m_previzWindow->setScene(nullptr);
         if (m_finalStampButton) {
             const QSignalBlocker blocker(m_finalStampButton);
             m_finalStampButton->setChecked(false);
@@ -1147,7 +1193,9 @@ void SettingBoardWindow::bindCanvasToSelectedBoard() {
     if (m_selectedRow < 0 || static_cast<size_t>(m_selectedRow) >= boards.size()) {
         m_canvas->setBitmap(nullptr);
         m_canvas->setFillBoundaryLayers({});
+        m_canvas->clearUnderlay();
         m_canvas->clearOverlay();
+        if (m_previzWindow) m_previzWindow->setScene(nullptr);
         if (m_finalStampButton) {
             const QSignalBlocker blocker(m_finalStampButton);
             m_finalStampButton->setChecked(false);
@@ -1164,6 +1212,11 @@ void SettingBoardWindow::bindCanvasToSelectedBoard() {
     syncSettingBoardComposite(board);
     const QSize size = boardCanvasSize(board);
     m_canvas->setCanvasSize(size.width(), size.height());
+    if (m_previzWindow && m_previzWindow->isVisible()) {
+        m_previzFrame = std::min<size_t>(m_previzFrame, 23);
+        m_previzWindow->setScene(&board.previz);
+        m_previzWindow->setTimeline(m_previzFrame, 24);
+    }
 
     std::vector<GLCanvas::StackEntry> stack;
     std::vector<const core::Bitmap*> boundary;
@@ -1182,6 +1235,7 @@ void SettingBoardWindow::bindCanvasToSelectedBoard() {
         m_finalStampButton->setChecked(board.finalStamp);
     }
     updateFinalStampOverlay();
+    updatePrevizUnderlay();
     refreshLayerPanel();
     updateEditingLockUi();
 }
@@ -1385,6 +1439,111 @@ void SettingBoardWindow::syncSelectedBoardComposite() {
     auto& boards = m_project->settingBoards();
     if (static_cast<size_t>(m_selectedRow) >= boards.size()) return;
     syncSettingBoardComposite(boards[static_cast<size_t>(m_selectedRow)]);
+}
+
+core::SettingBoard* SettingBoardWindow::selectedBoard() {
+    if (!m_project || m_selectedRow < 0) return nullptr;
+    auto& boards = m_project->settingBoards();
+    if (static_cast<size_t>(m_selectedRow) >= boards.size()) return nullptr;
+    return &boards[static_cast<size_t>(m_selectedRow)];
+}
+
+PrevizWindow* SettingBoardWindow::ensurePrevizWindow() {
+    if (!m_previzWindow) {
+        m_previzWindow = new PrevizWindow(this);
+        m_previzWindow->setWindowFlag(Qt::Window, true);
+        m_previzWindow->setAttribute(Qt::WA_QuitOnClose, false);
+        perapera::ui::installRetroWindowFrame(m_previzWindow);
+        connect(m_previzWindow, &PrevizWindow::sceneEdited, this, [this] {
+            if (selectedBoardIsFinal()) return;
+            updatePrevizUnderlay();
+            emit edited();
+        });
+        connect(m_previzWindow, &PrevizWindow::frameChangeRequested, this, [this](int frame) {
+            m_previzFrame = static_cast<size_t>(std::clamp(frame, 0, 23));
+            if (m_previzWindow) m_previzWindow->setTimeline(m_previzFrame, 24);
+            updatePrevizUnderlay();
+        });
+    }
+    return m_previzWindow;
+}
+
+void SettingBoardWindow::openPrevizWindow() {
+    if (selectedBoardIsFinal()) return;
+    core::SettingBoard* board = selectedBoard();
+    if (!board) return;
+    PrevizWindow* window = ensurePrevizWindow();
+    window->setEnabled(true);
+    window->setScene(&board->previz);
+    window->setTimeline(std::min<size_t>(m_previzFrame, 23), 24);
+    perapera::ui::showAndActivateWindow(window);
+}
+
+QImage SettingBoardWindow::renderSelectedPrevizImage(const QSize& targetSize) {
+    core::SettingBoard* board = selectedBoard();
+    if (!board || targetSize.width() <= 0 || targetSize.height() <= 0) return QImage();
+    PrevizWindow* window = ensurePrevizWindow();
+    window->setScene(&board->previz);
+    m_previzFrame = std::min<size_t>(m_previzFrame, 23);
+    window->setTimeline(m_previzFrame, 24);
+    if (!window->isVisible()) window->show();
+    perapera::ui::keepWindowOnScreen(window);
+    QApplication::processEvents();
+    QImage image = window->viewport()->renderCameraViewImage(
+        static_cast<float>(targetSize.width()) / std::max(1, targetSize.height()));
+    return image.scaled(targetSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+        .convertToFormat(QImage::Format_RGBA8888);
+}
+
+void SettingBoardWindow::updatePrevizUnderlay() {
+    if (!m_canvas) return;
+    core::SettingBoard* board = selectedBoard();
+    if (!board || !m_previzUnderlay) {
+        m_canvas->clearUnderlay();
+        return;
+    }
+    const QSize size = boardCanvasSize(*board);
+    const QImage previz = renderSelectedPrevizImage(size);
+    if (previz.isNull()) {
+        m_canvas->clearUnderlay();
+        return;
+    }
+    m_canvas->setUnderlayImage(previz);
+    m_canvas->setUnderlayOpacity(0.55f);
+}
+
+void SettingBoardWindow::togglePrevizUnderlay(bool checked) {
+    if ((checked && selectedBoardIsFinal()) || (checked && !selectedBoard())) {
+        const QSignalBlocker blocker(m_previzUnderlayButton);
+        m_previzUnderlayButton->setChecked(false);
+        return;
+    }
+    m_previzUnderlay = checked;
+    if (checked) openPrevizWindow();
+    updatePrevizUnderlay();
+}
+
+void SettingBoardWindow::bakePrevizToLayer() {
+    if (selectedBoardIsFinal()) return;
+    core::SettingBoard* board = selectedBoard();
+    if (!board) return;
+    clearUndoHistory();
+    syncSettingBoardComposite(*board);
+    const QSize size = boardCanvasSize(*board);
+    const QImage previz = renderSelectedPrevizImage(size);
+    if (previz.isNull()) return;
+
+    core::PaintLayer layer;
+    layer.name = "プリビズ";
+    layer.role = core::LayerRole::Normal;
+    layer.bitmap = imageToBitmap(previz);
+    const size_t insertAt = std::min(board->activeLayer + 1, board->layers.size());
+    board->layers.insert(board->layers.begin() + static_cast<ptrdiff_t>(insertAt), std::move(layer));
+    board->activeLayer = insertAt;
+    syncSettingBoardComposite(*board);
+    m_canvas->clearTextureCache();
+    bindCanvasToSelectedBoard();
+    emit edited();
 }
 
 void SettingBoardWindow::refreshLayerPanel() {

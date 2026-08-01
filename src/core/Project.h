@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Bitmap.h"
+#include "Previz.h"
 #include "Scene.h"
 
 namespace core {
@@ -34,6 +35,7 @@ struct SettingBoard {
     Bitmap image;       // ボードの中身(1920x1080、透明下地)
     std::vector<PaintLayer> layers;
     size_t activeLayer = 0;
+    PrevizScene previz;
     std::vector<ColorSpec> colorSpecs;  // 色指定書(肌/髪/影など名前付きの色見本)。既定は空
     std::vector<SettingBoardTextBox> textBoxes;
     bool finalStamp = false;

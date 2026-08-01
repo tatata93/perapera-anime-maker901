@@ -2,6 +2,7 @@
 
 #include <QColor>
 #include <QMainWindow>
+#include <cstddef>
 
 #include "core/CommandStack.h"
 
@@ -17,10 +18,13 @@ class QWidget;
 class FloatingCanvasWindow;
 class GLCanvas;
 class LayerPanel;
+class PrevizWindow;
+class QImage;
 
 namespace core {
 class Project;
 enum class LayerRole;
+struct SettingBoard;
 }
 
 // 設定ボードウィンドウ(別ウィンドウ)。キャラクター設定・美術設定などの資料を
@@ -62,6 +66,13 @@ private:
     void resizeBoardCanvas();
     void exportBoardImage();
     void editTextBoxes();
+    void openPrevizWindow();
+    void togglePrevizUnderlay(bool checked);
+    void updatePrevizUnderlay();
+    void bakePrevizToLayer();
+    PrevizWindow* ensurePrevizWindow();
+    core::SettingBoard* selectedBoard();
+    QImage renderSelectedPrevizImage(const QSize& targetSize);
     void toggleFinalStamp(bool checked);
     void updateFinalStampOverlay();
     void detachCanvas();
@@ -116,6 +127,7 @@ private:
     QPushButton* m_lassoButton = nullptr;
     QPushButton* m_eyedropperButton = nullptr;
     QPushButton* m_finalStampButton = nullptr;
+    QPushButton* m_previzUnderlayButton = nullptr;
     QLabel* m_editLockLabel = nullptr;
     QSlider* m_radiusSlider = nullptr;
     QLabel* m_radiusValueLabel = nullptr;
@@ -133,4 +145,7 @@ private:
     core::CommandStack m_commands;
     QAction* m_undoAction = nullptr;
     QAction* m_redoAction = nullptr;
+    PrevizWindow* m_previzWindow = nullptr;
+    bool m_previzUnderlay = false;
+    size_t m_previzFrame = 0;
 };
