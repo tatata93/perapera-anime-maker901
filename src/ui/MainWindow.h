@@ -486,8 +486,8 @@ private:
     QToolButton* m_penColorButton = nullptr;
     QColor m_penColor = Qt::black;
     // 太さスライダーはツールごとに値を記憶する(ペン/塗りつぶしはペンの値を共有、消しゴムは専用)
-    int m_penRadiusValue = 6;
-    int m_eraserRadiusValue = 24;
+    float m_penRadiusValue = 6.0f;
+    float m_eraserRadiusValue = 24.0f;
 
     // プリビズを下敷きにするか(有効時は連番下敷きより優先)
     bool m_previzUnderlay = false;

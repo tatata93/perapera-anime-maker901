@@ -40,6 +40,10 @@ public:
     DirtyRect continueStroke(Bitmap& bitmap, float x, float y, float pressure);
     void endStroke();
 
+    // Draw one exact straight segment, including both endpoints.
+    DirtyRect drawLine(Bitmap& bitmap, float x0, float y0, float x1, float y1,
+                       float startPressure = 1.0f, float endPressure = 1.0f);
+
     bool isStrokeActive() const { return m_active; }
 
 private:

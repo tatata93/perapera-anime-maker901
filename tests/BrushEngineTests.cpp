@@ -67,6 +67,23 @@ TEST_CASE("BrushEngine draws a continuous line between points", "[core][brush]")
     }
 }
 
+TEST_CASE("BrushEngine supports subpixel one-row lines", "[core][brush]") {
+    core::Bitmap bitmap(24, 24);
+    bitmap.fill({0, 0, 0, 0});
+
+    core::BrushEngine engine;
+    engine.settings().radius = 0.125f;  // 0.25 px UI line width
+    engine.settings().pressureAffectsRadius = false;
+    engine.settings().color = {0, 0, 0, 255};
+    const auto dirty = engine.drawLine(bitmap, 3.5f, 10.5f, 20.5f, 10.5f);
+
+    REQUIRE_FALSE(dirty.isEmpty());
+    REQUIRE(bitmap.pixel(10, 10).a > 0);
+    REQUIRE(bitmap.pixel(10, 9).a == 0);
+    REQUIRE(bitmap.pixel(10, 11).a == 0);
+    REQUIRE(bitmap.pixel(20, 10).a > 0);  // release endpoint is included
+}
+
 TEST_CASE("Pressure affects stamp radius", "[core][brush]") {
     auto low = makeWhiteBitmap(64, 64);
     auto high = makeWhiteBitmap(64, 64);

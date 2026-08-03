@@ -122,6 +122,7 @@ private:
     QWidget* m_canvasHost = nullptr;
     QVBoxLayout* m_canvasLayout = nullptr;
     QPushButton* m_penButton = nullptr;
+    QPushButton* m_lineButton = nullptr;
     QPushButton* m_eraserButton = nullptr;
     QPushButton* m_fillButton = nullptr;
     QPushButton* m_lassoButton = nullptr;

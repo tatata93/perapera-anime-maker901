@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 
 #include "core/FillTool.h"
 #include "core/LassoFillTool.h"
@@ -132,6 +133,7 @@ void GLCanvas::shutdownForClose() {
     m_strokeCommandSink = nullptr;
     if (m_strokeActive) m_brush.endStroke();
     m_strokeActive = false;
+    m_lineActive = false;
     m_movingCel = false;
     m_panning = false;
     unsetCursor();
@@ -248,7 +250,7 @@ void GLCanvas::setTool(Tool tool) {
     }
     m_tool = tool;
     applyToolSettings();
-    if (m_tool == Tool::Eyedropper || m_tool == Tool::LassoFill) {
+    if (m_tool == Tool::Eyedropper || m_tool == Tool::LassoFill || m_tool == Tool::Line) {
         setCursor(Qt::CrossCursor);
     } else if (!m_panning) {
         unsetCursor();
@@ -257,7 +259,7 @@ void GLCanvas::setTool(Tool tool) {
 
 void GLCanvas::applySettingsFor(Tool tool) {
     auto& settings = m_brush.settings();
-    if (tool == Tool::Pen) {
+    if (tool == Tool::Pen || tool == Tool::Line) {
         settings.radius = m_penRadius;
         settings.color = {static_cast<uint8_t>(m_penColor.red()), static_cast<uint8_t>(m_penColor.green()),
                            static_cast<uint8_t>(m_penColor.blue()), static_cast<uint8_t>(m_penColor.alpha())};
@@ -275,12 +277,12 @@ void GLCanvas::applySettingsFor(Tool tool) {
 
 void GLCanvas::setPenRadius(float radius) {
     m_penRadius = radius;
-    if (m_tool == Tool::Pen) applyToolSettings();
+    if (m_tool == Tool::Pen || m_tool == Tool::Line) applyToolSettings();
 }
 
 void GLCanvas::setPenColor(QColor color) {
     m_penColor = color;
-    if (m_tool == Tool::Pen) applyToolSettings();
+    if (m_tool == Tool::Pen || m_tool == Tool::Line) applyToolSettings();
 }
 
 void GLCanvas::setEraserRadius(float radius) {
@@ -836,6 +838,16 @@ void GLCanvas::pointerBegin(QPointF widgetPos, float pressure) {
     m_strokeActive = true;
     m_smoothedImagePos = img;  // 手ブレ補正の起点
     if (m_strokeCommandSink) m_strokeSnapshot = *m_bitmap;  // Undo用に開始時点を保存
+    if (m_tool == Tool::Line) {
+        // ドラッグ中は開始時点の絵へ戻して、始点から現在位置までを引き直す。
+        if (!m_strokeCommandSink) m_strokeSnapshot = *m_bitmap;
+        m_lineActive = true;
+        m_lineStartImagePos = img;
+        m_lineStartPressure = pressure;
+        m_strokeDirty = core::DirtyRect{};
+        updateStraightLine(img, pressure);
+        return;
+    }
     const auto dirty = m_brush.beginStroke(*m_bitmap, static_cast<float>(img.x()), static_cast<float>(img.y()), pressure);
     m_strokeDirty = dirty;
     queueUpload(m_bitmap, dirty);
@@ -858,6 +870,11 @@ void GLCanvas::pointerMove(QPointF widgetPos, float pressure) {
     }
     if (!m_bitmap || !m_strokeActive) return;
     QPointF img = widgetToImage(widgetPos) - m_activeOffset;
+
+    if (m_lineActive) {
+        updateStraightLine(img, pressure);
+        return;
+    }
 
     // 手ブレ補正: 生のペン位置へ指数移動平均で追従させ、線を滑らかにする
     if (m_stabilizer > 0) {
@@ -887,7 +904,11 @@ void GLCanvas::pointerEnd() {
     }
     if (!m_strokeActive) return;
     m_strokeActive = false;
-    m_brush.endStroke();
+    if (m_lineActive) {
+        m_lineActive = false;
+    } else {
+        m_brush.endStroke();
+    }
 
     if (m_strokeCommandSink && m_bitmap && !m_strokeDirty.isEmpty()) {
         auto before = core::StrokeCommand::copyRegion(m_strokeSnapshot, m_strokeDirty);
@@ -897,6 +918,37 @@ void GLCanvas::pointerEnd() {
     }
     m_strokeSnapshot = core::Bitmap();  // スナップショットのメモリを解放
     m_strokeDirty = core::DirtyRect{};
+}
+
+void GLCanvas::restoreStrokeSnapshotRegion(const core::DirtyRect& rect) {
+    if (!m_bitmap || rect.isEmpty() || m_strokeSnapshot.width() != m_bitmap->width() ||
+        m_strokeSnapshot.height() != m_bitmap->height()) {
+        return;
+    }
+
+    constexpr int kBytesPerPixel = 4;
+    const size_t rowBytes = static_cast<size_t>(rect.width()) * kBytesPerPixel;
+    for (int y = rect.y0; y < rect.y1; ++y) {
+        const size_t offset = static_cast<size_t>(y * m_bitmap->width() + rect.x0) * kBytesPerPixel;
+        std::memcpy(m_bitmap->data() + offset, m_strokeSnapshot.data() + offset, rowBytes);
+    }
+}
+
+void GLCanvas::updateStraightLine(QPointF imagePos, float pressure) {
+    if (!m_bitmap || !m_lineActive) return;
+
+    const core::DirtyRect previousDirty = m_strokeDirty;
+    restoreStrokeSnapshotRegion(previousDirty);
+    const core::DirtyRect lineDirty = m_brush.drawLine(
+        *m_bitmap, static_cast<float>(m_lineStartImagePos.x()),
+        static_cast<float>(m_lineStartImagePos.y()), static_cast<float>(imagePos.x()),
+        static_cast<float>(imagePos.y()), m_lineStartPressure, pressure);
+    m_strokeDirty = lineDirty;
+
+    core::DirtyRect uploadDirty = previousDirty;
+    uploadDirty.unite(lineDirty);
+    queueUpload(m_bitmap, uploadDirty);
+    update();
 }
 
 void GLCanvas::tabletEvent(QTabletEvent* event) {
@@ -914,6 +966,7 @@ void GLCanvas::tabletEvent(QTabletEvent* event) {
             pointerMove(event->position(), pressure);
             break;
         case QEvent::TabletRelease:
+            if (m_lineActive) pointerMove(event->position(), pressure);
             pointerEnd();
             break;
         default:
@@ -949,7 +1002,7 @@ void GLCanvas::mouseMoveEvent(QMouseEvent* event) {
 void GLCanvas::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::MiddleButton) {
         m_panning = false;
-        if (m_tool == Tool::Eyedropper || m_tool == Tool::LassoFill) {
+        if (m_tool == Tool::Eyedropper || m_tool == Tool::LassoFill || m_tool == Tool::Line) {
             setCursor(Qt::CrossCursor);
         } else {
             unsetCursor();
@@ -957,7 +1010,10 @@ void GLCanvas::mouseReleaseEvent(QMouseEvent* event) {
         return;
     }
     if (event->source() != Qt::MouseEventNotSynthesized) return;
-    if (event->button() == Qt::LeftButton) pointerEnd();
+    if (event->button() == Qt::LeftButton) {
+        if (m_lineActive) pointerMove(event->position(), 1.0f);
+        pointerEnd();
+    }
 }
 
 void GLCanvas::mouseDoubleClickEvent(QMouseEvent* event) {
@@ -1008,6 +1064,15 @@ void GLCanvas::debugLassoFill(const std::vector<QPointF>& imagePoints) {
     performLassoFill();
     m_lassoPoints.clear();
     update();
+}
+
+void GLCanvas::debugSimulateStraightLine(QPointF startWidgetPos, QPointF endWidgetPos) {
+    const Tool previousTool = m_tool;
+    setTool(Tool::Line);
+    pointerBegin(startWidgetPos, 1.0f);
+    pointerMove(endWidgetPos, 1.0f);
+    pointerEnd();
+    setTool(previousTool);
 }
 
 void GLCanvas::debugSimulateMoveDrag(QPointF widgetDelta) {

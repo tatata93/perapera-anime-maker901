@@ -51,6 +51,7 @@
 #include "render/GLCanvas.h"
 #include "ui/CameraPanel.h"
 #include "ui/CanvasSizeDialog.h"
+#include "ui/BrushWidthControl.h"
 #include "ui/CelPanel.h"
 #include "ui/CelSizeDialog.h"
 #include "ui/DockPanelColumn.h"
@@ -2842,7 +2843,15 @@ void MainWindow::setupToolBar() {
     group->addAction(penAction);
     connect(penAction, &QAction::triggered, this, [this] {
         m_canvas->setTool(GLCanvas::Tool::Pen);
-        m_penRadiusSlider->setValue(m_penRadiusValue);  // ペンの記憶値をスライダーに反映
+        m_penRadiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_penRadiusValue));
+    });
+
+    QAction* lineAction = toolBar->addAction(tr("直線"));
+    lineAction->setCheckable(true);
+    group->addAction(lineAction);
+    connect(lineAction, &QAction::triggered, this, [this] {
+        m_canvas->setTool(GLCanvas::Tool::Line);
+        m_penRadiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_penRadiusValue));
     });
 
     QAction* eraserAction = toolBar->addAction(tr("消しゴム"));
@@ -2850,7 +2859,7 @@ void MainWindow::setupToolBar() {
     group->addAction(eraserAction);
     connect(eraserAction, &QAction::triggered, this, [this] {
         m_canvas->setTool(GLCanvas::Tool::Eraser);
-        m_penRadiusSlider->setValue(m_eraserRadiusValue);  // 消しゴムの記憶値をスライダーに反映
+        m_penRadiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_eraserRadiusValue));
     });
 
     QAction* fillAction = toolBar->addAction(tr("塗りつぶし"));
@@ -2882,28 +2891,30 @@ void MainWindow::setupToolBar() {
     QToolBar* brushBar = addToolBar(tr("ブラシ設定"));
     brushBar->setObjectName(QStringLiteral("BrushSettings"));
     brushBar->setMovable(true);
-    brushBar->addWidget(new QLabel(tr("太さ: "), this));
+    brushBar->addWidget(new QLabel(tr("線幅: "), this));
 
     m_penRadiusSlider = new QSlider(Qt::Horizontal, this);
-    m_penRadiusSlider->setRange(1, 64);
-    m_penRadiusSlider->setValue(6);
+    m_penRadiusSlider->setRange(perapera::ui::kBrushWidthSliderMin,
+                                perapera::ui::kBrushWidthSliderMax);
+    m_penRadiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_penRadiusValue));
     m_penRadiusSlider->setFixedWidth(100);
     // Spaceキーでの再生操作にフォーカスを奪わないよう、クリック時のみフォーカスを持たせる
     m_penRadiusSlider->setFocusPolicy(Qt::ClickFocus);
     connect(m_penRadiusSlider, &QSlider::valueChanged, this, [this](int value) {
-        // 現在ツールに応じて太さを反映する。塗りつぶしツールはペン扱いのままでよい
+        const float radius = perapera::ui::brushRadiusFromSliderValue(value);
         if (m_canvas->tool() == GLCanvas::Tool::Eraser) {
-            m_canvas->setEraserRadius(static_cast<float>(value));
-            m_eraserRadiusValue = value;
+            m_canvas->setEraserRadius(radius);
+            m_eraserRadiusValue = radius;
         } else {
-            m_canvas->setPenRadius(static_cast<float>(value));
-            m_penRadiusValue = value;
+            m_canvas->setPenRadius(radius);
+            m_penRadiusValue = radius;
         }
-        m_penRadiusValueLabel->setText(QString::number(value));
+        m_penRadiusValueLabel->setText(perapera::ui::brushWidthLabel(radius));
     });
     brushBar->addWidget(m_penRadiusSlider);
 
-    m_penRadiusValueLabel = new QLabel(QString::number(m_penRadiusSlider->value()), this);
+    m_penRadiusValueLabel = new QLabel(perapera::ui::brushWidthLabel(m_penRadiusValue), this);
+    m_penRadiusValueLabel->setMinimumWidth(32);
     brushBar->addWidget(m_penRadiusValueLabel);
 
     m_penColorButton = new QToolButton(this);
@@ -3093,6 +3104,11 @@ void MainWindow::setupToolBar() {
     perapera::ui::bindShortcut(penKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("pen"));
     connect(penKeyAction, &QAction::triggered, penAction, &QAction::trigger);
+
+    QAction* lineKeyAction = operationMenu->addAction(tr("直線"));
+    perapera::ui::bindShortcut(lineKeyAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("line"));
+    connect(lineKeyAction, &QAction::triggered, lineAction, &QAction::trigger);
 
     QAction* eraserKeyAction = operationMenu->addAction(tr("消しゴム"));
     perapera::ui::bindShortcut(eraserKeyAction, perapera::ui::ShortcutScope::MainCanvas,

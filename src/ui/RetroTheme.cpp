@@ -24,6 +24,7 @@
 #include <QTimer>
 #include <QVariant>
 #include <QWidget>
+#include <QWindow>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -283,6 +284,15 @@ Qt::CursorShape cursorForResizeEdges(int edges) {
     return Qt::ArrowCursor;
 }
 
+Qt::Edges qtEdgesForResizeEdges(int edges) {
+    Qt::Edges result;
+    if ((edges & ResizeLeft) != 0) result |= Qt::LeftEdge;
+    if ((edges & ResizeRight) != 0) result |= Qt::RightEdge;
+    if ((edges & ResizeTop) != 0) result |= Qt::TopEdge;
+    if ((edges & ResizeBottom) != 0) result |= Qt::BottomEdge;
+    return result;
+}
+
 QSize effectiveMinimumSize(const QWidget* window) {
     const QSize fallback(240, 160);
     if (!window) return fallback;
@@ -368,6 +378,12 @@ protected:
             if (event->type() == QEvent::MouseButtonPress && mouseEvent->button() == Qt::LeftButton) {
                 const int edges = resizeEdgesAt(m_window, globalPos);
                 if (edges != ResizeNone) {
+                    if (QWindow* handle = m_window->windowHandle();
+                        handle && handle->startSystemResize(qtEdgesForResizeEdges(edges))) {
+                        setResizeCursor(cursorTarget(watched), cursorForResizeEdges(edges));
+                        mouseEvent->accept();
+                        return true;
+                    }
                     m_dragging = true;
                     m_edges = edges;
                     m_startGeometry = m_window->frameGeometry();
@@ -439,20 +455,45 @@ private:
 
 class WindowScreenGuard : public QObject {
 public:
-    explicit WindowScreenGuard(QWidget* window) : QObject(window), m_window(window) {}
+    explicit WindowScreenGuard(QWidget* window) : QObject(window), m_window(window) {
+        m_keepTimer.setSingleShot(true);
+        connect(&m_keepTimer, &QTimer::timeout, this, [this] {
+            if (m_window) keepWindowOnScreen(m_window);
+        });
+    }
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override {
-        if (watched == m_window && event->type() == QEvent::Show) {
-            QTimer::singleShot(0, this, [this] {
-                if (m_window) keepWindowOnScreen(m_window);
-            });
+        if (watched != m_window) return QObject::eventFilter(watched, event);
+
+        if (event->type() == QEvent::Show) {
+            connectScreenChange();
+            scheduleKeep(0);
+        } else if (event->type() == QEvent::ScreenChangeInternal) {
+            // A different monitor may have a different DPI and work area.
+            scheduleKeep(120);
+        } else if (event->type() == QEvent::WindowStateChange) {
+            scheduleKeep(0);
         }
         return QObject::eventFilter(watched, event);
     }
 
 private:
+    void connectScreenChange() {
+        if (!m_window) return;
+        QWindow* handle = m_window->windowHandle();
+        if (!handle || m_handle == handle) return;
+        m_handle = handle;
+        connect(handle, &QWindow::screenChanged, this, [this](QScreen*) { scheduleKeep(120); });
+    }
+
+    void scheduleKeep(int delayMs) {
+        m_keepTimer.start(delayMs);
+    }
+
     QPointer<QWidget> m_window;
+    QPointer<QWindow> m_handle;
+    QTimer m_keepTimer;
 };
 
 void installWindowScreenGuard(QWidget* window) {
@@ -697,6 +738,13 @@ protected:
 
     void mousePressEvent(QMouseEvent* event) override {
         if (event->button() == Qt::LeftButton && m_window) {
+            if (!m_window->isMaximized()) {
+                if (QWindow* handle = m_window->windowHandle(); handle && handle->startSystemMove()) {
+                    m_systemMoving = true;
+                    event->accept();
+                    return;
+                }
+            }
             m_dragging = true;
             m_dragOffset = event->globalPosition().toPoint() - m_window->frameGeometry().topLeft();
             event->accept();
@@ -706,6 +754,10 @@ protected:
     }
 
     void mouseMoveEvent(QMouseEvent* event) override {
+        if (m_systemMoving) {
+            event->accept();
+            return;
+        }
         if (m_dragging && m_window && !m_window->isMaximized()) {
             m_window->move(event->globalPosition().toPoint() - m_dragOffset);
             event->accept();
@@ -716,12 +768,15 @@ protected:
 
     void mouseReleaseEvent(QMouseEvent* event) override {
         m_dragging = false;
+        m_systemMoving = false;
+        if (m_window) keepWindowOnScreen(m_window);
         RetroTitleBarBase::mouseReleaseEvent(event);
     }
 
 private:
     QMainWindow* m_window = nullptr;
     bool m_dragging = false;
+    bool m_systemMoving = false;
     QPoint m_dragOffset;
 };
 
@@ -1288,6 +1343,9 @@ void installRetroWindowFrame(QMainWindow* window) {
     const bool wasVisible = window->isVisible();
     if (!window->property(kWindowFrameInstalledProperty).toBool()) {
         window->setMenuWidget(new RetroWindowTitleBar(window));
+        window->setWindowFlag(Qt::WindowMinimizeButtonHint, true);
+        window->setWindowFlag(Qt::WindowMaximizeButtonHint, true);
+        window->setWindowFlag(Qt::WindowCloseButtonHint, true);
         window->setWindowFlag(Qt::FramelessWindowHint, true);
         window->setProperty(kWindowFrameInstalledProperty, true);
     }

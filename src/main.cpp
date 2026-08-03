@@ -6,6 +6,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QPixmap>
+#include <QScreen>
 #include <QSize>
 #include <QTabWidget>
 #include <QTextStream>
@@ -287,6 +288,23 @@ int main(int argc, char* argv[]) {
             QTimer::singleShot(200, &window, [&window, outputPath] {
                 window.canvas()->grabFramebuffer().save(outputPath);
                 QApplication::exit(0);  // quit()はcloseEvent(未保存確認ダイアログ)を経由するためexit()で直接終了する
+            });
+        });
+    }
+
+    // 動作確認用: --line-test <出力PNG> で1pxの直線をドラッグ描画し、
+    // フレームバッファを保存して終了する
+    const int lineTestIndex = args.indexOf("--line-test");
+    if (lineTestIndex >= 0 && lineTestIndex + 1 < args.size()) {
+        const QString outputPath = args.at(lineTestIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            GLCanvas* canvas = window.canvas();
+            canvas->setPenRadius(0.5f);  // UI表示で1px
+            canvas->debugSimulateStraightLine(QPointF(canvas->width() * 0.2, canvas->height() * 0.25),
+                                              QPointF(canvas->width() * 0.8, canvas->height() * 0.75));
+            QTimer::singleShot(200, &window, [&window, outputPath] {
+                window.canvas()->grabFramebuffer().save(outputPath);
+                QApplication::exit(0);
             });
         });
     }
@@ -957,6 +975,34 @@ int main(int argc, char* argv[]) {
                     window.previzWindow()->viewport()->grabFramebuffer().save(outputPath);
                     QApplication::exit(0);
                 });
+            });
+        });
+    }
+
+    // 動作確認用: --previz-maximized-test <出力PNG>。利用可能なら第2モニターへ移し、
+    // 最大化後も作業領域内へ収まることとタイトルバー表示を確認する。
+    const int previzMaximizedIndex = args.indexOf("--previz-maximized-test");
+    if (previzMaximizedIndex >= 0 && previzMaximizedIndex + 1 < args.size()) {
+        const QString outputPath = args.at(previzMaximizedIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugOpenPreviz();
+            PrevizWindow* previz = window.previzWindow();
+            const QList<QScreen*> screens = QGuiApplication::screens();
+            QScreen* target = screens.isEmpty() ? nullptr : screens.constLast();
+            if (target) {
+                const QRect area = target->availableGeometry();
+                previz->showNormal();
+                previz->setGeometry(area.adjusted(40, 40, -40, -40));
+            }
+            previz->showMaximized();
+            QTimer::singleShot(500, &window, [previz, outputPath] {
+                const QRect area = previz->screen() ? previz->screen()->availableGeometry() : QRect();
+                const QRect frame = previz->frameGeometry();
+                const bool fits = area.isEmpty() ||
+                                  (area.adjusted(-2, -2, 2, 2).contains(frame.topLeft()) &&
+                                   area.adjusted(-2, -2, 2, 2).contains(frame.bottomRight()));
+                previz->grab().save(outputPath);
+                QApplication::exit(fits ? 0 : 1);
             });
         });
     }

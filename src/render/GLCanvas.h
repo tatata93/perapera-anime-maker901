@@ -25,7 +25,7 @@ class GLCanvas : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 
 public:
-    enum class Tool { Pen, Eraser, Fill, LassoFill, Move, Eyedropper };
+    enum class Tool { Pen, Line, Eraser, Fill, LassoFill, Move, Eyedropper };
 
     explicit GLCanvas(QWidget* parent = nullptr);
     ~GLCanvas() override;
@@ -145,6 +145,8 @@ public:
 
     // 端から端まで筆圧を変えながら1ストローク描く(動作確認用フック)
     void debugSimulateStroke();
+    // 始点から終点へ直線ツールのドラッグを再現する(動作確認用フック)
+    void debugSimulateStraightLine(QPointF startWidgetPos, QPointF endWidgetPos);
     // 指定ウィジェット座標を塗りつぶす(動作確認用フック)
     void debugFillAt(QPointF widgetPos);
     // Image-local polygon fill used by automated UI verification.
@@ -189,6 +191,8 @@ private:
     void performFill(QPointF widgetPos);
     void performLassoFill();
     bool pickColor(QPointF widgetPos);
+    void updateStraightLine(QPointF imagePos, float pressure);
+    void restoreStrokeSnapshotRegion(const core::DirtyRect& rect);
 
     // 画像座標→ウィジェット座標の変換(フィット×ズーム×回転×パン)
     QTransform viewTransform() const;
@@ -215,6 +219,9 @@ private:
     core::BrushEngine m_brush;
     Tool m_tool = Tool::Pen;
     bool m_strokeActive = false;
+    bool m_lineActive = false;
+    QPointF m_lineStartImagePos;
+    float m_lineStartPressure = 1.0f;
     bool m_lassoActive = false;
     std::vector<QPointF> m_lassoPoints;
     bool m_inputEnabled = true;

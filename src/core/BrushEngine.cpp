@@ -127,4 +127,15 @@ void BrushEngine::endStroke() {
     m_residual = 0.0f;
 }
 
+DirtyRect BrushEngine::drawLine(Bitmap& bitmap, float x0, float y0, float x1, float y1,
+                                float startPressure, float endPressure) {
+    DirtyRect dirty = beginStroke(bitmap, x0, y0, startPressure);
+    dirty.unite(continueStroke(bitmap, x1, y1, endPressure));
+    // continueStroke spaces stamps along the segment. Stamp the release point
+    // explicitly so short lines and non-integral spacing end exactly at x1/y1.
+    dirty.unite(stamp(bitmap, x1, y1, endPressure));
+    endStroke();
+    return dirty;
+}
+
 }  // namespace core

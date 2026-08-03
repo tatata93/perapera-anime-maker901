@@ -44,6 +44,7 @@
 #include "previz/PrevizWindow.h"
 #include "render/GLCanvas.h"
 #include "ui/CanvasSizeDialog.h"
+#include "ui/BrushWidthControl.h"
 #include "ui/FloatingCanvasWindow.h"
 #include "ui/LayerPanel.h"
 #include "ui/PaintLayerUtils.h"
@@ -73,10 +74,6 @@ constexpr double kFps = 24.0;  // タイムシートは24fps基準
 constexpr int kThumbWidth = 96;
 constexpr int kThumbHeight = 54;
 constexpr int kRowHeight = 70;
-
-// 太さスライダーの範囲(ペン/消しゴム共通)
-constexpr int kRadiusMin = 1;
-constexpr int kRadiusMax = 40;
 
 // 罫線・見出しの色(濃いグレー)と余白/フォントサイズ
 const QColor kLineColor(0x44, 0x44, 0x44);
@@ -505,9 +502,11 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     toolRow->addWidget(undoButton);
     toolRow->addWidget(redoButton);
     m_penButton = new QPushButton(tr("ペン"), rightContainer);
+    m_lineButton = new QPushButton(tr("直線"), rightContainer);
     m_eraserButton = new QPushButton(tr("消しゴム"), rightContainer);
     m_eyedropperButton = new QPushButton(tr("スポイト"), rightContainer);
     m_penButton->setCheckable(true);
+    m_lineButton->setCheckable(true);
     m_eraserButton->setCheckable(true);
     m_fillButton = new QPushButton(tr("塗りつぶし"), rightContainer);
     m_fillButton->setCheckable(true);
@@ -515,26 +514,28 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_lassoButton->setCheckable(true);
     m_eyedropperButton->setCheckable(true);
     m_penButton->setAutoExclusive(true);
+    m_lineButton->setAutoExclusive(true);
     m_eraserButton->setAutoExclusive(true);
     m_fillButton->setAutoExclusive(true);
     m_lassoButton->setAutoExclusive(true);
     m_eyedropperButton->setAutoExclusive(true);
     m_penButton->setChecked(true);
     toolRow->addWidget(m_penButton);
+    toolRow->addWidget(m_lineButton);
     toolRow->addWidget(m_eraserButton);
     toolRow->addWidget(m_fillButton);
     toolRow->addWidget(m_lassoButton);
     toolRow->addWidget(m_eyedropperButton);
 
-    // 太さ(選択中ツールの半径。ペン/消しゴムそれぞれの値をメンバで記憶し、トグル切替時に表示も切替)
-    toolRow->addWidget(new QLabel(tr("太さ"), rightContainer));
+    toolRow->addWidget(new QLabel(tr("線幅"), rightContainer));
     m_radiusSlider = new QSlider(Qt::Horizontal, rightContainer);
-    m_radiusSlider->setRange(kRadiusMin, kRadiusMax);
-    m_radiusSlider->setValue(static_cast<int>(m_penRadius));
+    m_radiusSlider->setRange(perapera::ui::kBrushWidthSliderMin,
+                             perapera::ui::kBrushWidthSliderMax);
+    m_radiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_penRadius));
     m_radiusSlider->setFixedWidth(120);
     toolRow->addWidget(m_radiusSlider);
-    m_radiusValueLabel = new QLabel(QString::number(static_cast<int>(m_penRadius)), rightContainer);
-    m_radiusValueLabel->setFixedWidth(24);
+    m_radiusValueLabel = new QLabel(perapera::ui::brushWidthLabel(m_penRadius), rightContainer);
+    m_radiusValueLabel->setFixedWidth(36);
     toolRow->addWidget(m_radiusValueLabel);
 
     // 色(クリックでQColorDialogを開き、選択色をボタン背景にも反映する)
@@ -624,14 +625,20 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_penButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
         if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Pen);
-        m_radiusSlider->setValue(static_cast<int>(m_penRadius));
-        m_radiusValueLabel->setText(QString::number(static_cast<int>(m_penRadius)));
+        m_radiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_penRadius));
+        m_radiusValueLabel->setText(perapera::ui::brushWidthLabel(m_penRadius));
+    });
+    connect(m_lineButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (!checked) return;
+        if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Line);
+        m_radiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_penRadius));
+        m_radiusValueLabel->setText(perapera::ui::brushWidthLabel(m_penRadius));
     });
     connect(m_eraserButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
         if (m_canvas) m_canvas->setTool(GLCanvas::Tool::Eraser);
-        m_radiusSlider->setValue(static_cast<int>(m_eraserRadius));
-        m_radiusValueLabel->setText(QString::number(static_cast<int>(m_eraserRadius)));
+        m_radiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_eraserRadius));
+        m_radiusValueLabel->setText(perapera::ui::brushWidthLabel(m_eraserRadius));
     });
     connect(m_fillButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
@@ -684,6 +691,7 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
         addAction(action);
     };
     addToolShortcut(QStringLiteral("pen"), GLCanvas::Tool::Pen);
+    addToolShortcut(QStringLiteral("line"), GLCanvas::Tool::Line);
     addToolShortcut(QStringLiteral("eraser"), GLCanvas::Tool::Eraser);
     addToolShortcut(QStringLiteral("fill"), GLCanvas::Tool::Fill);
     addToolShortcut(QStringLiteral("lassoFill"), GLCanvas::Tool::LassoFill);
@@ -1098,12 +1106,13 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
 }
 
 void StoryboardWindow::onRadiusSliderChanged(int value) {
+    const float radius = perapera::ui::brushRadiusFromSliderValue(value);
     if (m_eraserButton->isChecked()) {
-        m_eraserRadius = static_cast<float>(value);
+        m_eraserRadius = radius;
     } else {
-        m_penRadius = static_cast<float>(value);
+        m_penRadius = radius;
     }
-    m_radiusValueLabel->setText(QString::number(value));
+    m_radiusValueLabel->setText(perapera::ui::brushWidthLabel(radius));
     applyToolSettingsToCanvases();
 }
 
@@ -1134,6 +1143,8 @@ GLCanvas* StoryboardWindow::createCanvas(QWidget* parent) {
         canvas->setTool(GLCanvas::Tool::Fill);
     } else if (m_eraserButton && m_eraserButton->isChecked()) {
         canvas->setTool(GLCanvas::Tool::Eraser);
+    } else if (m_lineButton && m_lineButton->isChecked()) {
+        canvas->setTool(GLCanvas::Tool::Line);
     } else {
         canvas->setTool(GLCanvas::Tool::Pen);
     }
@@ -1180,11 +1191,12 @@ QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
     row->addWidget(undoButton);
     row->addWidget(redoButton);
     auto* penButton = new QPushButton(tr("ペン"), panel);
+    auto* lineButton = new QPushButton(tr("直線"), panel);
     auto* eraserButton = new QPushButton(tr("消しゴム"), panel);
     auto* fillButton = new QPushButton(tr("塗りつぶし"), panel);
     auto* lassoButton = new QPushButton(tr("投げ縄塗り"), panel);
     auto* eyedropperButton = new QPushButton(tr("スポイト"), panel);
-    for (QPushButton* button : {penButton, eraserButton, fillButton, lassoButton, eyedropperButton}) {
+    for (QPushButton* button : {penButton, lineButton, eraserButton, fillButton, lassoButton, eyedropperButton}) {
         button->setCheckable(true);
         button->setAutoExclusive(true);
         row->addWidget(button);
@@ -1197,19 +1209,23 @@ QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
         fillButton->setChecked(true);
     } else if (m_eraserButton && m_eraserButton->isChecked()) {
         eraserButton->setChecked(true);
+    } else if (m_lineButton && m_lineButton->isChecked()) {
+        lineButton->setChecked(true);
     } else {
         penButton->setChecked(true);
     }
 
-    row->addWidget(new QLabel(tr("太さ"), panel));
+    row->addWidget(new QLabel(tr("線幅"), panel));
     auto* radiusSlider = new QSlider(Qt::Horizontal, panel);
-    radiusSlider->setRange(kRadiusMin, kRadiusMax);
-    radiusSlider->setValue(m_eraserButton && m_eraserButton->isChecked() ? static_cast<int>(m_eraserRadius)
-                                                                         : static_cast<int>(m_penRadius));
+    radiusSlider->setRange(perapera::ui::kBrushWidthSliderMin,
+                           perapera::ui::kBrushWidthSliderMax);
+    const float selectedRadius = m_eraserButton && m_eraserButton->isChecked() ? m_eraserRadius
+                                                                               : m_penRadius;
+    radiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(selectedRadius));
     radiusSlider->setFixedWidth(140);
     row->addWidget(radiusSlider);
-    auto* radiusLabel = new QLabel(QString::number(radiusSlider->value()), panel);
-    radiusLabel->setFixedWidth(28);
+    auto* radiusLabel = new QLabel(perapera::ui::brushWidthLabel(selectedRadius), panel);
+    radiusLabel->setFixedWidth(36);
     row->addWidget(radiusLabel);
 
     auto* colorButton = new QPushButton(tr("色"), panel);
@@ -1225,6 +1241,9 @@ QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
     connect(penButton, &QPushButton::toggled, this, [this](bool checked) {
         if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Pen));
     });
+    connect(lineButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Line));
+    });
     connect(eraserButton, &QPushButton::toggled, this, [this](bool checked) {
         if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Eraser));
     });
@@ -1238,17 +1257,18 @@ QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
         if (checked) setActiveTool(static_cast<int>(GLCanvas::Tool::Eyedropper));
     });
     connect(radiusSlider, &QSlider::valueChanged, this, [this, radiusLabel](int value) {
+        const float radius = perapera::ui::brushRadiusFromSliderValue(value);
         if (m_eraserButton && m_eraserButton->isChecked()) {
-            m_eraserRadius = static_cast<float>(value);
+            m_eraserRadius = radius;
         } else {
-            m_penRadius = static_cast<float>(value);
+            m_penRadius = radius;
         }
-        radiusLabel->setText(QString::number(value));
+        radiusLabel->setText(perapera::ui::brushWidthLabel(radius));
         if (m_radiusSlider) {
             const QSignalBlocker blocker(m_radiusSlider);
             m_radiusSlider->setValue(value);
         }
-        if (m_radiusValueLabel) m_radiusValueLabel->setText(QString::number(value));
+        if (m_radiusValueLabel) m_radiusValueLabel->setText(perapera::ui::brushWidthLabel(radius));
         applyToolSettingsToCanvases();
     });
     connect(colorButton, &QPushButton::clicked, this, [this, colorButton] {
@@ -1265,13 +1285,15 @@ QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
 
 void StoryboardWindow::setActiveTool(int tool) {
     const auto canvasTool = static_cast<GLCanvas::Tool>(tool);
-    if (m_penButton && m_eraserButton && m_fillButton && m_lassoButton && m_eyedropperButton) {
+    if (m_penButton && m_lineButton && m_eraserButton && m_fillButton && m_lassoButton && m_eyedropperButton) {
         const QSignalBlocker b1(m_penButton);
-        const QSignalBlocker b2(m_eraserButton);
-        const QSignalBlocker b3(m_fillButton);
-        const QSignalBlocker b4(m_lassoButton);
-        const QSignalBlocker b5(m_eyedropperButton);
+        const QSignalBlocker b2(m_lineButton);
+        const QSignalBlocker b3(m_eraserButton);
+        const QSignalBlocker b4(m_fillButton);
+        const QSignalBlocker b5(m_lassoButton);
+        const QSignalBlocker b6(m_eyedropperButton);
         m_penButton->setChecked(canvasTool == GLCanvas::Tool::Pen);
+        m_lineButton->setChecked(canvasTool == GLCanvas::Tool::Line);
         m_eraserButton->setChecked(canvasTool == GLCanvas::Tool::Eraser);
         m_fillButton->setChecked(canvasTool == GLCanvas::Tool::Fill);
         m_lassoButton->setChecked(canvasTool == GLCanvas::Tool::LassoFill);
@@ -1279,11 +1301,11 @@ void StoryboardWindow::setActiveTool(int tool) {
     }
     if (m_canvas) m_canvas->setTool(canvasTool);
     if (m_radiusSlider && m_radiusValueLabel) {
-        const int value = canvasTool == GLCanvas::Tool::Eraser ? static_cast<int>(m_eraserRadius)
-                                                               : static_cast<int>(m_penRadius);
+        const float radius = canvasTool == GLCanvas::Tool::Eraser ? m_eraserRadius : m_penRadius;
+        const int value = perapera::ui::sliderValueFromBrushRadius(radius);
         const QSignalBlocker blocker(m_radiusSlider);
         m_radiusSlider->setValue(value);
-        m_radiusValueLabel->setText(QString::number(value));
+        m_radiusValueLabel->setText(perapera::ui::brushWidthLabel(radius));
     }
 }
 

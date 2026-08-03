@@ -44,6 +44,7 @@ set(PERAPERA_APP_SOURCES
     ui/CelSizeDialog.h
     ui/CanvasSizeDialog.cpp
     ui/CanvasSizeDialog.h
+    ui/BrushWidthControl.h
     ui/ShortcutSettings.cpp
     ui/ShortcutSettings.h
     ui/ShortcutSettingsDialog.cpp
