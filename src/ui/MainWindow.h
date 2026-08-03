@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QList>
 #include <QMainWindow>
+#include <QPair>
 #include <QPointF>
 #include <QStringList>
 #include <cstdint>
@@ -17,6 +18,7 @@
 class CameraPanel;
 class CelPanel;
 class EditWindow;
+class DrawingFocusPalette;
 class FramePanel;
 class FloatingCanvasWindow;
 class GLCanvas;
@@ -154,6 +156,10 @@ public:
     // 1枚目に赤い線を描いて参照ドックで1枚目を選択する
     void debugSetupSettingBoardDemo();
     ReferencePanel* referencePanel() const { return m_referencePanel; }
+    void debugSetDrawingFocusMode(bool enabled) { setDrawingFocusMode(enabled); }
+    QWidget* debugDrawingFocusPalette() const;
+    bool debugDrawingFocusMode() const { return m_drawingFocusMode; }
+    bool debugDrawingFocusChromeHidden() const;
 
     // 引きセル確認用: アクティブセルを横2倍(キャンバス幅の2倍)にリサイズし、
     // 左右半分に色違いのストロークを描いた上で、位置キー(コマ0=0、コマ2=-キャンバス幅)を打ち、
@@ -364,6 +370,12 @@ private:
     // ブラシ設定UI
     void choosePenColor();
     void updatePenColorButton();
+    void setDrawingTool(int tool);
+    DrawingFocusPalette* ensureDrawingFocusPalette();
+    void setDrawingFocusMode(bool enabled);
+    void updateDrawingFocusPalette();
+    void refreshMainCanvasShortcutActions();
+    void installMainCanvasShortcutsOn(QWidget* target);
     void detachMainCanvas();
     void restoreMainCanvas();
 
@@ -435,6 +447,15 @@ private:
     QAction* m_undoAction = nullptr;
     QAction* m_redoAction = nullptr;
     QAction* m_pressureAction = nullptr;   // 表示メニューの筆圧検知トグル(ツールバーの筆圧チェックと同期)
+    QAction* m_focusModeAction = nullptr;
+    QAction* m_penToolAction = nullptr;
+    QAction* m_lineToolAction = nullptr;
+    QAction* m_eraserToolAction = nullptr;
+    QAction* m_fillToolAction = nullptr;
+    QAction* m_lassoToolAction = nullptr;
+    QAction* m_moveToolAction = nullptr;
+    QAction* m_eyedropperToolAction = nullptr;
+    QList<QAction*> m_mainCanvasShortcutActions;
     QList<QAction*> m_xsheetConflictingActions;
     QAction* m_standardUiAction = nullptr;
     QAction* m_retro95Action = nullptr;
@@ -455,6 +476,9 @@ private:
     ProjectManagerWindow* m_projectManagerWindow = nullptr;  // プロジェクト管理ウィンドウ(別ウィンドウ、遅延生成)
     ShootingWindow* m_shootingWindow = nullptr;  // 撮影ウィンドウ(別ウィンドウ、遅延生成)
     ReferencePanel* m_referencePanel = nullptr;  // 設定ボード参照ドック
+    DrawingFocusPalette* m_drawingFocusPalette = nullptr;
+    QList<QPair<QWidget*, bool>> m_focusVisibility;
+    bool m_drawingFocusMode = false;
     int m_referenceBoardIndex = -1;  // 参照ドックで選択中の設定ボードインデックス(未選択-1)
     QString m_currentFilePath;
     QString m_lastExportPath;  // 前回の書き出し先(書き出しダイアログの出力先を復元する)

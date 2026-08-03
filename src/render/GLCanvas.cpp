@@ -250,9 +250,18 @@ void GLCanvas::setTool(Tool tool) {
     }
     m_tool = tool;
     applyToolSettings();
-    if (m_tool == Tool::Eyedropper || m_tool == Tool::LassoFill || m_tool == Tool::Line) {
+    updateInteractionCursor();
+}
+
+void GLCanvas::updateInteractionCursor() {
+    if (m_panning) {
+        setCursor(Qt::ClosedHandCursor);
+    } else if (m_viewNavigationEnabled) {
+        setCursor(Qt::OpenHandCursor);
+    } else if (m_tool == Tool::Eyedropper || m_tool == Tool::LassoFill ||
+               m_tool == Tool::Line) {
         setCursor(Qt::CrossCursor);
-    } else if (!m_panning) {
+    } else {
         unsetCursor();
     }
 }
@@ -413,6 +422,51 @@ void GLCanvas::resetView() {
     m_rotationDeg = 0.0;
     m_panOffset = QPointF(0, 0);
     update();
+    emit viewChanged(m_zoom, m_rotationDeg);
+}
+
+void GLCanvas::applyViewChange(float zoom, qreal rotationDeg, QPointF anchorWidgetPos) {
+    const QPointF anchorImagePos = widgetToImage(anchorWidgetPos);
+    m_zoom = std::clamp(zoom, 0.05f, 32.0f);
+    m_rotationDeg = std::remainder(rotationDeg, 360.0);
+    const QPointF moved = viewTransform().map(anchorImagePos);
+    m_panOffset += anchorWidgetPos - moved;
+    update();
+    emit viewChanged(m_zoom, m_rotationDeg);
+}
+
+void GLCanvas::setViewZoom(float zoom) {
+    applyViewChange(zoom, m_rotationDeg, QPointF(width() * 0.5, height() * 0.5));
+}
+
+void GLCanvas::setViewRotation(qreal rotationDeg) {
+    applyViewChange(m_zoom, rotationDeg, QPointF(width() * 0.5, height() * 0.5));
+}
+
+void GLCanvas::setViewNavigationEnabled(bool enabled) {
+    if (m_viewNavigationEnabled == enabled) return;
+    if (m_panning) endViewPan();
+    m_viewNavigationEnabled = enabled;
+    updateInteractionCursor();
+}
+
+void GLCanvas::beginViewPan(QPointF widgetPos) {
+    m_panning = true;
+    m_lastPanPos = widgetPos;
+    updateInteractionCursor();
+}
+
+void GLCanvas::continueViewPan(QPointF widgetPos) {
+    if (!m_panning) return;
+    m_panOffset += widgetPos - m_lastPanPos;
+    m_lastPanPos = widgetPos;
+    update();
+    emit viewChanged(m_zoom, m_rotationDeg);
+}
+
+void GLCanvas::endViewPan() {
+    m_panning = false;
+    updateInteractionCursor();
 }
 
 void GLCanvas::zoomToCanvasRect(const QRectF& rectPx) {
@@ -442,6 +496,7 @@ void GLCanvas::zoomToCanvasRect(const QRectF& rectPx) {
     m_panOffset = -scaled;
 
     update();
+    emit viewChanged(m_zoom, m_rotationDeg);
 }
 
 void GLCanvas::paintGL() {
@@ -952,6 +1007,24 @@ void GLCanvas::updateStraightLine(QPointF imagePos, float pressure) {
 }
 
 void GLCanvas::tabletEvent(QTabletEvent* event) {
+    if (m_viewNavigationEnabled) {
+        switch (event->type()) {
+            case QEvent::TabletPress:
+                beginViewPan(event->position());
+                break;
+            case QEvent::TabletMove:
+                continueViewPan(event->position());
+                break;
+            case QEvent::TabletRelease:
+                endViewPan();
+                break;
+            default:
+                break;
+        }
+        event->accept();
+        return;
+    }
+
     // ペンの後端(消しゴム側)で描いた場合は、UI上の選択ツールを変えずに消しゴムとして扱う
     const bool eraserPointer = event->pointerType() == QPointingDevice::PointerType::Eraser;
     applySettingsFor(eraserPointer ? Tool::Eraser : m_tool);
@@ -978,10 +1051,10 @@ void GLCanvas::tabletEvent(QTabletEvent* event) {
 }
 
 void GLCanvas::mousePressEvent(QMouseEvent* event) {
-    if (event->button() == Qt::MiddleButton) {
-        m_panning = true;
-        m_lastPanPos = event->position();
-        setCursor(Qt::ClosedHandCursor);
+    if (event->button() == Qt::MiddleButton ||
+        (m_viewNavigationEnabled && event->button() == Qt::LeftButton)) {
+        beginViewPan(event->position());
+        event->accept();
         return;
     }
     if (event->source() != Qt::MouseEventNotSynthesized) return;
@@ -990,9 +1063,8 @@ void GLCanvas::mousePressEvent(QMouseEvent* event) {
 
 void GLCanvas::mouseMoveEvent(QMouseEvent* event) {
     if (m_panning) {
-        m_panOffset += event->position() - m_lastPanPos;
-        m_lastPanPos = event->position();
-        update();
+        continueViewPan(event->position());
+        event->accept();
         return;
     }
     if (event->source() != Qt::MouseEventNotSynthesized) return;
@@ -1000,13 +1072,10 @@ void GLCanvas::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void GLCanvas::mouseReleaseEvent(QMouseEvent* event) {
-    if (event->button() == Qt::MiddleButton) {
-        m_panning = false;
-        if (m_tool == Tool::Eyedropper || m_tool == Tool::LassoFill || m_tool == Tool::Line) {
-            setCursor(Qt::CrossCursor);
-        } else {
-            unsetCursor();
-        }
+    if (m_panning && (event->button() == Qt::MiddleButton ||
+                      (m_viewNavigationEnabled && event->button() == Qt::LeftButton))) {
+        endViewPan();
+        event->accept();
         return;
     }
     if (event->source() != Qt::MouseEventNotSynthesized) return;
@@ -1037,19 +1106,12 @@ void GLCanvas::wheelEvent(QWheelEvent* event) {
     if (delta == 0) return;
 
     const QPointF cursor = event->position();
-    const QPointF anchorImg = widgetToImage(cursor);  // カーソル下の画像座標を固定点にする
-
     if (event->modifiers() & Qt::AltModifier) {
-        m_rotationDeg += (delta > 0) ? 15.0 : -15.0;  // 15度刻みで回転
+        applyViewChange(m_zoom, m_rotationDeg + ((delta > 0) ? 15.0 : -15.0), cursor);
     } else {
         const float factor = (delta > 0) ? 1.25f : 0.8f;
-        m_zoom = std::clamp(m_zoom * factor, 0.05f, 32.0f);
+        applyViewChange(m_zoom * factor, m_rotationDeg, cursor);
     }
-
-    // 固定点がカーソル位置に留まるようパンを補正する
-    const QPointF moved = viewTransform().map(anchorImg);
-    m_panOffset += cursor - moved;
-    update();
     event->accept();
 }
 

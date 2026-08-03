@@ -101,6 +101,11 @@ public:
     // ビュー操作: ズーム倍率(フィット基準)・回転(度)・パン。リセットでフィット表示に戻る
     void resetView();
     float zoom() const { return m_zoom; }
+    qreal rotationDegrees() const { return m_rotationDeg; }
+    void setViewZoom(float zoom);
+    void setViewRotation(qreal rotationDeg);
+    void setViewNavigationEnabled(bool enabled);
+    bool viewNavigationEnabled() const { return m_viewNavigationEnabled; }
     // 画像(キャンバス)座標の矩形がウィジェットにちょうど収まるようズーム/パンを設定する。
     // 回転は0にリセットする。少し余白を持たせて表示する(絵コンテの絵の枠拡大表示などに使う)
     void zoomToCanvasRect(const QRectF& rectPx);
@@ -161,8 +166,10 @@ public:
         m_panOffset = panOffset;
         update();
     }
+    QPointF debugPanOffset() const { return m_panOffset; }
 
 signals:
+    void viewChanged(float zoom, qreal rotationDeg);
     // 移動ツール(タップ/ペグ移動)のドラッグ操作。MainWindowが位置キーへ反映する
     void celMoveStarted();
     void celMoveDelta(QPointF totalDeltaImage);  // ドラッグ開始点からの累積差分(画像座標px)
@@ -185,6 +192,11 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
 
 private:
+    void applyViewChange(float zoom, qreal rotationDeg, QPointF anchorWidgetPos);
+    void beginViewPan(QPointF widgetPos);
+    void continueViewPan(QPointF widgetPos);
+    void endViewPan();
+    void updateInteractionCursor();
     void pointerBegin(QPointF widgetPos, float pressure);
     void pointerMove(QPointF widgetPos, float pressure);
     void pointerEnd();
@@ -249,6 +261,7 @@ private:
     qreal m_rotationDeg = 0.0;   // 時計回りの回転角(度)
     QPointF m_panOffset{0, 0};   // ウィジェット中心からのずれ(px)
     bool m_panning = false;
+    bool m_viewNavigationEnabled = false;
     bool m_mirrorView = false;   // 左右反転表示(ミラーチェック)
     QPointF m_lastPanPos;
 

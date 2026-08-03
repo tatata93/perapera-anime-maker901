@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QColorDialog>
 #include <QDir>
+#include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QFile>
@@ -56,6 +57,7 @@
 #include "ui/CelPanel.h"
 #include "ui/CelSizeDialog.h"
 #include "ui/DockPanelColumn.h"
+#include "ui/DrawingFocusPalette.h"
 #include "ui/EditWindow.h"
 #include "ui/NewCutDialog.h"
 #include "ui/NewProjectDialog.h"
@@ -1136,6 +1138,9 @@ void MainWindow::updateFrameLabel() {
         m_frameLabel->setText(
             QStringLiteral(" コマ %1 / %2 ").arg(m_currentFrame + 1).arg(activeCut().frameCount()));
     }
+    if (m_drawingFocusPalette) {
+        m_drawingFocusPalette->setFrame(m_currentFrame, activeCut().frameCount());
+    }
     if (m_framePanel) {
         core::Cel& cel = activeCel();
         const int drawingCount = static_cast<int>(cel.drawingCount());
@@ -1235,9 +1240,208 @@ void MainWindow::choosePenColor() {
 }
 
 void MainWindow::updatePenColorButton() {
-    if (!m_penColorButton) return;
-    m_penColorButton->setStyleSheet(
-        QStringLiteral("background-color: %1; border: 1px solid #444;").arg(m_penColor.name()));
+    if (m_penColorButton) {
+        m_penColorButton->setStyleSheet(
+            QStringLiteral("background-color: %1; border: 1px solid #444;").arg(m_penColor.name()));
+    }
+    if (m_drawingFocusPalette) m_drawingFocusPalette->setPenColor(m_penColor);
+}
+
+void MainWindow::setDrawingTool(int toolValue) {
+    if (!m_canvas || toolValue < static_cast<int>(GLCanvas::Tool::Pen) ||
+        toolValue > static_cast<int>(GLCanvas::Tool::Eyedropper)) {
+        return;
+    }
+
+    const auto tool = static_cast<GLCanvas::Tool>(toolValue);
+    m_canvas->setViewNavigationEnabled(false);
+    m_canvas->setTool(tool);
+
+    QAction* selectedAction = nullptr;
+    switch (tool) {
+        case GLCanvas::Tool::Pen: selectedAction = m_penToolAction; break;
+        case GLCanvas::Tool::Line: selectedAction = m_lineToolAction; break;
+        case GLCanvas::Tool::Eraser: selectedAction = m_eraserToolAction; break;
+        case GLCanvas::Tool::Fill: selectedAction = m_fillToolAction; break;
+        case GLCanvas::Tool::LassoFill: selectedAction = m_lassoToolAction; break;
+        case GLCanvas::Tool::Move: selectedAction = m_moveToolAction; break;
+        case GLCanvas::Tool::Eyedropper: selectedAction = m_eyedropperToolAction; break;
+    }
+    if (selectedAction) selectedAction->setChecked(true);
+
+    const float radius = tool == GLCanvas::Tool::Eraser ? m_eraserRadiusValue : m_penRadiusValue;
+    if (m_penRadiusSlider) {
+        const QSignalBlocker blocker(m_penRadiusSlider);
+        m_penRadiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(radius));
+    }
+    if (m_penWidthSpinBox) {
+        const QSignalBlocker blocker(m_penWidthSpinBox);
+        m_penWidthSpinBox->setValue(perapera::ui::brushWidthFromRadius(radius));
+        if (m_drawingFocusPalette) {
+            m_drawingFocusPalette->setBrushWidth(perapera::ui::brushWidthFromRadius(radius));
+        }
+    }
+    updateDrawingFocusPalette();
+}
+
+DrawingFocusPalette* MainWindow::ensureDrawingFocusPalette() {
+    if (m_drawingFocusPalette) return m_drawingFocusPalette;
+
+    auto* palette = new DrawingFocusPalette(this);
+    m_drawingFocusPalette = palette;
+    perapera::ui::installRetroWindowFrame(palette);
+    installMainCanvasShortcutsOn(palette);
+    connect(palette, &DrawingFocusPalette::returnToNormalRequested, this,
+            [this] { setDrawingFocusMode(false); });
+    connect(palette, &DrawingFocusPalette::undoRequested, this, &MainWindow::undo);
+    connect(palette, &DrawingFocusPalette::redoRequested, this, &MainWindow::redo);
+    connect(palette, &DrawingFocusPalette::previousFrameRequested, this, [this] {
+        if (!m_playing && m_currentFrame > 0) setCurrentFrame(m_currentFrame - 1);
+    });
+    connect(palette, &DrawingFocusPalette::nextFrameRequested, this, [this] {
+        if (!m_playing) setCurrentFrame(m_currentFrame + 1);
+    });
+    connect(palette, &DrawingFocusPalette::toolRequested, this, &MainWindow::setDrawingTool);
+    connect(palette, &DrawingFocusPalette::navigationModeChanged, m_canvas,
+            &GLCanvas::setViewNavigationEnabled);
+    connect(palette, &DrawingFocusPalette::brushWidthChanged, this, [this](double width) {
+        if (m_penWidthSpinBox) {
+            m_penWidthSpinBox->setValue(width);
+            return;
+        }
+        const float radius = perapera::ui::brushRadiusFromWidth(width);
+        if (m_canvas->tool() == GLCanvas::Tool::Eraser) {
+            m_eraserRadiusValue = radius;
+            m_canvas->setEraserRadius(radius);
+        } else {
+            m_penRadiusValue = radius;
+            m_canvas->setPenRadius(radius);
+        }
+    });
+    connect(palette, &DrawingFocusPalette::colorRequested, this, &MainWindow::choosePenColor);
+    connect(palette, &DrawingFocusPalette::zoomChanged, this,
+            [this](double percent) { m_canvas->setViewZoom(static_cast<float>(percent / 100.0)); });
+    connect(palette, &DrawingFocusPalette::rotationChanged, this,
+            [this](double degrees) { m_canvas->setViewRotation(degrees); });
+    connect(palette, &DrawingFocusPalette::viewResetRequested, m_canvas, &GLCanvas::resetView);
+    connect(m_canvas, &GLCanvas::viewChanged, palette, &DrawingFocusPalette::setView);
+    return palette;
+}
+
+void MainWindow::setDrawingFocusMode(bool enabled) {
+    if (enabled == m_drawingFocusMode) {
+        if (m_focusModeAction) {
+            const QSignalBlocker blocker(m_focusModeAction);
+            m_focusModeAction->setChecked(enabled);
+        }
+        if (enabled && m_drawingFocusPalette) {
+            m_drawingFocusPalette->show();
+            m_drawingFocusPalette->raise();
+        }
+        return;
+    }
+
+    if (enabled) {
+        if (m_floatingCanvasWindow) restoreMainCanvas();
+        if (m_canvas->tool() == GLCanvas::Tool::Move) {
+            setDrawingTool(static_cast<int>(GLCanvas::Tool::Pen));
+        }
+
+        m_focusVisibility.clear();
+        const auto hideAndRemember = [this](QWidget* widget) {
+            if (!widget) return;
+            m_focusVisibility.append(qMakePair(widget, widget->isVisible()));
+            widget->hide();
+        };
+        hideAndRemember(menuBar());
+        hideAndRemember(statusBar());
+        for (QToolBar* bar : findChildren<QToolBar*>(QString(), Qt::FindDirectChildrenOnly)) {
+            hideAndRemember(bar);
+        }
+        for (QDockWidget* dock : findChildren<QDockWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
+            hideAndRemember(dock);
+        }
+
+        m_drawingFocusMode = true;
+        DrawingFocusPalette* palette = ensureDrawingFocusPalette();
+        updateDrawingFocusPalette();
+        palette->adjustSize();
+        palette->move(mapToGlobal(QPoint(16, 16)));
+        palette->show();
+        perapera::ui::keepWindowOnScreen(palette);
+        palette->raise();
+        m_canvas->setFocus(Qt::OtherFocusReason);
+    } else {
+        m_drawingFocusMode = false;
+        m_canvas->setViewNavigationEnabled(false);
+        if (m_drawingFocusPalette) m_drawingFocusPalette->hide();
+        for (const auto& saved : std::as_const(m_focusVisibility)) {
+            if (saved.first) saved.first->setVisible(saved.second);
+        }
+        m_focusVisibility.clear();
+        m_canvas->setFocus(Qt::OtherFocusReason);
+    }
+
+    if (m_focusModeAction) {
+        const QSignalBlocker blocker(m_focusModeAction);
+        m_focusModeAction->setChecked(enabled);
+    }
+}
+
+void MainWindow::updateDrawingFocusPalette() {
+    if (!m_drawingFocusPalette || !m_canvas) return;
+    const GLCanvas::Tool tool = m_canvas->tool();
+    if (tool != GLCanvas::Tool::Move) {
+        m_drawingFocusPalette->setActiveTool(static_cast<int>(tool));
+    }
+    m_drawingFocusPalette->setNavigationMode(m_canvas->viewNavigationEnabled());
+    const float radius = tool == GLCanvas::Tool::Eraser ? m_eraserRadiusValue : m_penRadiusValue;
+    m_drawingFocusPalette->setBrushWidth(perapera::ui::brushWidthFromRadius(radius));
+    m_drawingFocusPalette->setPenColor(m_penColor);
+    m_drawingFocusPalette->setView(m_canvas->zoom(), m_canvas->rotationDegrees());
+    m_drawingFocusPalette->setFrame(m_currentFrame, activeCut().frameCount());
+    m_drawingFocusPalette->setUndoRedoEnabled(!m_playing && m_commands.canUndo(),
+                                               !m_playing && m_commands.canRedo());
+}
+
+QWidget* MainWindow::debugDrawingFocusPalette() const {
+    return m_drawingFocusPalette;
+}
+
+bool MainWindow::debugDrawingFocusChromeHidden() const {
+    if (menuBar()->isVisible() || statusBar()->isVisible()) return false;
+    for (QToolBar* bar : findChildren<QToolBar*>(QString(), Qt::FindDirectChildrenOnly)) {
+        if (bar->isVisible()) return false;
+    }
+    for (QDockWidget* dock : findChildren<QDockWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
+        if (dock->isVisible()) return false;
+    }
+    return true;
+}
+
+void MainWindow::refreshMainCanvasShortcutActions() {
+    m_mainCanvasShortcutActions.clear();
+    const QList<QAction*> actions = findChildren<QAction*>();
+    for (QAction* action : actions) {
+        if (!action || action->shortcut().isEmpty()) continue;
+        const QVariant scope = action->property("peraperaShortcutScope");
+        if (scope.isValid() &&
+            scope.toInt() != static_cast<int>(perapera::ui::ShortcutScope::MainCanvas)) {
+            continue;
+        }
+        if (m_mainCanvasShortcutActions.contains(action)) continue;
+        m_mainCanvasShortcutActions.append(action);
+    }
+    installMainCanvasShortcutsOn(m_floatingCanvasWindow);
+    installMainCanvasShortcutsOn(m_drawingFocusPalette);
+}
+
+void MainWindow::installMainCanvasShortcutsOn(QWidget* target) {
+    if (!target) return;
+    const QList<QAction*> existing = target->actions();
+    for (QAction* action : m_mainCanvasShortcutActions) {
+        if (action && !existing.contains(action)) target->addAction(action);
+    }
 }
 
 void MainWindow::detachMainCanvas() {
@@ -1265,6 +1469,7 @@ void MainWindow::detachMainCanvas() {
     canvasToolBar->setMovable(false);
     canvasToolBar->addAction(m_undoAction);
     canvasToolBar->addAction(m_redoAction);
+    installMainCanvasShortcutsOn(window);
     window->setCentralWidget(m_canvas);
     connect(window, &FloatingCanvasWindow::restoreRequested, this, &MainWindow::restoreMainCanvas);
     connect(window, &QObject::destroyed, this, [this] { m_floatingCanvasWindow = nullptr; });
@@ -1285,6 +1490,8 @@ void MainWindow::restoreMainCanvas() {
         canvas->show();
     }
     m_floatingCanvasWindow = nullptr;
+    window->hide();
+    window->deleteLater();
 }
 
 void MainWindow::setupCutBar() {
@@ -2128,6 +2335,7 @@ void MainWindow::openShortcutSettingsDialog() {
     perapera::ui::reloadShortcutActions(m_xsheetPanel, perapera::ui::ShortcutScope::Xsheet);
     perapera::ui::reloadShortcutActions(m_storyboardWindow, perapera::ui::ShortcutScope::Storyboard);
     perapera::ui::reloadShortcutActions(m_settingBoardWindow, perapera::ui::ShortcutScope::SettingBoard);
+    refreshMainCanvasShortcutActions();
     statusBar()->showMessage(tr("ショートカット設定を更新しました"), 3000);
 }
 
@@ -2370,6 +2578,7 @@ void MainWindow::applyRetroChrome() {
     perapera::ui::installRetroWindowFrame(m_projectManagerWindow);
     perapera::ui::installRetroWindowFrame(m_shootingWindow);
     perapera::ui::installRetroWindowFrame(m_floatingCanvasWindow);
+    perapera::ui::installRetroWindowFrame(m_drawingFocusPalette);
 }
 
 void MainWindow::clearRetroChrome() {
@@ -2381,6 +2590,7 @@ void MainWindow::clearRetroChrome() {
     perapera::ui::removeRetroWindowFrame(m_projectManagerWindow);
     perapera::ui::removeRetroWindowFrame(m_shootingWindow);
     perapera::ui::removeRetroWindowFrame(m_floatingCanvasWindow);
+    perapera::ui::removeRetroWindowFrame(m_drawingFocusPalette);
 }
 
 void MainWindow::setupMenus() {
@@ -2479,6 +2689,12 @@ void MainWindow::setupMenus() {
 
     // 表示メニュー: 各ドックパネルの表示/非表示(パネル追加時はここに並べる)
     QMenu* viewMenu = menuBar()->addMenu(tr("表示(&V)"));
+    m_focusModeAction = viewMenu->addAction(tr("作画集中モード(&F)"));
+    m_focusModeAction->setCheckable(true);
+    perapera::ui::bindShortcut(m_focusModeAction, perapera::ui::ShortcutScope::MainCanvas,
+                               QStringLiteral("focusMode"));
+    connect(m_focusModeAction, &QAction::toggled, this, &MainWindow::setDrawingFocusMode);
+    viewMenu->addSeparator();
     viewMenu->addAction(m_framePanel->toggleViewAction());
     viewMenu->addAction(m_layerPanel->toggleViewAction());
     viewMenu->addAction(m_palettePanel->toggleViewAction());
@@ -2597,6 +2813,10 @@ void MainWindow::redo() {
 void MainWindow::updateUndoActions() {
     if (m_undoAction) m_undoAction->setEnabled(!m_playing && m_commands.canUndo());
     if (m_redoAction) m_redoAction->setEnabled(!m_playing && m_commands.canRedo());
+    if (m_drawingFocusPalette) {
+        m_drawingFocusPalette->setUndoRedoEnabled(!m_playing && m_commands.canUndo(),
+                                                   !m_playing && m_commands.canRedo());
+    }
 }
 
 void MainWindow::clearUndoHistory() {
@@ -2838,55 +3058,54 @@ void MainWindow::setupToolBar() {
     auto* group = new QActionGroup(this);
     group->setExclusive(true);
 
-    QAction* penAction = toolBar->addAction(tr("ペン"));
-    penAction->setCheckable(true);
-    penAction->setChecked(true);
-    group->addAction(penAction);
-    connect(penAction, &QAction::triggered, this, [this] {
-        m_canvas->setTool(GLCanvas::Tool::Pen);
-        m_penRadiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_penRadiusValue));
-    });
+    m_penToolAction = toolBar->addAction(tr("ペン"));
+    m_penToolAction->setCheckable(true);
+    m_penToolAction->setChecked(true);
+    group->addAction(m_penToolAction);
+    connect(m_penToolAction, &QAction::triggered, this,
+            [this] { setDrawingTool(static_cast<int>(GLCanvas::Tool::Pen)); });
 
-    QAction* lineAction = toolBar->addAction(tr("直線"));
-    lineAction->setCheckable(true);
-    group->addAction(lineAction);
-    connect(lineAction, &QAction::triggered, this, [this] {
-        m_canvas->setTool(GLCanvas::Tool::Line);
-        m_penRadiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_penRadiusValue));
-    });
+    m_lineToolAction = toolBar->addAction(tr("直線"));
+    m_lineToolAction->setCheckable(true);
+    group->addAction(m_lineToolAction);
+    connect(m_lineToolAction, &QAction::triggered, this,
+            [this] { setDrawingTool(static_cast<int>(GLCanvas::Tool::Line)); });
 
-    QAction* eraserAction = toolBar->addAction(tr("消しゴム"));
-    eraserAction->setCheckable(true);
-    group->addAction(eraserAction);
-    connect(eraserAction, &QAction::triggered, this, [this] {
-        m_canvas->setTool(GLCanvas::Tool::Eraser);
-        m_penRadiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(m_eraserRadiusValue));
-    });
+    m_eraserToolAction = toolBar->addAction(tr("消しゴム"));
+    m_eraserToolAction->setCheckable(true);
+    group->addAction(m_eraserToolAction);
+    connect(m_eraserToolAction, &QAction::triggered, this,
+            [this] { setDrawingTool(static_cast<int>(GLCanvas::Tool::Eraser)); });
 
-    QAction* fillAction = toolBar->addAction(tr("塗りつぶし"));
-    fillAction->setCheckable(true);
-    group->addAction(fillAction);
-    connect(fillAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Fill); });
+    m_fillToolAction = toolBar->addAction(tr("塗りつぶし"));
+    m_fillToolAction->setCheckable(true);
+    group->addAction(m_fillToolAction);
+    connect(m_fillToolAction, &QAction::triggered, this,
+            [this] { setDrawingTool(static_cast<int>(GLCanvas::Tool::Fill)); });
 
-    QAction* lassoAction = toolBar->addAction(tr("投げ縄塗り"));
-    lassoAction->setCheckable(true);
-    group->addAction(lassoAction);
-    connect(lassoAction, &QAction::triggered, this,
-            [this] { m_canvas->setTool(GLCanvas::Tool::LassoFill); });
+    m_lassoToolAction = toolBar->addAction(tr("投げ縄塗り"));
+    m_lassoToolAction->setCheckable(true);
+    group->addAction(m_lassoToolAction);
+    connect(m_lassoToolAction, &QAction::triggered, this,
+            [this] { setDrawingTool(static_cast<int>(GLCanvas::Tool::LassoFill)); });
 
-    QAction* moveAction = toolBar->addAction(tr("移動"));
-    moveAction->setCheckable(true);
-    group->addAction(moveAction);
-    connect(moveAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Move); });
+    m_moveToolAction = toolBar->addAction(tr("移動"));
+    m_moveToolAction->setCheckable(true);
+    group->addAction(m_moveToolAction);
+    connect(m_moveToolAction, &QAction::triggered, this,
+            [this] { setDrawingTool(static_cast<int>(GLCanvas::Tool::Move)); });
 
-    QAction* eyedropperAction = toolBar->addAction(tr("スポイト"));
-    eyedropperAction->setCheckable(true);
-    group->addAction(eyedropperAction);
-    connect(eyedropperAction, &QAction::triggered, this, [this] { m_canvas->setTool(GLCanvas::Tool::Eyedropper); });
+    m_eyedropperToolAction = toolBar->addAction(tr("スポイト"));
+    m_eyedropperToolAction->setCheckable(true);
+    group->addAction(m_eyedropperToolAction);
+    connect(m_eyedropperToolAction, &QAction::triggered, this,
+            [this] { setDrawingTool(static_cast<int>(GLCanvas::Tool::Eyedropper)); });
 
     toolBar->addSeparator();
     QAction* detachCanvasAction = toolBar->addAction(tr("キャンバス別窓"));
     connect(detachCanvasAction, &QAction::triggered, this, &MainWindow::detachMainCanvas);
+    toolBar->addSeparator();
+    if (m_focusModeAction) toolBar->addAction(m_focusModeAction);
 
     // --- ブラシ設定(太さ・色) ---
     QToolBar* brushBar = addToolBar(tr("ブラシ設定"));
@@ -2938,6 +3157,7 @@ void MainWindow::setupToolBar() {
         }
         const QSignalBlocker blocker(m_penRadiusSlider);
         m_penRadiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(radius));
+        if (m_drawingFocusPalette) m_drawingFocusPalette->setBrushWidth(width);
     });
     brushBar->addWidget(m_penWidthSpinBox);
 
@@ -3127,43 +3347,44 @@ void MainWindow::setupToolBar() {
     QAction* penKeyAction = operationMenu->addAction(tr("ペン"));
     perapera::ui::bindShortcut(penKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("pen"));
-    connect(penKeyAction, &QAction::triggered, penAction, &QAction::trigger);
+    connect(penKeyAction, &QAction::triggered, m_penToolAction, &QAction::trigger);
 
     QAction* lineKeyAction = operationMenu->addAction(tr("直線"));
     perapera::ui::bindShortcut(lineKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("line"));
-    connect(lineKeyAction, &QAction::triggered, lineAction, &QAction::trigger);
+    connect(lineKeyAction, &QAction::triggered, m_lineToolAction, &QAction::trigger);
 
     QAction* eraserKeyAction = operationMenu->addAction(tr("消しゴム"));
     perapera::ui::bindShortcut(eraserKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("eraser"));
-    connect(eraserKeyAction, &QAction::triggered, eraserAction, &QAction::trigger);
+    connect(eraserKeyAction, &QAction::triggered, m_eraserToolAction, &QAction::trigger);
 
     QAction* fillKeyAction = operationMenu->addAction(tr("塗りつぶし"));
     perapera::ui::bindShortcut(fillKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("fill"));
-    connect(fillKeyAction, &QAction::triggered, fillAction, &QAction::trigger);
+    connect(fillKeyAction, &QAction::triggered, m_fillToolAction, &QAction::trigger);
 
     QAction* moveKeyAction = operationMenu->addAction(tr("移動"));
     perapera::ui::bindShortcut(moveKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("move"));
-    connect(moveKeyAction, &QAction::triggered, moveAction, &QAction::trigger);
+    connect(moveKeyAction, &QAction::triggered, m_moveToolAction, &QAction::trigger);
 
     QAction* lassoKeyAction = operationMenu->addAction(tr("投げ縄塗り"));
     perapera::ui::bindShortcut(lassoKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("lassoFill"));
-    connect(lassoKeyAction, &QAction::triggered, lassoAction, &QAction::trigger);
+    connect(lassoKeyAction, &QAction::triggered, m_lassoToolAction, &QAction::trigger);
 
     QAction* eyedropperKeyAction = operationMenu->addAction(tr("スポイト"));
     perapera::ui::bindShortcut(eyedropperKeyAction, perapera::ui::ShortcutScope::MainCanvas,
                                QStringLiteral("eyedropper"));
-    connect(eyedropperKeyAction, &QAction::triggered, eyedropperAction, &QAction::trigger);
+    connect(eyedropperKeyAction, &QAction::triggered, m_eyedropperToolAction, &QAction::trigger);
 
     operationMenu->addSeparator();
     QAction* shortcutSettingsAction =
         operationMenu->addAction(tr("ショートカット設定..."));
     connect(shortcutSettingsAction, &QAction::triggered,
             this, &MainWindow::openShortcutSettingsDialog);
+    refreshMainCanvasShortcutActions();
 }
 
 void MainWindow::debugSetupOnionDemo() {

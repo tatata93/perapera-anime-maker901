@@ -237,8 +237,9 @@ QColor titleBarEndColor(bool active) {
 QRect availableScreenGeometryFor(const QWidget* window) {
     QScreen* screen = nullptr;
     if (window) {
-        screen = QGuiApplication::screenAt(window->frameGeometry().center());
+        if (QWindow* handle = window->windowHandle()) screen = handle->screen();
         if (!screen) screen = window->screen();
+        if (!screen) screen = QGuiApplication::screenAt(window->frameGeometry().center());
     }
     if (!screen) screen = QGuiApplication::primaryScreen();
     return screen ? screen->availableGeometry() : QRect(0, 0, 1280, 720);
@@ -471,7 +472,12 @@ protected:
             scheduleKeep(0);
         } else if (event->type() == QEvent::ScreenChangeInternal) {
             // A different monitor may have a different DPI and work area.
-            scheduleKeep(120);
+            scheduleKeep(80);
+        } else if (event->type() == QEvent::Move || event->type() == QEvent::Resize) {
+            // Moving between monitors can leave a large secondary window sized for the
+            // previous work area. Delay slightly so dragging/resizing stays smooth, then
+            // fit it to the monitor it ended up on.
+            scheduleKeep(180);
         } else if (event->type() == QEvent::WindowStateChange) {
             scheduleKeep(0);
         }
@@ -484,7 +490,7 @@ private:
         QWindow* handle = m_window->windowHandle();
         if (!handle || m_handle == handle) return;
         m_handle = handle;
-        connect(handle, &QWindow::screenChanged, this, [this](QScreen*) { scheduleKeep(120); });
+        connect(handle, &QWindow::screenChanged, this, [this](QScreen*) { scheduleKeep(80); });
     }
 
     void scheduleKeep(int delayMs) {
@@ -1384,6 +1390,10 @@ void keepWindowOnScreen(QWidget* window) {
                            std::max(0, frame.height() - window->geometry().height()));
     const QSize availableClient(std::max(1, available.width() - frameExtra.width()),
                                 std::max(1, available.height() - frameExtra.height()));
+    const QSize currentMinimum = window->minimumSize();
+    const QSize fittedMinimum = currentMinimum.boundedTo(availableClient);
+    if (fittedMinimum != currentMinimum) window->setMinimumSize(fittedMinimum);
+
     const QSize minClient = effectiveMinimumSize(window).boundedTo(availableClient);
     const QSize maxClient = window->maximumSize().boundedTo(availableClient).expandedTo(minClient);
     const QSize targetClient = window->size().expandedTo(minClient).boundedTo(maxClient);

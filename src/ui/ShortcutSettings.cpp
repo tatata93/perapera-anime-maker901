@@ -54,6 +54,7 @@ const QList<ShortcutDefinition>& shortcutDefinitions(ShortcutScope scope) {
     static const QList<ShortcutDefinition> mainDefinitions{
         {QStringLiteral("undo"), QObject::tr("元に戻す"), QKeySequence(QStringLiteral("Ctrl+Z"))},
         {QStringLiteral("redo"), QObject::tr("やり直す"), QKeySequence(QStringLiteral("Ctrl+Y"))},
+        {QStringLiteral("focusMode"), QObject::tr("作画集中モード"), QKeySequence(QStringLiteral("Tab"))},
         {QStringLiteral("pen"), QObject::tr("ペン"), QKeySequence(QStringLiteral("B"))},
         {QStringLiteral("line"), QObject::tr("直線"), QKeySequence(QStringLiteral("N"))},
         {QStringLiteral("eraser"), QObject::tr("消しゴム"), QKeySequence(QStringLiteral("E"))},

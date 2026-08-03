@@ -1,16 +1,21 @@
 #include <QApplication>
 #include <QDialog>
 #include <QDir>
+#include <QDoubleSpinBox>
 #include <QFile>
 #include <QIcon>
 #include <QImage>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
 #include <QScreen>
 #include <QSize>
+#include <QSlider>
 #include <QTabWidget>
 #include <QTextStream>
 #include <QTimer>
+#include <QToolButton>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -275,6 +280,102 @@ int main(int argc, char* argv[]) {
                 }
             }
             QApplication::exit(0);
+        });
+    }
+
+    // 動作確認用: --drawing-focus-test <出力PNG> で作画集中モードを開き、
+    // 周辺UIの退避、倍率・回転・ペン先移動モード、通常画面への復帰を検査する。
+    const int drawingFocusIndex = args.indexOf("--drawing-focus-test");
+    if (drawingFocusIndex >= 0 && drawingFocusIndex + 1 < args.size()) {
+        const QString outputPath = args.at(drawingFocusIndex + 1);
+        QTimer::singleShot(500, &window, [&window, outputPath] {
+            window.debugSetDrawingFocusMode(true);
+            QTimer::singleShot(300, &window, [&window, outputPath] {
+                QWidget* palette = window.debugDrawingFocusPalette();
+                auto* zoom = palette ? palette->findChild<QDoubleSpinBox*>(
+                                           QStringLiteral("FocusZoomSpin"))
+                                     : nullptr;
+                auto* rotation = palette ? palette->findChild<QDoubleSpinBox*>(
+                                               QStringLiteral("FocusRotationSpin"))
+                                         : nullptr;
+                auto* widthSlider = palette ? palette->findChild<QSlider*>(
+                                                  QStringLiteral("FocusBrushWidthSlider"))
+                                            : nullptr;
+                auto* widthSpin = palette ? palette->findChild<QDoubleSpinBox*>(
+                                                QStringLiteral("FocusBrushWidthSpin"))
+                                          : nullptr;
+                auto* navigation = palette ? palette->findChild<QToolButton*>(
+                                                 QStringLiteral("FocusNavigationButton"))
+                                           : nullptr;
+                auto* undoButton = palette ? palette->findChild<QToolButton*>(
+                                                 QStringLiteral("FocusUndoButton"))
+                                           : nullptr;
+                auto* redoButton = palette ? palette->findChild<QToolButton*>(
+                                                 QStringLiteral("FocusRedoButton"))
+                                           : nullptr;
+                if (zoom) zoom->setValue(150.0);
+                if (rotation) rotation->setValue(15.0);
+                if (widthSlider) widthSlider->setValue(widthSlider->maximum());
+                if (navigation) navigation->setChecked(true);
+                QApplication::processEvents();
+
+                const QPointF panBefore = window.canvas()->debugPanOffset();
+                const QPointF panStart(window.canvas()->width() * 0.5,
+                                       window.canvas()->height() * 0.5);
+                const QPointF panEnd = panStart + QPointF(48.0, 32.0);
+                QMouseEvent panPress(QEvent::MouseButtonPress, panStart, panStart, panStart,
+                                     Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent panMove(QEvent::MouseMove, panEnd, panEnd, panEnd,
+                                    Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent panRelease(QEvent::MouseButtonRelease, panEnd, panEnd, panEnd,
+                                       Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(window.canvas(), &panPress);
+                QApplication::sendEvent(window.canvas(), &panMove);
+                QApplication::sendEvent(window.canvas(), &panRelease);
+                const QPointF panDelta = window.canvas()->debugPanOffset() - panBefore;
+
+                const bool entered = palette && palette->isVisible() &&
+                                     window.debugDrawingFocusMode() &&
+                                     window.debugDrawingFocusChromeHidden();
+                const bool viewApplied = std::abs(window.canvas()->zoom() - 1.5f) < 0.001f &&
+                                         std::abs(window.canvas()->rotationDegrees() - 15.0) < 0.001 &&
+                                         window.canvas()->viewNavigationEnabled() &&
+                                         panDelta.manhattanLength() > 70.0;
+                const bool widthSliderApplied = widthSlider && widthSpin && widthSpin->value() > 12.0;
+
+                window.canvas()->debugSimulateStroke();
+                QApplication::processEvents();
+                const bool undoBecameAvailable = undoButton && undoButton->isEnabled();
+                if (palette) {
+                    palette->activateWindow();
+                    palette->setFocus(Qt::OtherFocusReason);
+                    QKeyEvent undoKey(QEvent::KeyPress, Qt::Key_Z, Qt::ControlModifier);
+                    QApplication::sendEvent(palette, &undoKey);
+                    QApplication::processEvents();
+                }
+                const bool focusShortcutApplied = undoBecameAvailable && redoButton &&
+                                                  redoButton->isEnabled();
+
+                bool saved = false;
+                if (palette) {
+                    QPixmap shot = window.grab();
+                    QPainter painter(&shot);
+                    painter.drawPixmap(window.mapFromGlobal(palette->frameGeometry().topLeft()),
+                                       palette->grab());
+                    painter.end();
+                    saved = shot.save(outputPath);
+                }
+
+                window.debugSetDrawingFocusMode(false);
+                QApplication::processEvents();
+                const bool restored = !window.debugDrawingFocusMode() &&
+                                      (!palette || !palette->isVisible()) &&
+                                      !window.canvas()->viewNavigationEnabled();
+                QApplication::exit(entered && viewApplied && widthSliderApplied &&
+                                           focusShortcutApplied && restored && saved
+                                       ? 0
+                                       : 1);
+            });
         });
     }
 
