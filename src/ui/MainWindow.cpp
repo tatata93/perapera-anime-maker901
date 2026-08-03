@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QColorDialog>
 #include <QDir>
+#include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
@@ -2900,6 +2901,19 @@ void MainWindow::setupToolBar() {
     m_penRadiusSlider->setFixedWidth(100);
     // Spaceキーでの再生操作にフォーカスを奪わないよう、クリック時のみフォーカスを持たせる
     m_penRadiusSlider->setFocusPolicy(Qt::ClickFocus);
+
+    m_penWidthSpinBox = new QDoubleSpinBox(this);
+    m_penWidthSpinBox->setRange(perapera::ui::kBrushWidthMin,
+                                perapera::ui::kBrushWidthMax);
+    m_penWidthSpinBox->setSingleStep(perapera::ui::kBrushWidthStep);
+    m_penWidthSpinBox->setDecimals(2);
+    m_penWidthSpinBox->setSuffix(tr(" px"));
+    m_penWidthSpinBox->setValue(perapera::ui::brushWidthFromRadius(m_penRadiusValue));
+    m_penWidthSpinBox->setFixedWidth(82);
+    m_penWidthSpinBox->setFocusPolicy(Qt::ClickFocus);
+    m_penWidthSpinBox->setKeyboardTracking(false);
+    m_penWidthSpinBox->setToolTip(tr("線幅。上下ボタンまたは数値入力で0.25 pxずつ調整できます"));
+
     connect(m_penRadiusSlider, &QSlider::valueChanged, this, [this](int value) {
         const float radius = perapera::ui::brushRadiusFromSliderValue(value);
         if (m_canvas->tool() == GLCanvas::Tool::Eraser) {
@@ -2909,13 +2923,23 @@ void MainWindow::setupToolBar() {
             m_canvas->setPenRadius(radius);
             m_penRadiusValue = radius;
         }
-        m_penRadiusValueLabel->setText(perapera::ui::brushWidthLabel(radius));
+        const QSignalBlocker blocker(m_penWidthSpinBox);
+        m_penWidthSpinBox->setValue(perapera::ui::brushWidthFromRadius(radius));
     });
     brushBar->addWidget(m_penRadiusSlider);
-
-    m_penRadiusValueLabel = new QLabel(perapera::ui::brushWidthLabel(m_penRadiusValue), this);
-    m_penRadiusValueLabel->setMinimumWidth(32);
-    brushBar->addWidget(m_penRadiusValueLabel);
+    connect(m_penWidthSpinBox, &QDoubleSpinBox::valueChanged, this, [this](double width) {
+        const float radius = perapera::ui::brushRadiusFromWidth(width);
+        if (m_canvas->tool() == GLCanvas::Tool::Eraser) {
+            m_canvas->setEraserRadius(radius);
+            m_eraserRadiusValue = radius;
+        } else {
+            m_canvas->setPenRadius(radius);
+            m_penRadiusValue = radius;
+        }
+        const QSignalBlocker blocker(m_penRadiusSlider);
+        m_penRadiusSlider->setValue(perapera::ui::sliderValueFromBrushRadius(radius));
+    });
+    brushBar->addWidget(m_penWidthSpinBox);
 
     m_penColorButton = new QToolButton(this);
     m_penColorButton->setFixedSize(24, 24);

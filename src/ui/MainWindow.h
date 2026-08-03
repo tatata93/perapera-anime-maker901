@@ -36,6 +36,7 @@ class QAction;
 class QImage;
 class QComboBox;
 class QDialog;
+class QDoubleSpinBox;
 class QLabel;
 class QMenu;
 class QSlider;
@@ -482,7 +483,7 @@ private:
 
     // ブラシ設定UI(太さスライダー・色選択ボタン)
     QSlider* m_penRadiusSlider = nullptr;
-    QLabel* m_penRadiusValueLabel = nullptr;
+    QDoubleSpinBox* m_penWidthSpinBox = nullptr;
     QToolButton* m_penColorButton = nullptr;
     QColor m_penColor = Qt::black;
     // 太さスライダーはツールごとに値を記憶する(ペン/塗りつぶしはペンの値を共有、消しゴムは専用)

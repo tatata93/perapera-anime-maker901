@@ -11,6 +11,7 @@ class QListWidget;
 class QListWidgetItem;
 class QPushButton;
 class QSlider;
+class QDoubleSpinBox;
 class QLabel;
 class QString;
 class QVBoxLayout;
@@ -36,6 +37,7 @@ class SettingBoardWindow : public QMainWindow {
 
 public:
     explicit SettingBoardWindow(QWidget* parent = nullptr);
+    ~SettingBoardWindow() override;
 
     // プロジェクトの差し替え(新規/読込後)。所有権は持たない
     void setProject(core::Project* project);
@@ -82,6 +84,8 @@ private:
     void bindCanvasToSelectedBoard();
     // 太さスライダーの値を選択中ツール(ペン/消しゴム)の半径へ反映する
     void onRadiusSliderChanged(int value);
+    void onBrushWidthChanged(double width);
+    void syncBrushWidthControls(float radius);
     // 色選択ダイアログを開き、選択色をキャンバスのペン色へ反映する
     void chooseColor();
     // 現在の太さ/色設定をキャンバスへ適用する
@@ -131,7 +135,7 @@ private:
     QPushButton* m_previzUnderlayButton = nullptr;
     QLabel* m_editLockLabel = nullptr;
     QSlider* m_radiusSlider = nullptr;
-    QLabel* m_radiusValueLabel = nullptr;
+    QDoubleSpinBox* m_widthSpinBox = nullptr;
     QPushButton* m_colorButton = nullptr;
     QListWidget* m_colorSpecList = nullptr;  // 色指定(色指定書)一覧: スウォッチ+名前
     LayerPanel* m_layerPanel = nullptr;
