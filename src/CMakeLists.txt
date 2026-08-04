@@ -45,6 +45,8 @@ set(PERAPERA_APP_SOURCES
     ui/CanvasSizeDialog.cpp
     ui/CanvasSizeDialog.h
     ui/BrushWidthControl.h
+    ui/FlowLayout.cpp
+    ui/FlowLayout.h
     ui/DrawingFocusPalette.cpp
     ui/DrawingFocusPalette.h
     ui/ShortcutSettings.cpp

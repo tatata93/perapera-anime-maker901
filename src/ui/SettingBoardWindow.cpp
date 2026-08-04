@@ -27,6 +27,7 @@
 #include <QSize>
 #include <QSlider>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QSpinBox>
 #include <QStringList>
 #include <QTextOption>
@@ -44,6 +45,7 @@
 #include "render/GLCanvas.h"
 #include "ui/CanvasSizeDialog.h"
 #include "ui/BrushWidthControl.h"
+#include "ui/FlowLayout.h"
 #include "ui/FloatingCanvasWindow.h"
 #include "ui/LayerPanel.h"
 #include "ui/PaintLayerUtils.h"
@@ -349,6 +351,7 @@ QImage boardExportImage(core::SettingBoard& board) {
 SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(tr("設定ボード - perapera-anime-maker901"));
     resize(1200, 760);
+    setMinimumSize(520, 360);
 
     m_undoAction = new QAction(tr("元に戻す"), this);
     m_redoAction = new QAction(tr("やり直す"), this);
@@ -364,16 +367,20 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QHBoxLayout(central);
+    mainLayout->setContentsMargins(4, 4, 4, 4);
+    mainLayout->setSpacing(4);
 
     // 左: ボード一覧+ボタン列
     auto* leftContainer = new QWidget(central);
+    leftContainer->setMinimumWidth(150);
+    leftContainer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     auto* leftLayout = new QVBoxLayout(leftContainer);
     leftLayout->setContentsMargins(0, 0, 0, 0);
 
     m_list = new QListWidget(leftContainer);
     leftLayout->addWidget(m_list);
 
-    auto* buttonLayout = new QHBoxLayout();
+    auto* buttonLayout = new FlowLayout(nullptr, 0, 4, 4);
     auto* addButton = new QPushButton(tr("追加"), leftContainer);
     auto* duplicateButton = new QPushButton(tr("複製"), leftContainer);
     auto* removeButton = new QPushButton(tr("削除"), leftContainer);
@@ -389,10 +396,12 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
 
     // 右: ツール行+描画エリア
     auto* rightContainer = new QWidget(central);
+    rightContainer->setMinimumWidth(260);
+    rightContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     auto* rightLayout = new QVBoxLayout(rightContainer);
     rightLayout->setContentsMargins(0, 0, 0, 0);
 
-    auto* toolRow = new QHBoxLayout();
+    auto* toolRow = new FlowLayout(nullptr, 0, 4, 4);
     auto* undoButton = new QToolButton(rightContainer);
     undoButton->setDefaultAction(m_undoAction);
     undoButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -489,13 +498,16 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     auto* detachButton = new QPushButton(tr("別窓"), rightContainer);
     toolRow->addWidget(detachButton);
 
-    toolRow->addStretch();
     rightLayout->addLayout(toolRow);
 
     m_canvasHost = new QWidget(rightContainer);
+    m_canvasHost->setMinimumSize(180, 120);
+    m_canvasHost->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_canvasLayout = new QVBoxLayout(m_canvasHost);
     m_canvasLayout->setContentsMargins(0, 0, 0, 0);
     m_canvas = createCanvas(m_canvasHost);
+    m_canvas->setMinimumSize(160, 100);
+    m_canvas->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_canvasLayout->addWidget(m_canvas);
     rightLayout->addWidget(m_canvasHost, 1);
 
@@ -506,7 +518,7 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     m_colorSpecList->setFixedHeight(120);
     rightLayout->addWidget(m_colorSpecList);
 
-    auto* colorSpecButtonLayout = new QHBoxLayout();
+    auto* colorSpecButtonLayout = new FlowLayout(nullptr, 0, 4, 4);
     auto* addColorSpecButton = new QPushButton(tr("色を追加"), rightContainer);
     auto* renameColorSpecButton = new QPushButton(tr("名前変更"), rightContainer);
     auto* changeColorSpecButton = new QPushButton(tr("色変更"), rightContainer);
@@ -527,6 +539,7 @@ SettingBoardWindow::SettingBoardWindow(QWidget* parent) : QMainWindow(parent) {
     m_layerPanel = new LayerPanel(this);
     m_layerPanel->setWindowTitle(tr("設定ボード レイヤー"));
     addDockWidget(Qt::RightDockWidgetArea, m_layerPanel);
+    resizeDocks({m_layerPanel}, {180}, Qt::Horizontal);
 
     connect(m_penButton, &QPushButton::toggled, this, [this](bool checked) {
         if (!checked) return;
@@ -1346,10 +1359,12 @@ GLCanvas* SettingBoardWindow::createCanvas(QWidget* parent) {
 
 QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
     auto* panel = new QWidget(parent);
+    panel->setMinimumSize(320, 220);
     auto* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(4);
 
-    auto* row = new QHBoxLayout();
+    auto* row = new FlowLayout(nullptr, 0, 4, 4);
     panel->addAction(m_undoAction);
     panel->addAction(m_redoAction);
     for (QAction* action : findChildren<QAction*>()) {
@@ -1422,10 +1437,11 @@ QWidget* SettingBoardWindow::createFloatingCanvasPanel(QWidget* parent) {
     auto* textButton = new QPushButton(tr("文字"), panel);
     markAsFinalEditControl(textButton);
     row->addWidget(textButton);
-    row->addStretch();
     layout->addLayout(row);
 
     m_canvas = createCanvas(panel);
+    m_canvas->setMinimumSize(240, 160);
+    m_canvas->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     layout->addWidget(m_canvas, 1);
 
     const auto activateTool =

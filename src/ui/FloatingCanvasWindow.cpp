@@ -10,7 +10,8 @@ FloatingCanvasWindow::FloatingCanvasWindow(const QString& title, QWidget* owner)
     setWindowTitle(title);
     setAttribute(Qt::WA_DeleteOnClose);
     setAttribute(Qt::WA_QuitOnClose, false);
-    resize(1000, 720);
+    setMinimumSize(360, 260);
+    resize(900, 640);
 
     if (owner) {
         connect(owner, &QObject::destroyed, this, [this] {

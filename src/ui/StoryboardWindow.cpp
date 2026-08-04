@@ -28,6 +28,7 @@
 #include <QResizeEvent>
 #include <QSlider>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QStringList>
 #include <QTableWidget>
 #include <QTextOption>
@@ -46,6 +47,7 @@
 #include "render/GLCanvas.h"
 #include "ui/CanvasSizeDialog.h"
 #include "ui/BrushWidthControl.h"
+#include "ui/FlowLayout.h"
 #include "ui/FloatingCanvasWindow.h"
 #include "ui/LayerPanel.h"
 #include "ui/PaintLayerUtils.h"
@@ -436,6 +438,7 @@ private:
 StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(tr("絵コンテ - perapera-anime-maker901"));
     resize(1200, 700);
+    setMinimumSize(520, 360);
 
     m_undoAction = new QAction(tr("元に戻す"), this);
     m_redoAction = new QAction(tr("やり直す"), this);
@@ -449,9 +452,13 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QHBoxLayout(central);
+    mainLayout->setContentsMargins(4, 4, 4, 4);
+    mainLayout->setSpacing(4);
 
     // 左: パネル表+ボタン列
     auto* leftContainer = new QWidget(central);
+    leftContainer->setMinimumWidth(180);
+    leftContainer->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     auto* leftLayout = new QVBoxLayout(leftContainer);
     leftLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -470,9 +477,11 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_table->horizontalHeader()->setStretchLastSection(false);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_table->setMinimumWidth(160);
+    m_table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     leftLayout->addWidget(m_table);
 
-    auto* buttonLayout = new QHBoxLayout();
+    auto* buttonLayout = new FlowLayout(nullptr, 0, 4, 4);
     auto* addButton = new QPushButton(tr("パネル追加"), leftContainer);
     auto* duplicateButton = new QPushButton(tr("複製"), leftContainer);
     auto* removeButton = new QPushButton(tr("パネル削除"), leftContainer);
@@ -490,10 +499,12 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
 
     // 右: ツール行+描画エリア(GLCanvasを絵コンテ専用の紙として再利用する)
     auto* rightContainer = new QWidget(central);
+    rightContainer->setMinimumWidth(260);
+    rightContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     auto* rightLayout = new QVBoxLayout(rightContainer);
     rightLayout->setContentsMargins(0, 0, 0, 0);
 
-    auto* toolRow = new QHBoxLayout();
+    auto* toolRow = new FlowLayout(nullptr, 0, 4, 4);
     auto* undoButton = new QToolButton(rightContainer);
     undoButton->setDefaultAction(m_undoAction);
     undoButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -571,15 +582,18 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     auto* detachButton = new QPushButton(tr("別窓"), rightContainer);
     toolRow->addWidget(detachButton);
 
-    toolRow->addStretch();
     rightLayout->addLayout(toolRow);
 
     // コンテ用紙1枚(罫線・見出し・カット番号・絵の枠・内容欄・セリフ欄・秒欄を印字した下敷きの
     // 上に手書きインクを重ねる、紙全体をカバーする1つのGLCanvas)
     m_canvasHost = new QWidget(rightContainer);
+    m_canvasHost->setMinimumSize(180, 120);
+    m_canvasHost->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_canvasLayout = new QVBoxLayout(m_canvasHost);
     m_canvasLayout->setContentsMargins(0, 0, 0, 0);
     m_canvas = createCanvas(m_canvasHost);
+    m_canvas->setMinimumSize(160, 100);
+    m_canvas->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_canvasLayout->addWidget(m_canvas);
     rightLayout->addWidget(m_canvasHost, 2);
 
@@ -610,6 +624,7 @@ StoryboardWindow::StoryboardWindow(QWidget* parent) : QMainWindow(parent) {
     m_layerPanel = new LayerPanel(this);
     m_layerPanel->setWindowTitle(tr("絵コンテ レイヤー"));
     addDockWidget(Qt::RightDockWidgetArea, m_layerPanel);
+    resizeDocks({m_layerPanel}, {180}, Qt::Horizontal);
 
     // ストローク完了通知(Undo用コマンドが渡る。絵コンテに通常のUndo操作はないが、絵の枠の
     // ダブルクリング1回目で打たれてしまう点を取り消すために直近のコマンドだけ保持しておく)
@@ -1205,10 +1220,12 @@ GLCanvas* StoryboardWindow::createCanvas(QWidget* parent) {
 
 QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
     auto* panel = new QWidget(parent);
+    panel->setMinimumSize(320, 220);
     auto* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(4);
 
-    auto* row = new QHBoxLayout();
+    auto* row = new FlowLayout(nullptr, 0, 4, 4);
     panel->addAction(m_undoAction);
     panel->addAction(m_redoAction);
     for (QAction* action : findChildren<QAction*>()) {
@@ -1274,10 +1291,11 @@ QWidget* StoryboardWindow::createFloatingCanvasPanel(QWidget* parent) {
     colorButton->setFixedWidth(48);
     colorButton->setStyleSheet(QStringLiteral("background-color: %1;").arg(m_penColor.name()));
     row->addWidget(colorButton);
-    row->addStretch();
     layout->addLayout(row);
 
     m_canvas = createCanvas(panel);
+    m_canvas->setMinimumSize(240, 160);
+    m_canvas->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     layout->addWidget(m_canvas, 1);
 
     const auto activateTool =

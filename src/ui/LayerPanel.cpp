@@ -11,6 +11,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "ui/FlowLayout.h"
+
 LayerPanel::LayerPanel(QWidget* parent) : QDockWidget(tr("レイヤー"), parent) {
     setObjectName(QStringLiteral("LayerPanel"));
     auto* container = new QWidget(this);
@@ -33,7 +35,7 @@ LayerPanel::LayerPanel(QWidget* parent) : QDockWidget(tr("レイヤー"), parent
     layout->addLayout(opacityRow);
     updateOpacityLabel(100);
 
-    auto* buttonLayout = new QHBoxLayout();
+    auto* buttonLayout = new FlowLayout(nullptr, 0, 4, 4);
     auto* addButton = new QPushButton(tr("追加"), container);
     auto* duplicateButton = new QPushButton(tr("複製"), container);
     auto* removeButton = new QPushButton(tr("削除"), container);

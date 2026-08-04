@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QAbstractButton>
 #include <QDialog>
 #include <QDir>
 #include <QDoubleSpinBox>
@@ -47,6 +48,33 @@ namespace {
 
 bool isIndependentApplicationWindow(QWidget* window) {
     return window && window->isWindow() && window->parentWidget() == nullptr && window->windowType() == Qt::Window;
+}
+
+QString outputPathWithSuffix(const QString& path, const QString& suffix) {
+    const int dotIndex = path.lastIndexOf('.');
+    return dotIndex >= 0 ? path.left(dotIndex) + suffix + path.mid(dotIndex) : path + suffix;
+}
+
+bool visibleControlsFitInside(QWidget* window) {
+    if (!window || window->size().isEmpty()) return false;
+
+    const QRect windowRect(QPoint(0, 0), window->size());
+    const auto checkWidget = [window, windowRect](QWidget* widget) {
+        if (!widget || !widget->isVisible() || widget->window() != window) return true;
+        const QRect rect(widget->mapTo(window, QPoint(0, 0)), widget->size());
+        return windowRect.adjusted(-2, -2, 2, 2).contains(rect.center());
+    };
+
+    for (QAbstractButton* button : window->findChildren<QAbstractButton*>()) {
+        if (!checkWidget(button)) return false;
+    }
+    for (QSlider* slider : window->findChildren<QSlider*>()) {
+        if (!checkWidget(slider)) return false;
+    }
+    for (QDoubleSpinBox* spinBox : window->findChildren<QDoubleSpinBox*>()) {
+        if (!checkWidget(spinBox)) return false;
+    }
+    return true;
 }
 
 // core::BitmapをQImage(Format_RGBA8888)に変換する(--multiplane-testの保存用)
@@ -1556,6 +1584,82 @@ int main(int argc, char* argv[]) {
                             floating->grab().save(outputPath);
                             floating->close();
                             QTimer::singleShot(100, &window, [] { QApplication::exit(0); });
+                        });
+                    });
+                });
+            });
+        });
+    }
+
+    const int storyboardResponsiveIndex = args.indexOf("--storyboard-responsive-test");
+    if (storyboardResponsiveIndex >= 0 && storyboardResponsiveIndex + 1 < args.size()) {
+        const QString outputPath = args.at(storyboardResponsiveIndex + 1);
+        const QString floatingOutputPath = outputPathWithSuffix(outputPath, QStringLiteral("_floating"));
+        QTimer::singleShot(500, &window, [&window, outputPath, floatingOutputPath] {
+            window.debugSetupStoryboardDemo();
+            window.debugOpenStoryboard();
+            QTimer::singleShot(300, &window, [&window, outputPath, floatingOutputPath] {
+                StoryboardWindow* storyboard = window.storyboardWindow();
+                storyboard->resize(680, 520);
+                perapera::ui::keepWindowOnScreen(storyboard);
+                QTimer::singleShot(300, &window, [&window, outputPath, floatingOutputPath, storyboard] {
+                    const bool mainOk = visibleControlsFitInside(storyboard);
+                    storyboard->grab().save(outputPath);
+                    storyboard->debugDetachCanvas();
+                    QTimer::singleShot(300, &window, [&outputPath, floatingOutputPath, storyboard, mainOk] {
+                        FloatingCanvasWindow* floating = storyboard->debugFloatingCanvasWindow();
+                        if (!floating) {
+                            storyboard->debugDetachCanvas();
+                            floating = storyboard->debugFloatingCanvasWindow();
+                        }
+                        if (!floating || !isIndependentApplicationWindow(floating)) {
+                            QApplication::exit(1);
+                            return;
+                        }
+                        floating->resize(520, 420);
+                        perapera::ui::keepWindowOnScreen(floating);
+                        QTimer::singleShot(300, floating, [floating, floatingOutputPath, mainOk] {
+                            GLCanvas* canvas = floating->findChild<GLCanvas*>();
+                            const bool canvasOk = canvas && canvas->width() >= 240 && canvas->height() >= 160;
+                            const bool floatingOk = visibleControlsFitInside(floating) && canvasOk;
+                            floating->grab().save(floatingOutputPath);
+                            QApplication::exit(mainOk && floatingOk ? 0 : 1);
+                        });
+                    });
+                });
+            });
+        });
+    }
+
+    const int settingBoardResponsiveIndex = args.indexOf("--settingboard-responsive-test");
+    if (settingBoardResponsiveIndex >= 0 && settingBoardResponsiveIndex + 1 < args.size()) {
+        const QString outputPath = args.at(settingBoardResponsiveIndex + 1);
+        const QString floatingOutputPath = outputPathWithSuffix(outputPath, QStringLiteral("_floating"));
+        QTimer::singleShot(500, &window, [&window, outputPath, floatingOutputPath] {
+            window.debugSetupSettingBoardDemo();
+            window.debugOpenSettingBoard();
+            QTimer::singleShot(300, &window, [&window, outputPath, floatingOutputPath] {
+                SettingBoardWindow* settingBoard = window.settingBoardWindow();
+                settingBoard->resize(680, 520);
+                perapera::ui::keepWindowOnScreen(settingBoard);
+                QTimer::singleShot(300, &window, [&window, outputPath, floatingOutputPath, settingBoard] {
+                    settingBoard->debugDetachCanvas();
+                    QTimer::singleShot(300, settingBoard, [outputPath, floatingOutputPath, settingBoard] {
+                        FloatingCanvasWindow* floating = settingBoard->debugFloatingCanvasWindow();
+                        if (!floating) {
+                            settingBoard->debugDetachCanvas();
+                            floating = settingBoard->debugFloatingCanvasWindow();
+                        }
+                        if (!floating) {
+                            QApplication::exit(1);
+                            return;
+                        }
+                        floating->resize(520, 420);
+                        perapera::ui::keepWindowOnScreen(floating);
+                        QTimer::singleShot(300, floating, [floating, outputPath, floatingOutputPath, settingBoard] {
+                            settingBoard->grab().save(outputPath);
+                            floating->grab().save(floatingOutputPath);
+                            QApplication::exit(0);
                         });
                     });
                 });
