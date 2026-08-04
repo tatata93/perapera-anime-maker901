@@ -37,6 +37,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -978,6 +979,8 @@ void MainWindow::applyTimesheetEdits(const QList<int>& exposureCelIndices,
     core::Cut& cut = activeCut();
     std::vector<core::ExposureChange> changes;
     changes.reserve(static_cast<size_t>(exposureCelIndices.size()));
+    std::vector<core::ActionChange> actionChanges;
+    actionChanges.reserve(static_cast<size_t>(actionCelIndices.size() + exposureCelIndices.size()));
     bool invalidDrawing = false;
     bool protectedKey = false;
     for (qsizetype i = 0; i < exposureCelIndices.size(); ++i) {
@@ -1004,16 +1007,18 @@ void MainWindow::applyTimesheetEdits(const QList<int>& exposureCelIndices,
             before >= 0 && static_cast<size_t>(before) < cel.drawingCount() &&
             cel.drawingKind(static_cast<size_t>(before)) == core::DrawingKind::Key &&
             (frame == 0 || cel.exposure(static_cast<size_t>(frame - 1)) != before);
-        if ((numericAction || keyStartsHere) && drawing != before) {
+        const bool blankingCell = drawing == -1;
+        if ((numericAction || keyStartsHere) && drawing != before && !blankingCell) {
             protectedKey = true;
             continue;
+        }
+        if (blankingCell && !action.empty()) {
+            actionChanges.push_back({&cel, static_cast<size_t>(frame), action, {}});
         }
         if (before == drawing) continue;
         changes.push_back({&cel, static_cast<size_t>(frame), before, drawing});
     }
 
-    std::vector<core::ActionChange> actionChanges;
-    actionChanges.reserve(static_cast<size_t>(actionCelIndices.size()));
     for (qsizetype i = 0; i < actionCelIndices.size(); ++i) {
         const int celIndex = actionCelIndices.at(i);
         const int frame = actionFrames.at(i);
@@ -1026,6 +1031,15 @@ void MainWindow::applyTimesheetEdits(const QList<int>& exposureCelIndices,
         const std::string before = cel.actionEntry(static_cast<size_t>(frame));
         const std::string after = actionEntries.at(i).trimmed().toStdString();
         if (before == after) continue;
+        auto duplicate = std::find_if(actionChanges.begin(), actionChanges.end(),
+                                      [&cel, frame](const core::ActionChange& change) {
+                                          return change.cel == &cel &&
+                                                 change.frame == static_cast<size_t>(frame);
+                                      });
+        if (duplicate != actionChanges.end()) {
+            duplicate->after = after;
+            continue;
+        }
         actionChanges.push_back({&cel, static_cast<size_t>(frame), before, after});
     }
 
@@ -4903,6 +4917,15 @@ int MainWindow::debugXsheetEditUndoRedo() {
     redo();
     const bool redone = cel.exposure(0) == 0 && cel.exposure(1) == 0 && cel.exposure(2) == 0 &&
                         cel.exposure(3) == 0;
+    applyExposureEdits({0}, {2}, {-1});
+    const bool blankMiddleFrame =
+        cel.exposure(0) == 0 && cel.exposure(1) == 0 &&
+        cel.exposure(2) == -1 && cel.exposure(3) == 0 &&
+        cel.actionEntry(0) == "1";
+    undo();
+    const bool blankMiddleFrameUndoRestores =
+        cel.exposure(0) == 0 && cel.exposure(1) == 0 &&
+        cel.exposure(2) == 0 && cel.exposure(3) == 0;
 
     m_xsheetPanel->debugSetViewMode(0);  // 原画工程(ACTION)
     m_xsheetPanel->debugSelectActionCell(0, 5);
@@ -4953,20 +4976,27 @@ int MainWindow::debugXsheetEditUndoRedo() {
     addKeyDrawingAtCurrent();
     core::Cel& scratchCel = activeCel();
     const int scratchDrawing = scratchCel.exposure(5);
+    applyExposureEdits({static_cast<int>(m_activeCel)}, {5}, {-1});
+    const bool keyAnchorCanBeBlanked =
+        scratchCel.drawingCount() == 1 && scratchCel.exposure(5) == -1 &&
+        scratchCel.actionEntry(5).empty();
     deleteDrawing(scratchDrawing);
     const bool lastKeyDeletionLeavesEmptyCell =
         scratchCel.drawingCount() == 0 && scratchCel.exposure(5) == -1 &&
         scratchCel.actionEntry(5).empty();
 
-    return startsWithKeyDrawing && addedCelStartsEmpty && firstDrawingUsesSelectedFrameOnly &&
-                   heldToSelectedFrame && endedAtSelectedFrame && pairedInKeyStage &&
-                   pairedInVideoStage && semanticDrawingNumbers && filled && undone &&
-                   redone && actionSet && actionUndone && actionRedone &&
-                   protectedStepPattern && directEditKeepsKey &&
-                   inbetweenCannotReplaceKey && keyAdded && inbetweenAdded &&
-                   lastKeyDeletionLeavesEmptyCell
-               ? 0
-               : 1;
+    const std::array<bool, 23> checks = {
+        startsWithKeyDrawing, addedCelStartsEmpty, firstDrawingUsesSelectedFrameOnly,
+        heldToSelectedFrame, endedAtSelectedFrame, pairedInKeyStage,
+        pairedInVideoStage, semanticDrawingNumbers, filled, undone, redone,
+        blankMiddleFrame, blankMiddleFrameUndoRestores,
+        actionSet, actionUndone, actionRedone,
+        protectedStepPattern, directEditKeepsKey, inbetweenCannotReplaceKey,
+        keyAdded, inbetweenAdded, keyAnchorCanBeBlanked, lastKeyDeletionLeavesEmptyCell};
+    for (size_t index = 0; index < checks.size(); ++index) {
+        if (!checks[index]) return static_cast<int>(index + 1);
+    }
+    return 0;
 }
 
 void MainWindow::debugSetupCelDemo() {
