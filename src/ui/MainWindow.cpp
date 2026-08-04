@@ -184,6 +184,22 @@ core::Bitmap makeTransparentCelForCel(const core::Cel& cel, int canvasW, int can
     const int h = cel.paperHeight() > 0 ? cel.paperHeight() : canvasH;
     return makeTransparentCel(w, h);
 }
+
+void renumberActualKeyEntries(core::Cel& cel, size_t frameCount) {
+    std::vector<bool> numbered(cel.drawingCount(), false);
+    int keyNumber = 1;
+    for (size_t frame = 0; frame < frameCount; ++frame) {
+        const int drawing = cel.exposure(frame);
+        if (drawing < 0 || static_cast<size_t>(drawing) >= cel.drawingCount() ||
+            numbered[static_cast<size_t>(drawing)] ||
+            cel.drawingKind(static_cast<size_t>(drawing)) != core::DrawingKind::Key ||
+            (frame > 0 && cel.exposure(frame - 1) == drawing)) {
+            continue;
+        }
+        numbered[static_cast<size_t>(drawing)] = true;
+        cel.setActionEntry(frame, QString::number(keyNumber++).toStdString());
+    }
+}
 // 新規カットの最小構成(セルA+レイヤー1+原画1、尺1コマ)を作る。
 // 制作工程は必ず原画から始め、中割は原画が揃った後に利用者が追加する。
 void initializeCut(core::Cut& cut, int canvasW, int canvasH) {
@@ -2407,24 +2423,27 @@ void MainWindow::moveActiveCel(int delta) {
 void MainWindow::deleteDrawing(int idx) {
     if (m_playing) return;
     core::Cel& cel = activeCel();
-    if (cel.drawingCount() <= 1) return;  // 最後の1枚は消さない
     if (idx < 0 || static_cast<size_t>(idx) >= cel.drawingCount()) return;
 
-    for (size_t li = 0; li < cel.layerCount(); ++li) {
-        cel.layer(li).removeFrame(static_cast<size_t>(idx));
-    }
-    cel.removeDrawingMetadata(static_cast<size_t>(idx));
-
-    // 露出表を修正: 削除された動画を指していたコマは空欄(-1)に、それより後ろの動画番号は1つ詰める
     core::Cut& cut = activeCut();
     for (size_t f = 0; f < cut.frameCount(); ++f) {
         const int e = cel.exposure(f);
         if (e == idx) {
             cel.setExposure(f, -1);
+            cel.setActionEntry(f, {});
         } else if (e > idx) {
             cel.setExposure(f, e - 1);
         }
     }
+
+    for (size_t li = 0; li < cel.layerCount(); ++li) {
+        core::Layer& layer = cel.layer(li);
+        if (static_cast<size_t>(idx) < layer.frameCount()) {
+            layer.removeFrame(static_cast<size_t>(idx));
+        }
+    }
+    cel.removeDrawingMetadata(static_cast<size_t>(idx));
+    renumberActualKeyEntries(cel, cut.frameCount());
 
     clearUndoHistory();             // 動画のBitmapが破棄されたためUndo履歴を破棄
     m_canvas->clearTextureCache();  // 同上、テクスチャキャッシュも破棄
@@ -2435,6 +2454,7 @@ void MainWindow::deleteDrawing(int idx) {
     updateLayerPanel();
     updateFrameLabel();
     updateWindowTitle();
+    statusBar()->showMessage(tr("作画を削除し、タイムシートの該当コマを空にしました"), 4000);
 }
 
 void MainWindow::duplicateDrawing(int idx) {
@@ -4928,12 +4948,23 @@ int MainWindow::debugXsheetEditUndoRedo() {
         cel.actionEntry(8) == "○" && cel.exposure(9) == inbetweenDrawing &&
         cel.exposure(10) != inbetweenDrawing;
 
+    addCel();
+    setCurrentFrame(5);
+    addKeyDrawingAtCurrent();
+    core::Cel& scratchCel = activeCel();
+    const int scratchDrawing = scratchCel.exposure(5);
+    deleteDrawing(scratchDrawing);
+    const bool lastKeyDeletionLeavesEmptyCell =
+        scratchCel.drawingCount() == 0 && scratchCel.exposure(5) == -1 &&
+        scratchCel.actionEntry(5).empty();
+
     return startsWithKeyDrawing && addedCelStartsEmpty && firstDrawingUsesSelectedFrameOnly &&
                    heldToSelectedFrame && endedAtSelectedFrame && pairedInKeyStage &&
                    pairedInVideoStage && semanticDrawingNumbers && filled && undone &&
                    redone && actionSet && actionUndone && actionRedone &&
                    protectedStepPattern && directEditKeepsKey &&
-                   inbetweenCannotReplaceKey && keyAdded && inbetweenAdded
+                   inbetweenCannotReplaceKey && keyAdded && inbetweenAdded &&
+                   lastKeyDeletionLeavesEmptyCell
                ? 0
                : 1;
 }
