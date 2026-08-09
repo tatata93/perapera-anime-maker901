@@ -42,29 +42,29 @@ DirtyRect BrushEngine::stamp(Bitmap& bitmap, float cx, float cy, float pressure)
     if (rect.isEmpty()) return DirtyRect{};
 
     const Bitmap::Pixel& color = m_settings.color;
-    const float baseAlpha = color.a / 255.0f;
+    const float baseAlpha = color.a == 0 ? 0.0f : 1.0f;
 
     for (int y = rect.y0; y < rect.y1; ++y) {
         for (int x = rect.x0; x < rect.x1; ++x) {
             const float dx = (x + 0.5f) - cx;
             const float dy = (y + 0.5f) - cy;
             const float dist = std::sqrt(dx * dx + dy * dy);
-            // 円境界±0.5pxでカバレッジを線形補間(アンチエイリアス)
-            const float coverage = std::clamp(radius - dist + 0.5f, 0.0f, 1.0f);
-            if (coverage <= 0.0f) continue;
+            // 仕上げ用の線は二値化する。半透明の縁を作るとバケツの境界判定に隙間が出るため、
+            // 従来のアンチエイリアス用カバレッジは使わず、内側は完全不透明・外側は未変更にする。
+            if (dist > radius + 0.5f) continue;
 
             Bitmap::Pixel dst = bitmap.pixel(x, y);
 
             if (m_settings.mode == BrushMode::Erase) {
-                // 透明に戻す: アルファをカバレッジ分削る(色は保持し、合成時はアルファで消える)
-                dst.a = static_cast<uint8_t>(std::lround(dst.a * (1.0f - coverage)));
+                // 消しゴムも二値化する。薄く削るのではなく、当たった画素を完全に透明へ戻す。
+                dst.a = 0;
                 bitmap.setPixel(x, y, dst);
                 continue;
             }
 
             // straight-alphaのsrc-over合成。透明なdstに描いても色が黒ずまないよう、
             // dstの寄与はdst.aで重み付けし、結果をoutAで正規化する
-            const float srcA = baseAlpha * coverage;
+            const float srcA = baseAlpha;
             const float dstA = dst.a / 255.0f;
             const float outA = srcA + dstA * (1.0f - srcA);
             if (outA > 0.0f) {

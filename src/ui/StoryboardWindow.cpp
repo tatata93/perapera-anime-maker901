@@ -1106,14 +1106,16 @@ void StoryboardWindow::bindCanvasToSelectedPanel() {
 
     std::vector<GLCanvas::StackEntry> stack;
     std::vector<const core::Bitmap*> boundary;
+    std::vector<const core::Bitmap*> fillableBoundary;
     for (const core::PaintLayer& layer : panel.layers) {
         if (layer.visible && layer.opacity > 0.0) {
             stack.push_back({&layer.bitmap, QPointF(), layer.opacity});
-            if (layer.role == core::LayerRole::ColorTrace) boundary.push_back(&layer.bitmap);
+            boundary.push_back(&layer.bitmap);
+            if (layer.role == core::LayerRole::ColorTrace) fillableBoundary.push_back(&layer.bitmap);
         }
     }
     core::Bitmap* editTarget = panel.layers.empty() ? nullptr : &panel.layers[panel.activeLayer].bitmap;
-    m_canvas->setFillBoundaryLayers(std::move(boundary));
+    m_canvas->setFillBoundaryLayers(std::move(boundary), std::move(fillableBoundary));
     m_canvas->setLayerStack(std::move(stack), editTarget, QPointF());
 
     // 内容/セリフ(複数行テキスト)を読み込む。m_updatingガードでtextChangedの暴発を防ぐ

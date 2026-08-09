@@ -89,17 +89,25 @@ TEST_CASE("floodFill on a line pixel is a no-op", "[core][fill]") {
     REQUIRE(paintLayer.pixel(15, 15).a == 0);
 }
 
-TEST_CASE("floodFill dilation covers anti-aliased edges", "[core][fill]") {
+TEST_CASE("floodFill preserves normal line boundaries while overpainting color-trace lines",
+          "[core][fill]") {
     auto lineLayer = makeTransparent(64, 64);
+    auto colorTraceLayer = makeTransparent(64, 64);
     auto paintLayer = makeTransparent(64, 64);
     drawRectOutline(lineLayer, 10, 10, 50, 50);
+    for (int y = 11; y < 50; ++y) {
+        colorTraceLayer.setPixel(32, y, {255, 0, 0, 255});
+    }
 
-    core::floodFill(paintLayer, {&lineLayer, &paintLayer}, 30, 30, {0, 255, 0, 255}, 64, /*dilatePx=*/2);
+    core::floodFill(paintLayer, {&lineLayer, &colorTraceLayer, &paintLayer}, 20, 30,
+                    {0, 255, 0, 255}, 64, /*dilatePx=*/2, {&colorTraceLayer});
 
-    // 膨張により線の直下(枠線位置)まで塗りが届く
-    REQUIRE(paintLayer.pixel(10, 30).a == 255);
-    // 枠のさらに外(2px超)へは漏れない
-    REQUIRE(paintLayer.pixel(7, 30).a == 0);
+    // 通常線の下には塗りを入れないので、線画はバケツで消えない
+    REQUIRE(paintLayer.pixel(10, 30).a == 0);
+    // 塗分け線だけは最終的に同化してよいので、境界画素へ塗りを入れる
+    REQUIRE(paintLayer.pixel(32, 30).g == 255);
+    // 塗分け線の向こう側へは漏れない
+    REQUIRE(paintLayer.pixel(34, 30).a == 0);
 }
 
 TEST_CASE("floodFill without boundary fills the whole bitmap", "[core][fill]") {

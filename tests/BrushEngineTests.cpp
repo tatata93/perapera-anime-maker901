@@ -84,6 +84,29 @@ TEST_CASE("BrushEngine supports subpixel one-row lines", "[core][brush]") {
     REQUIRE(bitmap.pixel(20, 10).a > 0);  // release endpoint is included
 }
 
+TEST_CASE("BrushEngine paints binary alpha without antialias tones", "[core][brush]") {
+    core::Bitmap bitmap(32, 32);
+    bitmap.fill({0, 0, 0, 0});
+
+    core::BrushEngine engine;
+    engine.settings().radius = 4.0f;
+    engine.settings().color = {20, 40, 60, 128};
+    engine.beginStroke(bitmap, 16.0f, 16.0f, 1.0f);
+    engine.endStroke();
+
+    bool painted = false;
+    for (int y = 0; y < bitmap.height(); ++y) {
+        for (int x = 0; x < bitmap.width(); ++x) {
+            const auto px = bitmap.pixel(x, y);
+            INFO("x=" << x << " y=" << y << " alpha=" << static_cast<int>(px.a));
+            REQUIRE((px.a == 0 || px.a == 255));
+            if (px.a == 255) REQUIRE(px.r == 20);
+            if (px.a == 255) painted = true;
+        }
+    }
+    REQUIRE(painted);
+}
+
 TEST_CASE("Pressure affects stamp radius", "[core][brush]") {
     auto low = makeWhiteBitmap(64, 64);
     auto high = makeWhiteBitmap(64, 64);

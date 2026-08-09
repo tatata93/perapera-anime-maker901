@@ -586,6 +586,7 @@ void MainWindow::updateCanvasLayers() {
     core::Cut& cut = activeCut();
     std::vector<GLCanvas::StackEntry> stack;
     std::vector<const core::Bitmap*> fillBoundary;
+    std::vector<const core::Bitmap*> fillableBoundary;
     for (size_t ci = 0; ci < cut.celCount(); ++ci) {
         core::Cel& cel = cut.cel(ci);
         if (!cel.visible()) continue;
@@ -610,9 +611,13 @@ void MainWindow::updateCanvasLayers() {
             if (layer.visible() && opacity > 0.0 && !hiddenByCleanView) {
                 stack.push_back({bitmap, offset, opacity});
                 fillBoundary.push_back(bitmap);  // 境界はセルローカル座標(同一セル内で整合)
+                if (layer.role() == core::LayerRole::ColorTrace) {
+                    fillableBoundary.push_back(bitmap);
+                }
             } else if (isActiveCel && layer.role() == core::LayerRole::ColorTrace && opacity > 0.0) {
                 // 塗分け線: アクティブセルの色トレス線は非表示でも塗りつぶし境界として効かせる
                 fillBoundary.push_back(bitmap);
+                fillableBoundary.push_back(bitmap);
             }
         }
     }
@@ -624,7 +629,7 @@ void MainWindow::updateCanvasLayers() {
         editTarget = &activeLayer().frame(static_cast<size_t>(activeDrawing)).bitmap();
     }
     const core::Vec2 activePos = activeCel().positionAt(m_currentFrame);
-    m_canvas->setFillBoundaryLayers(std::move(fillBoundary));
+    m_canvas->setFillBoundaryLayers(std::move(fillBoundary), std::move(fillableBoundary));
     m_canvas->setLayerStack(std::move(stack), editTarget, QPointF(activePos.x, activePos.y));
 
     // 引きセル(カメラフレームより大きい紙)を編集するときは、作業領域をその紙の範囲まで広げて

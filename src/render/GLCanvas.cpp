@@ -141,6 +141,7 @@ void GLCanvas::shutdownForClose() {
     m_bitmap = nullptr;
     m_layerStack.clear();
     m_fillBoundary.clear();
+    m_fillableFillBoundary.clear();
     m_prevOnion = nullptr;
     m_nextOnion = nullptr;
     m_lightTable.clear();
@@ -334,7 +335,7 @@ QOpenGLTexture* GLCanvas::getOrCreateTexture(const core::Bitmap* bitmap) {
     texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
     texture->setSize(bitmap->width(), bitmap->height());
     texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
-    texture->setMinMagFilters(QOpenGLTexture::Linear, QOpenGLTexture::Nearest);
+    texture->setMinMagFilters(QOpenGLTexture::Nearest, QOpenGLTexture::Nearest);
     texture->setWrapMode(QOpenGLTexture::ClampToEdge);
     texture->setData(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, bitmap->data());
 
@@ -794,7 +795,8 @@ void GLCanvas::performFill(QPointF widgetPos) {
     if (boundary.empty()) {
         for (const StackEntry& entry : m_layerStack) boundary.push_back(entry.bitmap);
     }
-    const auto dirty = core::floodFill(*m_bitmap, boundary, static_cast<int>(img.x()), static_cast<int>(img.y()), color);
+    const auto dirty = core::floodFill(*m_bitmap, boundary, static_cast<int>(img.x()), static_cast<int>(img.y()),
+                                       color, 64, 2, m_fillableFillBoundary);
     if (dirty.isEmpty()) return;
 
     if (m_strokeCommandSink) {

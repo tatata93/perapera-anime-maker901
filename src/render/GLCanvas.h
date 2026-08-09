@@ -53,8 +53,10 @@ public:
 
     // 塗りつぶしの境界レイヤー群。表示スタックとは独立に指定でき、
     // 非表示の色トレス線レイヤーも境界として効かせられる。空なら表示スタックを使う
-    void setFillBoundaryLayers(std::vector<const core::Bitmap*> boundary) {
+    void setFillBoundaryLayers(std::vector<const core::Bitmap*> boundary,
+                               std::vector<const core::Bitmap*> fillableBoundary = {}) {
         m_fillBoundary = std::move(boundary);
+        m_fillableFillBoundary = std::move(fillableBoundary);
     }
     // 単一レイヤーの簡易版(スタック={bitmap}として扱う)
     void setBitmap(core::Bitmap* bitmap);
@@ -224,6 +226,7 @@ private:
     QPointF m_activeOffset;                           // 編集対象セルの現在コマ位置(タップ移動)
     std::vector<StackEntry> m_layerStack;             // 表示レイヤー(下→上、オフセット付き)
     std::vector<const core::Bitmap*> m_fillBoundary;  // 塗りつぶし境界(セルローカル座標)
+    std::vector<const core::Bitmap*> m_fillableFillBoundary;  // 塗りで潰してよい境界(塗分け線)
     const core::Bitmap* m_prevOnion = nullptr;
     const core::Bitmap* m_nextOnion = nullptr;
     std::vector<const core::Bitmap*> m_lightTable;  // ライトテーブル表示対象(任意の動画群)

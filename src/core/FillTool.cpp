@@ -25,7 +25,8 @@ bool samePixel(Bitmap::Pixel a, Bitmap::Pixel b) {
 }  // namespace
 
 DirtyRect floodFill(Bitmap& target, const std::vector<const Bitmap*>& boundaryLayers, int seedX, int seedY,
-                    Bitmap::Pixel color, uint8_t alphaThreshold, int dilatePx) {
+                    Bitmap::Pixel color, uint8_t alphaThreshold, int dilatePx,
+                    const std::vector<const Bitmap*>& fillableBoundaryLayers) {
     const int w = target.width();
     const int h = target.height();
     if (w <= 0 || h <= 0) return {};
@@ -62,8 +63,8 @@ DirtyRect floodFill(Bitmap& target, const std::vector<const Bitmap*>& boundaryLa
         dirty.unite({x, y, x + 1, y + 1});
     }
 
-    // 線の縁(アンチエイリアス部)のハローを防ぐため、領域をdilatePxだけ膨張させる。
-    // 膨張分は線の半透明部の下に潜り込み、上に重なる主線で隠れる
+    // 通常線は塗り潰さない。塗りへ同化してよい色トレス/塗分け線だけ、
+    // 隣接する領域から線の画素へ広げる。塗分け線の向こう側へは抜けない。
     for (int pass = 0; pass < dilatePx; ++pass) {
         std::vector<uint8_t> grown = region;
         const int y0 = std::max(0, dirty.y0 - dilatePx);
@@ -75,7 +76,8 @@ DirtyRect floodFill(Bitmap& target, const std::vector<const Bitmap*>& boundaryLa
                 if (region[idx(x, y)]) continue;
                 const bool nearRegion = (x > 0 && region[idx(x - 1, y)]) || (x + 1 < w && region[idx(x + 1, y)]) ||
                                         (y > 0 && region[idx(x, y - 1)]) || (y + 1 < h && region[idx(x, y + 1)]);
-                if (nearRegion && samePixel(target.pixel(x, y), seedColor)) {
+                if (nearRegion && samePixel(target.pixel(x, y), seedColor) &&
+                    isBlocked(fillableBoundaryLayers, &target, x, y, alphaThreshold)) {
                     grown[idx(x, y)] = 1;
                     dirty.unite({x, y, x + 1, y + 1});
                 }
