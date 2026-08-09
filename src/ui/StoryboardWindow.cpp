@@ -1615,6 +1615,7 @@ void StoryboardWindow::movePaintLayer(int delta) {
     std::swap(panel.layers[static_cast<size_t>(from)], panel.layers[static_cast<size_t>(to)]);
     panel.activeLayer = static_cast<size_t>(to);
     syncStoryboardPanelComposite(panel);
+    m_canvas->clearTextureCache();
     bindCanvasToSelectedPanel();
     updateThumbnail(m_selectedRow);
     emit edited();

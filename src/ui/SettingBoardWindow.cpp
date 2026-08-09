@@ -1741,6 +1741,7 @@ void SettingBoardWindow::movePaintLayer(int delta) {
     std::swap(board.layers[static_cast<size_t>(from)], board.layers[static_cast<size_t>(to)]);
     board.activeLayer = static_cast<size_t>(to);
     syncSettingBoardComposite(board);
+    m_canvas->clearTextureCache();
     bindCanvasToSelectedBoard();
     emit edited();
 }
