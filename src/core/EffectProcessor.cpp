@@ -726,6 +726,80 @@ void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
     });
 }
 
+// 暗部/夜: 暗い部屋・影・夜を手早く作る撮影処理。
+// 単純な明度下げではなく、暗部ほど影色を混ぜ、明部を残し、黒締めと周辺落ちをまとめて扱う。
+void applyNight(Bitmap& image, const Effect& effect) {
+    const double darkness = std::clamp(param(effect, "darkness", 0.58), 0.0, 1.0);
+    const double shadowR = std::clamp(param(effect, "shadowR", 0.06), 0.0, 1.0);
+    const double shadowG = std::clamp(param(effect, "shadowG", 0.10), 0.0, 1.0);
+    const double shadowB = std::clamp(param(effect, "shadowB", 0.22), 0.0, 1.0);
+    const double tintStrength = std::clamp(param(effect, "tintStrength", 0.70), 0.0, 1.0);
+    const double highlightKeep = std::clamp(param(effect, "highlightKeep", 0.65), 0.0, 1.0);
+    const double blackCrush = std::clamp(param(effect, "blackCrush", 0.32), 0.0, 1.0);
+    const double saturation = std::clamp(param(effect, "saturation", 0.78), 0.0, 2.0);
+    const double vignette = std::clamp(param(effect, "vignette", 0.22), 0.0, 1.0);
+    const int w = image.width();
+    const int h = image.height();
+    if (w <= 0 || h <= 0 || darkness <= 0.0) return;
+
+    const double invW = w > 1 ? 1.0 / static_cast<double>(w - 1) : 0.0;
+    const double invH = h > 1 ? 1.0 / static_cast<double>(h - 1) : 0.0;
+
+    parallelForRows(0, h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const double ny = h > 1 ? y * invH * 2.0 - 1.0 : 0.0;
+            for (int x = 0; x < w; ++x) {
+                Bitmap::Pixel p = image.pixel(x, y);
+                if (p.a == 0) continue;
+
+                double r = p.r / 255.0;
+                double g = p.g / 255.0;
+                double b = p.b / 255.0;
+                double luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+                // 明部を残す。明るい絵ほど暗さの効きを抜くので、ライトや目のハイライトが死ににくい。
+                const double light = smoothstep01((luma - 0.18) / 0.72);
+                const double darkApply = darkness * (1.0 - highlightKeep * light);
+                const double shadowWeight = std::pow(1.0 - std::clamp(luma, 0.0, 1.0), 0.85);
+
+                r *= 1.0 - darkApply * (0.78 + 0.22 * shadowWeight);
+                g *= 1.0 - darkApply * (0.78 + 0.22 * shadowWeight);
+                b *= 1.0 - darkApply * (0.78 + 0.22 * shadowWeight);
+
+                const double tintMix = darkApply * tintStrength * (0.35 + 0.65 * shadowWeight);
+                r = r * (1.0 - tintMix) + shadowR * tintMix;
+                g = g * (1.0 - tintMix) + shadowG * tintMix;
+                b = b * (1.0 - tintMix) + shadowB * tintMix;
+
+                luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                r = luma + (r - luma) * saturation;
+                g = luma + (g - luma) * saturation;
+                b = luma + (b - luma) * saturation;
+
+                const double crushPower = 1.0 + blackCrush * (0.55 + 1.05 * shadowWeight);
+                r = std::pow(std::clamp(r, 0.0, 1.0), crushPower);
+                g = std::pow(std::clamp(g, 0.0, 1.0), crushPower);
+                b = std::pow(std::clamp(b, 0.0, 1.0), crushPower);
+
+                if (vignette > 0.0) {
+                    const double nx = w > 1 ? x * invW * 2.0 - 1.0 : 0.0;
+                    const double dist = std::sqrt(nx * nx + ny * ny) / std::sqrt(2.0);
+                    const double edge = smoothstep01((dist - 0.35) / 0.65);
+                    const double edgeMul = 1.0 - vignette * darkness * edge;
+                    r *= edgeMul;
+                    g *= edgeMul;
+                    b *= edgeMul;
+                }
+
+                p.r = static_cast<uint8_t>(std::lround(std::clamp(r, 0.0, 1.0) * 255.0));
+                p.g = static_cast<uint8_t>(std::lround(std::clamp(g, 0.0, 1.0) * 255.0));
+                p.b = static_cast<uint8_t>(std::lround(std::clamp(b, 0.0, 1.0) * 255.0));
+                image.setPixel(x, y, p);
+            }
+        }
+    });
+}
+
 // アナモルフィックフレア(近似): 明部を抽出し、横方向へ長く伸ばした青い筋(アナモルフィックレンズ
 // 特有の水平フレア)と、明部を中心対称に写したゴーストを加算合成する。物理的な厳密再現ではなく、
 // 見た目重視の施策(擬似)実装。tintで筋・ゴーストの色(既定は青系)を決める
@@ -866,6 +940,9 @@ void applyEffect(Bitmap& image, const Effect& effect, size_t frame, double pixel
             break;
         case EffectType::AnaFlare:
             applyAnaFlare(image, resolved);
+            break;
+        case EffectType::Night:
+            applyNight(image, resolved);
             break;
     }
 }

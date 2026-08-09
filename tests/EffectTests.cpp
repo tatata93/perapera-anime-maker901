@@ -709,6 +709,51 @@ TEST_CASE("applyFilm response curve reshapes only the targeted channel and respe
     REQUIRE(std::abs(static_cast<int>(runREndpoint(255, 0.0, 0.4)) - 102) <= 1);
 }
 
+// --- Night(暗部/夜) ---
+
+TEST_CASE("applyNight darkens shadows while preserving highlights", "[core][effect][night]") {
+    core::Bitmap bmp(3, 1);
+    bmp.setPixel(0, 0, {80, 80, 80, 255});
+    bmp.setPixel(1, 0, {235, 235, 235, 255});
+    bmp.setPixel(2, 0, {160, 160, 160, 0});
+
+    core::Effect night;
+    night.type = core::EffectType::Night;
+    night.params = core::effectDefaultParams(core::EffectType::Night);
+    core::applyEffect(bmp, night, 0);
+
+    const auto shadow = bmp.pixel(0, 0);
+    const auto highlight = bmp.pixel(1, 0);
+    const auto transparent = bmp.pixel(2, 0);
+
+    REQUIRE(shadow.r < 80);
+    REQUIRE(highlight.r > shadow.r);
+    REQUIRE((235 - highlight.r) < (80 - shadow.r));  // 明部の減りは暗部より小さい
+    REQUIRE(transparent.r == 160);
+    REQUIRE(transparent.g == 160);
+    REQUIRE(transparent.b == 160);
+    REQUIRE(transparent.a == 0);
+}
+
+TEST_CASE("applyNight applies the selected shadow color mostly in dark areas", "[core][effect][night]") {
+    core::Bitmap bmp(2, 1);
+    bmp.setPixel(0, 0, {70, 70, 70, 255});
+    bmp.setPixel(1, 0, {230, 230, 230, 255});
+
+    core::Effect night;
+    night.type = core::EffectType::Night;
+    night.params = {{"darkness", 0.80},     {"shadowR", 0.00},      {"shadowG", 0.06}, {"shadowB", 0.36},
+                    {"tintStrength", 1.00}, {"highlightKeep", 0.85}, {"blackCrush", 0.00},
+                    {"saturation", 1.00},   {"vignette", 0.00}};
+    core::applyEffect(bmp, night, 0);
+
+    const auto shadow = bmp.pixel(0, 0);
+    const auto highlight = bmp.pixel(1, 0);
+    REQUIRE(shadow.b > shadow.g);
+    REQUIRE(shadow.g > shadow.r);
+    REQUIRE((highlight.b - highlight.r) < (shadow.b - shadow.r));
+}
+
 // --- ChromAb(色収差) ---
 
 TEST_CASE("applyChromAb leaves the exact center pixel unchanged", "[core][effect][chromab]") {
@@ -845,6 +890,15 @@ TEST_CASE("Cut effects round trip through ppam", "[core][io][effect]") {
     shake.params = {{"amplitudeX", 12.0}, {"amplitudeY", 3.0}, {"seed", 42.0}};
     cut.effects().push_back(shake);
 
+    core::Effect night;
+    night.type = core::EffectType::Night;
+    night.enabled = true;
+    night.targetCel = -1;
+    night.params = {{"darkness", 0.66},      {"shadowR", 0.04},   {"shadowG", 0.08}, {"shadowB", 0.24},
+                    {"tintStrength", 0.78},  {"highlightKeep", 0.68}, {"blackCrush", 0.36},
+                    {"saturation", 0.74},    {"vignette", 0.24}};
+    cut.effects().push_back(night);
+
     const auto path = std::filesystem::temp_directory_path() / "ppam_effect_test.ppproj";
     std::string error;
     REQUIRE(core::ProjectIO::save(project, path, &error));
@@ -852,7 +906,7 @@ TEST_CASE("Cut effects round trip through ppam", "[core][io][effect]") {
     REQUIRE(loaded != nullptr);
 
     const auto& effects = loaded->scene(0).cut(0).effects();
-    REQUIRE(effects.size() == 2);
+    REQUIRE(effects.size() == 3);
 
     REQUIRE(effects[0].type == core::EffectType::Blur);
     REQUIRE(effects[0].enabled == true);
@@ -865,6 +919,12 @@ TEST_CASE("Cut effects round trip through ppam", "[core][io][effect]") {
     REQUIRE(effects[1].params.at("amplitudeX") == 12.0);
     REQUIRE(effects[1].params.at("amplitudeY") == 3.0);
     REQUIRE(effects[1].params.at("seed") == 42.0);
+
+    REQUIRE(effects[2].type == core::EffectType::Night);
+    REQUIRE(effects[2].enabled == true);
+    REQUIRE(effects[2].params.at("darkness") == 0.66);
+    REQUIRE(effects[2].params.at("shadowB") == 0.24);
+    REQUIRE(effects[2].params.at("highlightKeep") == 0.68);
 
     std::filesystem::remove_all(path);
 }

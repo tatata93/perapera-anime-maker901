@@ -67,6 +67,10 @@ QString paramLabel(const std::string& key) {
         {"ghosts", QObject::tr("ゴースト数")},    {"ghostStrength", QObject::tr("ゴースト強さ")},
         {"tintR", QObject::tr("色R")},            {"tintG", QObject::tr("色G")},
         {"tintB", QObject::tr("色B")},
+        {"darkness", QObject::tr("暗さ")},         {"shadowR", QObject::tr("影R")},
+        {"shadowG", QObject::tr("影G")},           {"shadowB", QObject::tr("影B")},
+        {"tintStrength", QObject::tr("影色")},     {"highlightKeep", QObject::tr("明部残し")},
+        {"blackCrush", QObject::tr("黒締め")},     {"vignette", QObject::tr("周辺落ち")},
     };
     const auto it = kLabels.find(key);
     if (it != kLabels.end()) return it->second;
@@ -86,7 +90,9 @@ bool isDensityParam(const std::string& key) {
     return key == "top" || key == "bottom" || key == "strength" || key == "amount" || key == "softness" ||
            key == "centerX" || key == "centerY" || key == "exposure" || key == "fade" || key == "warmth" ||
            key == "saturation" || key == "crosstalk" || key == "grain" || key == "halation" || key == "intensity" || key == "ghostStrength" ||
-           key == "tintR" || key == "tintG" || key == "tintB";
+           key == "tintR" || key == "tintG" || key == "tintB" || key == "darkness" || key == "shadowR" ||
+           key == "shadowG" || key == "shadowB" || key == "tintStrength" || key == "highlightKeep" ||
+           key == "blackCrush" || key == "vignette";
 }
 
 bool isRgbParam(const std::string& key) { return key == "r" || key == "g" || key == "b"; }
@@ -115,6 +121,10 @@ std::pair<double, double> paramRange(core::EffectType type, const std::string& k
     if (key == "ghosts") return {0.0, 8.0};          // ゴースト数
     if (key == "ghostStrength") return {0.0, 2.0};
     if (key == "tintR" || key == "tintG" || key == "tintB") return {0.0, 1.0};
+    if (key == "darkness" || key == "shadowR" || key == "shadowG" || key == "shadowB" ||
+        key == "tintStrength" || key == "highlightKeep" || key == "blackCrush" || key == "vignette") {
+        return {0.0, 1.0};
+    }
     // resp{R|G|B}{0..4}: 層別応答カーブの制御点(0〜1)。グラフでしか編集しないが安全のため定義しておく
     if (key.rfind("resp", 0) == 0) return {0.0, 1.0};
     if (key == "amount") {
@@ -244,6 +254,7 @@ ShootingWindow::ShootingWindow(QWidget* parent) : QMainWindow(parent) {
         {core::EffectType::ChromAb, "色収差"},
         {core::EffectType::Film, "フィルム"},
         {core::EffectType::AnaFlare, "アナモルフィックフレア"},
+        {core::EffectType::Night, "暗部/夜"},
     };
     for (const auto& entry : kTypes) {
         QAction* action = addMenu->addAction(QString::fromUtf8(entry.label));
@@ -791,6 +802,24 @@ QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringLis
         rw.spin = spin;
         rw.diamond = diamond;
         m_paramRows.push_back(rw);
+    }
+
+    // 暗部/夜: 代表的な暗さの方向性をワンクリックで適用する
+    if (effect.type == core::EffectType::Night) {
+        auto* presetRow = new QHBoxLayout();
+        presetRow->addWidget(new QLabel(tr("プリセット:"), box));
+        auto* presetCombo = new QComboBox(box);
+        presetCombo->addItem(tr("(選択して適用)"));
+        presetCombo->addItem(tr("暗い部屋"));
+        presetCombo->addItem(tr("強い影"));
+        presetCombo->addItem(tr("夜"));
+        presetCombo->addItem(tr("月明かり"));
+        presetCombo->addItem(tr("夕闇"));
+        presetCombo->setCurrentIndex(0);
+        connect(presetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this, effectIndex](int presetIndex) { onNightPresetSelected(effectIndex, presetIndex); });
+        presetRow->addWidget(presetCombo, 1);
+        vlayout->addLayout(presetRow);
     }
 
     // フィルム: プリセット(銘柄の特徴をまとめて適用)+層別応答カーブ(グラフ編集)
@@ -1951,6 +1980,47 @@ void ShootingWindow::onFilmPresetSelected(int effectIndex, int presetIndex) {
     }
 
     scheduleRebuild();  // スピン値・グラフをプリセット後の値へ揃えるため作り直す
+    markEdited();
+}
+
+void ShootingWindow::onNightPresetSelected(int effectIndex, int presetIndex) {
+    if (m_updating || presetIndex <= 0) return;
+    core::Cut* cut = currentCut();
+    if (!cut || effectIndex < 0 || effectIndex >= static_cast<int>(cut->effects().size())) return;
+    core::Effect& effect = cut->effects()[static_cast<size_t>(effectIndex)];
+    if (effect.type != core::EffectType::Night) return;
+
+    struct NightPreset {
+        double darkness, shadowR, shadowG, shadowB, tintStrength, highlightKeep, blackCrush, saturation, vignette;
+    };
+    static const NightPreset kPresets[] = {
+        // 1: 暗い部屋 - 室内の光量不足。青くしすぎず、明部はそこそこ残す。
+        {0.46, 0.08, 0.08, 0.11, 0.38, 0.72, 0.22, 0.78, 0.18},
+        // 2: 強い影 - 日中の落ち影や逆光。暗部を締めるが、色は中立寄り。
+        {0.55, 0.06, 0.06, 0.08, 0.45, 0.82, 0.55, 0.72, 0.08},
+        // 3: 夜 - 青紫の影、暗さ強め。街灯や月光の明部を少し残す。
+        {0.66, 0.04, 0.08, 0.24, 0.78, 0.68, 0.36, 0.74, 0.24},
+        // 4: 月明かり - 青いが黒を潰しすぎない。薄暗い外光向け。
+        {0.58, 0.06, 0.12, 0.28, 0.72, 0.78, 0.20, 0.82, 0.14},
+        // 5: 夕闇 - 暖かい低照度。夜に入る前の赤みを少し残す。
+        {0.50, 0.18, 0.10, 0.08, 0.56, 0.70, 0.28, 0.86, 0.16},
+    };
+
+    const int idx = presetIndex - 1;
+    if (idx < 0 || idx >= static_cast<int>(sizeof(kPresets) / sizeof(kPresets[0]))) return;
+    const NightPreset& preset = kPresets[idx];
+
+    effect.params["darkness"] = preset.darkness;
+    effect.params["shadowR"] = preset.shadowR;
+    effect.params["shadowG"] = preset.shadowG;
+    effect.params["shadowB"] = preset.shadowB;
+    effect.params["tintStrength"] = preset.tintStrength;
+    effect.params["highlightKeep"] = preset.highlightKeep;
+    effect.params["blackCrush"] = preset.blackCrush;
+    effect.params["saturation"] = preset.saturation;
+    effect.params["vignette"] = preset.vignette;
+
+    scheduleRebuild();
     markEdited();
 }
 

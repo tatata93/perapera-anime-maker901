@@ -96,6 +96,11 @@ std::map<std::string, double> effectDefaultParams(EffectType type) {
             // アナモルフィック風: 明部を横に伸ばした青い筋+中心対称のゴースト(既定は青系)
             return {{"threshold", 210.0}, {"intensity", 0.8}, {"length", 220.0},     {"ghosts", 3.0},
                     {"ghostStrength", 0.5}, {"tintR", 0.35},  {"tintG", 0.6},        {"tintB", 1.0}};
+        case EffectType::Night:
+            // 暗い部屋/影/夜の基準。暗くしつつ明部を残し、影側だけ青紫へ寄せる。
+            return {{"darkness", 0.58},      {"shadowR", 0.06},   {"shadowG", 0.10}, {"shadowB", 0.22},
+                    {"tintStrength", 0.70},  {"highlightKeep", 0.65}, {"blackCrush", 0.32},
+                    {"saturation", 0.78},    {"vignette", 0.22}};
     }
     return {};
 }
@@ -126,6 +131,8 @@ const char* effectTypeName(EffectType type) {
             return "フィルム";
         case EffectType::AnaFlare:
             return "アナモルフィックフレア";
+        case EffectType::Night:
+            return "暗部/夜";
     }
     return "";
 }

@@ -11,7 +11,8 @@ namespace core {
 // ColorCorrect以降は後から追加した種(ppamはint保存のため既存値の後ろに追加し、順序は変えない)
 enum class EffectType {
     Blur, Glow, Para, Shake, ColorCorrect, Diffusion, RadialBlur, Vignette, Grain, ChromAb, Film,
-    AnaFlare  // アナモルフィックレンズ風のフレア/ゴースト(近似)。末尾追加でenum値の互換を保つ
+    AnaFlare,  // アナモルフィックレンズ風のフレア/ゴースト(近似)。末尾追加でenum値の互換を保つ
+    Night      // 暗い部屋・影・夜の撮影処理。末尾追加でenum値の互換を保つ
 };
 
 // 撮影エフェクト1つ。カット単位のスタックとして順に適用される。

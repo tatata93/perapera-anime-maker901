@@ -169,6 +169,8 @@ private:
     void onFilmCurveResetRequested(int effectIndex, int layer);
     // 「プリセット」コンボ: フィルム銘柄の特徴(resp15+基本値)をまとめて適用する
     void onFilmPresetSelected(int effectIndex, int presetIndex);
+    // 「暗部/夜」プリセット: 暗い部屋・強い影・夜などの基本値をまとめて適用する
+    void onNightPresetSelected(int effectIndex, int presetIndex);
     // 開いているFilmCurveWidgetがあれば現在コマのresp値へ更新する(refreshParamRowValues相当の軽量経路)
     void refreshFilmCurveWidgets();
 
