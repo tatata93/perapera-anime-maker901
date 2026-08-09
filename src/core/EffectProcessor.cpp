@@ -61,8 +61,57 @@ inline double hashNoise01(uint64_t a, uint64_t b, uint64_t c, uint64_t d = 0) {
     return (h >> 11) * (1.0 / 9007199254740992.0);  // 上位53bit→[0,1)
 }
 
+// フィルム用のトーンカーブと粒状ノイズ補助。粒は画素ノイズに見えないよう連続値ノイズでまとめる。
+inline double smoothstep01(double x) {
+    x = std::clamp(x, 0.0, 1.0);
+    return x * x * (3.0 - 2.0 * x);
+}
+
+double valueNoise01(uint64_t frame, double x, double y, uint64_t layer) {
+    const int x0 = static_cast<int>(std::floor(x));
+    const int y0 = static_cast<int>(std::floor(y));
+    const double fx = smoothstep01(x - x0);
+    const double fy = smoothstep01(y - y0);
+    const auto sample = [&](int sx, int sy) {
+        return hashNoise01(frame, static_cast<uint64_t>(static_cast<int64_t>(sx)),
+                           static_cast<uint64_t>(static_cast<int64_t>(sy)), layer);
+    };
+    const double n00 = sample(x0, y0);
+    const double n10 = sample(x0 + 1, y0);
+    const double n01 = sample(x0, y0 + 1);
+    const double n11 = sample(x0 + 1, y0 + 1);
+    const double top = n00 + (n10 - n00) * fx;
+    const double bottom = n01 + (n11 - n01) * fx;
+    return top + (bottom - top) * fy;
+}
+
+double filmToneCurve(double exposure, double contrast) {
+    exposure = std::max(0.0, exposure);
+    contrast = std::clamp(contrast, 0.0, 1.0);
+    if (contrast <= 0.0) return std::clamp(exposure, 0.0, 1.0);
+
+    const double x = std::clamp(exposure, 0.0, 1.0);
+    const double s = smoothstep01(x);
+    double y = x + (s - x) * contrast;
+
+    constexpr double toeEnd = 0.22;
+    if (exposure < toeEnd) {
+        const double t = smoothstep01(exposure / toeEnd);
+        y *= 1.0 - contrast * 0.22 * (1.0 - t);
+    }
+
+    const double shoulderStart = 0.86 + 0.04 * (1.0 - contrast);
+    if (exposure > shoulderStart) {
+        const double ss = smoothstep01(shoulderStart);
+        const double yStart = shoulderStart + (ss - shoulderStart) * contrast;
+        const double softness = 0.42 + 0.30 * (1.0 - contrast);
+        y = yStart + (1.0 - yStart) * (1.0 - std::exp(-(exposure - shoulderStart) / softness));
+    }
+
+    return std::clamp(y, 0.0, 1.0);
+}
+
 // ブラー: プリマルチプライドアルファ空間で箱ぼかしを3回かけてから戻す。
-// 透明な部分は色に寄与しないため、不透明な縁が透明側へ滲んでも色が黒ずまない(アルファ加重平均)
 void applyBlur(Bitmap& image, const Effect& effect) {
     const double radius = param(effect, "radius", 4.0);
     const int w = image.width();
@@ -548,11 +597,34 @@ void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
     const double crosstalk = std::clamp(param(effect, "crosstalk", 0.08), 0.0, 0.5);
     const double grain = std::clamp(param(effect, "grain", 0.25), 0.0, 1.0);
     const double grainSize = std::clamp(param(effect, "grainSize", 1.6), 1.0, 4.0);
+    const double halation = std::clamp(param(effect, "halation", 0.0), 0.0, 1.0);
     const int w = image.width();
     const int h = image.height();
     if (w <= 0 || h <= 0) return;
 
     const double exposureMul = std::pow(2.0, exposureEV);
+
+    std::vector<float> halo;
+    if (halation > 0.0) {
+        halo.assign(static_cast<size_t>(w) * h, 0.0f);
+        parallelForRows(0, h, [&](int y0, int y1) {
+            for (int y = y0; y < y1; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    const Bitmap::Pixel p = image.pixel(x, y);
+                    if (p.a == 0) continue;
+                    const double r = (p.r / 255.0) * exposureMul;
+                    const double g = (p.g / 255.0) * exposureMul;
+                    const double b = (p.b / 255.0) * exposureMul;
+                    const double luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    if (luma <= 0.78) continue;
+                    const double hot = std::clamp((luma - 0.78) / 0.55, 0.0, 1.0);
+                    halo[static_cast<size_t>(y) * w + x] = static_cast<float>(hot * hot);
+                }
+            }
+        });
+        const int haloRadius = std::clamp(static_cast<int>(std::lround(std::min(w, h) / 180.0)), 2, 12);
+        tripleBoxBlur(halo, w, h, haloRadius);
+    }
 
     // 層別(R/G/B)分光応答カーブ: 各層が入力光の強さに対してどれだけ記録するかを5点で持つ。
     // パラメータが無ければ既定=恒等(kIdentityResponseCurve)にフォールバックする
@@ -572,11 +644,9 @@ void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
 
     parallelForRows(0, h, [&](int y0, int y1) {
         for (int y = y0; y < y1; ++y) {
-            const int by = static_cast<int>(y / grainSize);
             for (int x = 0; x < w; ++x) {
                 Bitmap::Pixel p = image.pixel(x, y);
                 if (p.a == 0) continue;
-                const int bx = static_cast<int>(x / grainSize);
 
                 double r = p.r / 255.0, g = p.g / 255.0, b = p.b / 255.0;
 
@@ -601,32 +671,43 @@ void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
 
                 double channels[3] = {r, g, b};
                 for (int c = 0; c < 3; ++c) {
-                    // 4. 特性曲線: smoothstepでS字(トウ+ショルダー)を掛ける
-                    const double xClamped = std::clamp(channels[c], 0.0, 1.0);
-                    const double s = xClamped * xClamped * (3.0 - 2.0 * xClamped);
-                    double y = xClamped + (s - xClamped) * contrast;
+                    // 4. 特性曲線: D-Log Hのトウ/直線部/ショルダーを意識した丸いカーブにする
+                    double tone = filmToneCurve(channels[c], contrast);
 
                     // 4.5 層別応答カーブ: 特性曲線(フィルム全体のトーン)適用後の値を、その層(チャンネル)
                     // ごとの応答カーブで再マップする。フィルム銘柄ごとの色の出方(層の強弱)を表現する
                     if (anyResponseCurveActive) {
-                        y = evalResponseCurve(respCurves[c], std::clamp(y, 0.0, 1.0));
+                        tone = evalResponseCurve(respCurves[c], std::clamp(tone, 0.0, 1.0));
                     }
 
                     // 5. 黒浮き(フィルムの最小濃度Dmin)
-                    y = fade + (1.0 - fade) * y;
+                    tone = fade + (1.0 - fade) * tone;
 
-                    // 6. 粒状(RGB各チャンネル独立、中間調で最大・黒白で0の重み)。
-                    // (frame, bx, by, c)から作るハッシュノイズはフレーム間・チャンネル間で無相関
+                    // 6. 粒状: RGB独立ノイズではなく、濃度に乗る共通粒を中心にして色層差を少しだけ混ぜる
                     if (grain > 0.0) {
-                        const double noise = hashNoise01(static_cast<uint64_t>(frame), static_cast<uint64_t>(bx),
-                                                          static_cast<uint64_t>(by), static_cast<uint64_t>(c)) *
-                                                  2.0 -
-                                              1.0;
-                        const double weight = 4.0 * y * (1.0 - y);
-                        y += noise * grain * 0.25 * weight;
+                        const double gx = x / grainSize;
+                        const double gy = y / grainSize;
+                        const double coarse = valueNoise01(static_cast<uint64_t>(frame), gx * 0.55, gy * 0.55, 17);
+                        const double fine = valueNoise01(static_cast<uint64_t>(frame), gx, gy, 29);
+                        const double common = (coarse * 0.62 + fine * 0.38) * 2.0 - 1.0;
+                        const double layer = valueNoise01(static_cast<uint64_t>(frame), (gx + c * 0.37) * 1.7,
+                                                          (gy + c * 0.23) * 1.7,
+                                                          53 + static_cast<uint64_t>(c)) *
+                                                 2.0 -
+                                             1.0;
+                        const double noise = common * 0.92 + layer * 0.08;
+                        const double weight = 4.0 * tone * (1.0 - tone);
+                        tone += noise * grain * 0.20 * weight;
                     }
 
-                    channels[c] = std::clamp(y, 0.0, 1.0);
+                    channels[c] = std::clamp(tone, 0.0, 1.0);
+                }
+
+                if (!halo.empty()) {
+                    const double hGlow = halo[static_cast<size_t>(y) * w + x] * halation;
+                    channels[0] = std::clamp(channels[0] + hGlow * 0.24, 0.0, 1.0);
+                    channels[1] = std::clamp(channels[1] + hGlow * 0.10, 0.0, 1.0);
+                    channels[2] = std::clamp(channels[2] + hGlow * 0.035, 0.0, 1.0);
                 }
 
                 p.r = static_cast<uint8_t>(std::lround(channels[0] * 255.0));

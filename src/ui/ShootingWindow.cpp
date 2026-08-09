@@ -70,6 +70,7 @@ QString paramLabel(const std::string& key) {
     };
     const auto it = kLabels.find(key);
     if (it != kLabels.end()) return it->second;
+    if (key == "halation") return QObject::tr("ハレーション");
 
     // resp{R|G|B}{0..4}: 層別応答カーブの制御点。スピン行としては出さずFilmCurveWidgetの
     // グラフで編集するため通常はここに来ないが、念のためのフォールバック表示("R応答0"等)
@@ -84,7 +85,7 @@ QString paramLabel(const std::string& key) {
 bool isDensityParam(const std::string& key) {
     return key == "top" || key == "bottom" || key == "strength" || key == "amount" || key == "softness" ||
            key == "centerX" || key == "centerY" || key == "exposure" || key == "fade" || key == "warmth" ||
-           key == "crosstalk" || key == "grain" || key == "intensity" || key == "ghostStrength" ||
+           key == "crosstalk" || key == "grain" || key == "halation" || key == "intensity" || key == "ghostStrength" ||
            key == "tintR" || key == "tintG" || key == "tintB";
 }
 
@@ -108,6 +109,7 @@ std::pair<double, double> paramRange(core::EffectType type, const std::string& k
     if (key == "crosstalk") return {0.0, 0.5};
     if (key == "grain") return {0.0, 1.0};
     if (key == "grainSize") return {1.0, 4.0};
+    if (key == "halation") return {0.0, 1.0};
     if (key == "intensity") return {0.0, 3.0};       // アナフレアの強さ
     if (key == "ghosts") return {0.0, 8.0};          // ゴースト数
     if (key == "ghostStrength") return {0.0, 2.0};

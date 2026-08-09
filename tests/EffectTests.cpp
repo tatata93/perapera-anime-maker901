@@ -508,7 +508,42 @@ TEST_CASE("applyFilm characteristic curve applies an S-curve and fade lifts blac
     REQUIRE(runGray(0, 0.0, 0.1) > 0);
 }
 
-TEST_CASE("applyFilm grain leaves black/white unchanged and varies midtones, independently per channel",
+TEST_CASE("applyFilm shoulder rolls off overexposed highlights without hard clipping", "[core][effect][film]") {
+    core::Bitmap bmp(2, 1);
+    bmp.setPixel(0, 0, {160, 160, 160, 255});
+    bmp.setPixel(1, 0, {255, 255, 255, 255});
+
+    core::Effect film;
+    film.type = core::EffectType::Film;
+    film.params = {{"exposure", 1.0}, {"contrast", 1.0}, {"fade", 0.0}, {"warmth", 0.0},  {"crosstalk", 0.0},
+                   {"grain", 0.0},    {"grainSize", 1.0}, {"halation", 0.0}};
+    core::applyEffect(bmp, film, 0);
+
+    REQUIRE(bmp.pixel(0, 0).r < bmp.pixel(1, 0).r);
+    REQUIRE(bmp.pixel(0, 0).r < 255);
+}
+
+TEST_CASE("applyFilm halation adds a warm local fog around bright highlights", "[core][effect][film]") {
+    core::Bitmap bmp(15, 15);
+    bmp.fill({0, 0, 0, 255});
+    for (int y = 6; y <= 8; ++y) {
+        for (int x = 6; x <= 8; ++x) bmp.setPixel(x, y, {255, 255, 255, 255});
+    }
+
+    core::Effect film;
+    film.type = core::EffectType::Film;
+    film.params = {{"exposure", 0.0}, {"contrast", 0.0}, {"fade", 0.0}, {"warmth", 0.0},  {"crosstalk", 0.0},
+                   {"grain", 0.0},    {"grainSize", 1.0}, {"halation", 1.0}};
+    core::applyEffect(bmp, film, 0);
+
+    const auto nearHighlight = bmp.pixel(5, 7);
+    REQUIRE(nearHighlight.r > 0);
+    REQUIRE(nearHighlight.r >= nearHighlight.g);
+    REQUIRE(nearHighlight.g >= nearHighlight.b);
+    REQUIRE(bmp.pixel(0, 0).r == 0);
+}
+
+TEST_CASE("applyFilm grain leaves black/white unchanged and varies midtones as density grain",
           "[core][effect][film]") {
     core::Effect film;
     film.type = core::EffectType::Film;
@@ -545,16 +580,24 @@ TEST_CASE("applyFilm grain leaves black/white unchanged and varies midtones, ind
     core::Bitmap grid(24, 24);
     grid.fill({128, 128, 128, 255});
     core::applyEffect(grid, film, 7);
-    bool foundDivergentSign = false;
-    for (int y = 0; y < 24 && !foundDivergentSign; ++y) {
-        for (int x = 0; x < 24 && !foundDivergentSign; ++x) {
+    bool foundSharedDensityGrain = false;
+    bool foundLargeChromaSplit = false;
+    for (int y = 0; y < 24; ++y) {
+        for (int x = 0; x < 24; ++x) {
             const auto p = grid.pixel(x, y);
             const int dr = static_cast<int>(p.r) - 128;
             const int dg = static_cast<int>(p.g) - 128;
-            if ((dr > 0 && dg < 0) || (dr < 0 && dg > 0)) foundDivergentSign = true;
+            const int db = static_cast<int>(p.b) - 128;
+            if ((dr > 0 && dg > 0 && db > 0) || (dr < 0 && dg < 0 && db < 0)) {
+                foundSharedDensityGrain = true;
+            }
+            if (std::abs(dr - dg) > 18 || std::abs(dr - db) > 18 || std::abs(dg - db) > 18) {
+                foundLargeChromaSplit = true;
+            }
         }
     }
-    REQUIRE(foundDivergentSign);
+    REQUIRE(foundSharedDensityGrain);
+    REQUIRE_FALSE(foundLargeChromaSplit);
 
     // フレーム0と1で粒パターンが異なる
     core::Bitmap gridFrame0(16, 16);
