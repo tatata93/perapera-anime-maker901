@@ -486,6 +486,28 @@ TEST_CASE("applyFilm crosstalk mixes pure red toward green/blue (row-normalized)
     REQUIRE(p.b > 0);    // Bは増える
 }
 
+TEST_CASE("applyFilm saturation separates colors while preserving neutral gray", "[core][effect][film]") {
+    core::Bitmap bmp(2, 1);
+    bmp.setPixel(0, 0, {128, 128, 128, 255});
+    bmp.setPixel(1, 0, {180, 100, 100, 255});
+
+    core::Effect film;
+    film.type = core::EffectType::Film;
+    film.params = {{"exposure", 0.0}, {"contrast", 0.0},   {"saturation", 1.5}, {"fade", 0.0},
+                   {"warmth", 0.0},   {"crosstalk", 0.0},  {"grain", 0.0},      {"grainSize", 1.0}};
+    core::applyEffect(bmp, film, 0);
+
+    const auto gray = bmp.pixel(0, 0);
+    REQUIRE(gray.r == 128);
+    REQUIRE(gray.g == 128);
+    REQUIRE(gray.b == 128);
+
+    const auto red = bmp.pixel(1, 0);
+    REQUIRE(red.r > 180);
+    REQUIRE(red.g < 100);
+    REQUIRE(red.b < 100);
+}
+
 TEST_CASE("applyFilm characteristic curve applies an S-curve and fade lifts black", "[core][effect][film]") {
     auto runGray = [](uint8_t level, double contrast, double fade) {
         core::Bitmap bmp(2, 2);
@@ -576,7 +598,7 @@ TEST_CASE("applyFilm grain leaves black/white unchanged and varies midtones as d
     }
     REQUIRE(midChanged);
 
-    // RGB独立: 十分広い中間調の面で、あるピクセルはRとGのノイズ符号が異なるはず
+    // 密度粒状: RGBはほぼ同方向に揺れ、大きな色ノイズにはならない
     core::Bitmap grid(24, 24);
     grid.fill({128, 128, 128, 255});
     core::applyEffect(grid, film, 7);

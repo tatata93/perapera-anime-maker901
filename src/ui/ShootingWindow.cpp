@@ -85,7 +85,7 @@ QString paramLabel(const std::string& key) {
 bool isDensityParam(const std::string& key) {
     return key == "top" || key == "bottom" || key == "strength" || key == "amount" || key == "softness" ||
            key == "centerX" || key == "centerY" || key == "exposure" || key == "fade" || key == "warmth" ||
-           key == "crosstalk" || key == "grain" || key == "halation" || key == "intensity" || key == "ghostStrength" ||
+           key == "saturation" || key == "crosstalk" || key == "grain" || key == "halation" || key == "intensity" || key == "ghostStrength" ||
            key == "tintR" || key == "tintG" || key == "tintB";
 }
 
@@ -98,7 +98,8 @@ std::pair<double, double> paramRange(core::EffectType type, const std::string& k
     if (key == "hue") return {-180.0, 180.0};
     if (key == "contrast") return type == core::EffectType::Film ? std::pair<double, double>{0.0, 1.0}
                                                                    : std::pair<double, double>{0.0, 3.0};
-    if (key == "saturation") return {0.0, 3.0};
+    if (key == "saturation") return type == core::EffectType::Film ? std::pair<double, double>{0.0, 2.0}
+                                                                     : std::pair<double, double>{0.0, 3.0};
     if (key == "centerX" || key == "centerY") return {0.0, 1.0};
     if (key == "softness") return {0.05, 1.0};
     if (key == "taps") return {2.0, 32.0};
@@ -798,9 +799,13 @@ QGroupBox* ShootingWindow::buildEffectGroupBox(int effectIndex, const QStringLis
         presetRow->addWidget(new QLabel(tr("プリセット:"), box));
         auto* presetCombo = new QComboBox(box);
         presetCombo->addItem(tr("(選択して適用)"));
-        presetCombo->addItem(tr("標準(恒等)"));
-        presetCombo->addItem(tr("暖色ネガ"));
-        presetCombo->addItem(tr("リバーサル"));
+        presetCombo->addItem(tr("標準ネガ"));
+        presetCombo->addItem(tr("Kodak UltraMax 400風"));
+        presetCombo->addItem(tr("Kodak Ektar 100風"));
+        presetCombo->addItem(tr("Kodak Portra 400風"));
+        presetCombo->addItem(tr("Fujichrome Provia 100F風"));
+        presetCombo->addItem(tr("Fujichrome Velvia 50風"));
+        presetCombo->addItem(tr("Fujicolor Superia X-TRA 400風"));
         presetCombo->addItem(tr("褪色"));
         presetCombo->setCurrentIndex(0);
         connect(presetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -1896,21 +1901,33 @@ void ShootingWindow::onFilmPresetSelected(int effectIndex, int presetIndex) {
     // フィルム銘柄の特徴プリセット: 層別応答カーブ(resp15)+基本パラメータをまとめて適用する。
     // 各層はrespX0..respX4(入力光の強さ0,0.25,0.5,0.75,1.0における記録量)
     struct FilmPreset {
-        double contrast, fade, warmth, crosstalk;
+        double exposure, contrast, saturation, fade, warmth, crosstalk, grain, grainSize, halation;
         double respR[5], respG[5], respB[5];
     };
     static const FilmPreset kPresets[] = {
-        // 1: 標準(恒等) — 既定のフィルムパラメータそのもの
-        {0.35, 0.04, 0.1, 0.08,
+        // 1: 標準ネガ - 現在のフィルム既定値。強すぎない粒状と暖色の基準。
+        {0.0, 0.35, 1.02, 0.04, 0.10, 0.08, 0.25, 1.60, 0.12,
          {0.0, 0.25, 0.5, 0.75, 1.0}, {0.0, 0.25, 0.5, 0.75, 1.0}, {0.0, 0.25, 0.5, 0.75, 1.0}},
-        // 2: 暖色ネガ — シャドウが青浮きし、ハイライトが暖色(R)寄りに持ち上がる
-        {0.3, 0.05, 0.25, 0.1,
-         {0.0, 0.27, 0.55, 0.85, 1.0}, {0.0, 0.25, 0.5, 0.75, 0.97}, {0.08, 0.28, 0.5, 0.72, 0.95}},
-        // 3: リバーサル — 高コントラスト・彩度高め(各層とも中間を締めたS字+クロストーク低め)
-        {0.65, 0.0, 0.0, 0.03,
-         {0.0, 0.16, 0.5, 0.84, 1.0}, {0.0, 0.16, 0.5, 0.84, 1.0}, {0.0, 0.16, 0.5, 0.84, 1.0}},
-        // 4: 褪色 — ローコントラスト・緑被り(G持ち上げ、R/Bはやや抑える、黒浮き大きめ)
-        {0.1, 0.18, -0.05, 0.2,
+        // 2: Kodak UltraMax 400風 - 400常用ネガ。明るめ・彩度高め・粒はやや見える。
+        {0.05, 0.40, 1.18, 0.05, 0.14, 0.10, 0.38, 1.55, 0.10,
+         {0.0, 0.26, 0.53, 0.80, 1.0}, {0.0, 0.25, 0.51, 0.77, 0.98}, {0.03, 0.26, 0.49, 0.71, 0.92}},
+        // 3: Kodak EKTAR 100風 - 低感度・超微粒子・高彩度。風景/商品向けの硬めの発色。
+        {0.0, 0.50, 1.35, 0.02, 0.03, 0.04, 0.12, 1.25, 0.08,
+         {0.0, 0.22, 0.51, 0.82, 1.0}, {0.0, 0.24, 0.52, 0.81, 1.0}, {0.0, 0.20, 0.48, 0.78, 0.97}},
+        // 4: Kodak Portra 400風 - 肌色と階調を優先。彩度は残しつつコントラストを柔らかくする。
+        {0.05, 0.28, 1.08, 0.05, 0.18, 0.10, 0.24, 1.60, 0.14,
+         {0.0, 0.27, 0.54, 0.81, 0.99}, {0.0, 0.25, 0.50, 0.75, 0.98}, {0.04, 0.26, 0.49, 0.71, 0.93}},
+        // 5: Fujichrome Provia 100F風 - ニュートラルなリバーサル。低粒状、標準的な彩度/コントラスト。
+        {0.0, 0.56, 1.16, 0.0, 0.0, 0.035, 0.10, 1.20, 0.04,
+         {0.0, 0.20, 0.50, 0.82, 1.0}, {0.0, 0.20, 0.50, 0.82, 1.0}, {0.0, 0.20, 0.50, 0.82, 1.0}},
+        // 6: Fujichrome Velvia 50風 - 高彩度リバーサル。深い影、強い緑/赤、低いハレーション。
+        {-0.05, 0.78, 1.48, 0.0, 0.05, 0.02, 0.12, 1.15, 0.035,
+         {0.0, 0.13, 0.49, 0.88, 1.0}, {0.0, 0.14, 0.52, 0.90, 1.0}, {0.0, 0.11, 0.47, 0.83, 0.98}},
+        // 7: Fujicolor Superia X-TRA 400風 - 400常用ネガ。肌色とグレーを保ちつつ色を少し派手に出す。
+        {0.02, 0.38, 1.22, 0.04, -0.02, 0.09, 0.30, 1.45, 0.08,
+         {0.0, 0.24, 0.52, 0.79, 0.98}, {0.0, 0.25, 0.53, 0.81, 1.0}, {0.02, 0.27, 0.52, 0.78, 0.97}},
+        // 8: 褪色 - ローコントラスト・緑被り(G持ち上げ、R/Bはやや抑える、黒浮き大きめ)
+        {0.0, 0.10, 0.72, 0.18, -0.05, 0.20, 0.35, 2.00, 0.20,
          {0.0, 0.22, 0.45, 0.68, 0.9}, {0.1, 0.32, 0.55, 0.75, 0.92}, {0.0, 0.2, 0.42, 0.65, 0.88}},
     };
     const int idx = presetIndex - 1;
@@ -1918,10 +1935,15 @@ void ShootingWindow::onFilmPresetSelected(int effectIndex, int presetIndex) {
     const FilmPreset& preset = kPresets[idx];
 
     // プリセットは基本値(params)を直接上書きする(既存のキーフレームには触れない仕様)
+    effect.params["exposure"] = preset.exposure;
     effect.params["contrast"] = preset.contrast;
+    effect.params["saturation"] = preset.saturation;
     effect.params["fade"] = preset.fade;
     effect.params["warmth"] = preset.warmth;
     effect.params["crosstalk"] = preset.crosstalk;
+    effect.params["grain"] = preset.grain;
+    effect.params["grainSize"] = preset.grainSize;
+    effect.params["halation"] = preset.halation;
     for (int i = 0; i < 5; ++i) {
         effect.params["respR" + std::to_string(i)] = preset.respR[i];
         effect.params["respG" + std::to_string(i)] = preset.respG[i];

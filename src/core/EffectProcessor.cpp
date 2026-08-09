@@ -586,7 +586,7 @@ void applyChromAb(Bitmap& image, const Effect& effect) {
     });
 }
 
-// フィルム: 色温度・分光クロストーク・露出・特性曲線(S字)・黒浮き・チャンネル独立の粒状を
+// フィルム: 色温度・彩度・分光クロストーク・露出・特性曲線(S字)・黒浮き・密度粒状を
 // この順に重ねてフィルムらしい発色と粒状感を再現する。色は0〜1のdoubleで処理し最後に量子化する。
 // 透明ピクセル(a==0)はスキップして余白を汚さない
 void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
@@ -594,6 +594,7 @@ void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
     const double contrast = std::clamp(param(effect, "contrast", 0.35), 0.0, 1.0);
     const double fade = std::clamp(param(effect, "fade", 0.04), 0.0, 0.3);
     const double warmth = std::clamp(param(effect, "warmth", 0.1), -1.0, 1.0);
+    const double saturation = std::clamp(param(effect, "saturation", 1.0), 0.0, 2.0);
     const double crosstalk = std::clamp(param(effect, "crosstalk", 0.08), 0.0, 0.5);
     const double grain = std::clamp(param(effect, "grain", 0.25), 0.0, 1.0);
     const double grainSize = std::clamp(param(effect, "grainSize", 1.6), 1.0, 4.0);
@@ -653,6 +654,12 @@ void applyFilm(Bitmap& image, const Effect& effect, size_t frame) {
                 // 1. 色温度(タングステン/デイライトの近似): 暖色よりでR上げ・B下げ(warmth>0)
                 r *= 1.0 + 0.15 * warmth;
                 b *= 1.0 - 0.15 * warmth;
+
+                // 1.5. 銘柄ごとの彩度。Velvia/Ektarのような高彩度とPortraの控えめな肌色を分ける。
+                const double satLuma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                r = satLuma + (r - satLuma) * saturation;
+                g = satLuma + (g - satLuma) * saturation;
+                b = satLuma + (b - satLuma) * saturation;
 
                 // 2. 分光クロストーク(フィルム色素の感度重なり): 行正規化行列で混色する。
                 // k=0で恒等、kが大きいほど混色して彩度が落ちる
